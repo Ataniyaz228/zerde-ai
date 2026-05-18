@@ -63,11 +63,11 @@ def audit_analysis(
     """
     settings = get_settings()
     corpus_index = {c.chunk_id: c for c in chunks if not c.is_duplicate}
-    # Prefix index: первые 12 символов chunk_id → полный chunk_id
-    # LLM возвращает обрезанные ID (напр. 'f59c0d11dd66'), ищем по префиксу
+    # Prefix index: префиксы chunk_id (от 8 до 32 символов) → полный chunk_id
+    # LLM может возвращать обрезанные ID разной длины (12, 16 и тд)
     prefix_index: dict[str, str] = {}
     for cid in corpus_index:
-        for prefix_len in (12, 8):
+        for prefix_len in range(8, 33):
             pfx = cid[:prefix_len]
             if pfx not in prefix_index:
                 prefix_index[pfx] = cid

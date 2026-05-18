@@ -75,11 +75,11 @@ async def render_report(
 
     # Индекс чанков для быстрого доступа
     corpus_index: dict[str, EvidenceChunk] = {c.chunk_id: c for c in chunks}
-    # Prefix index: 12-символьный prefix → полный chunk_id
-    # LLM возвращает обрезанные IDs — ищем по префиксу
+    # Prefix index: префиксы chunk_id (от 8 до 32 символов) → полный chunk_id
+    # LLM может возвращать обрезанные IDs разной длины
     prefix_index: dict[str, str] = {}
     for cid in corpus_index:
-        for prefix_len in (12, 8):
+        for prefix_len in range(8, 33):
             pfx = cid[:prefix_len]
             if pfx not in prefix_index:
                 prefix_index[pfx] = cid

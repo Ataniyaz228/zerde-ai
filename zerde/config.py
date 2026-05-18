@@ -50,20 +50,15 @@ class Settings(BaseSettings):
     )
 
     # -----------------------------------------------------------------------
-    # LLM Model
+    # LLM Models
     # -----------------------------------------------------------------------
-    llm_model: str = Field(
-        default="deepseek/deepseek-r1-0528",
-        description=(
-            "ID модели для Этапов 2 и 5 (Planner + Analyst).\n"
-            "  OpenRouter рекомендации:\n"
-            "    deepseek/deepseek-r1-0528            — самый мощный reasoning, ~$0.5/1M\n"
-            "    deepseek/deepseek-chat-v3-0324        — быстрый и дешёвый V3\n"
-            "    moonshotai/kimi-k2                    — Kimi K2 (отличный для юр. анализа)\n"
-            "    google/gemini-2.5-pro                 — Gemini 2.5 Pro\n"
-            "    anthropic/claude-sonnet-4-5           — Claude Sonnet\n"
-            "  OpenAI: gpt-4o, gpt-4.1"
-        ),
+    llm_model_planner: str = Field(
+        default="deepseek/deepseek-v4-flash:free",
+        description="ID модели для Этапа 2 (Planner) и простых задач. Должна хорошо поддерживать JSON.",
+    )
+    llm_model_analyst: str = Field(
+        default="deepseek/deepseek-v4-pro",
+        description="ID модели для Этапа 5 (Analyst). Рекомендуется мощная Reasoning модель.",
     )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=0.0)  # Zero — locked
     llm_max_tokens_planner: int = Field(default=4096)
@@ -183,5 +178,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Синглтон конфигурации. Используй везде вместо прямого импорта Settings()."""
     return Settings()

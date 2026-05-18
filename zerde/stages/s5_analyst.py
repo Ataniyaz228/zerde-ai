@@ -67,7 +67,7 @@ async def run_analyst(chunks: list[EvidenceChunk], plan: QueryPlan) -> AnalysisJ
     else:
         prompt = build_analyst_prompt(active, plan, conflict_ids)
         raw_json = await _call_analyst_with_retry(client, prompt, settings)
-        analysis = _parse_analysis(raw_json, plan, settings.llm_model)
+        analysis = _parse_analysis(raw_json, plan, settings.llm_model_analyst)
 
     _validate_conflict_coverage(analysis, conflict_ids)
 
@@ -94,8 +94,8 @@ async def _call_analyst_with_retry(client: AsyncOpenAI, prompt: str, settings) -
     )
     async def _call() -> dict:
         response = await client.chat.completions.create(
-            model=settings.llm_model,
-            temperature=0.0,
+            model=settings.llm_model_analyst,
+            temperature=settings.llm_temperature,
             response_format={"type": "json_object"},
             max_tokens=settings.llm_max_tokens_analyst,
             messages=[
@@ -177,7 +177,7 @@ async def _run_chunked_analysis(
 
     # Синтез: объединяем все результаты
     merged = _merge_partial_analyses(partial_analyses)
-    return _parse_analysis(merged, plan, settings.llm_model)
+    return _parse_analysis(merged, plan, settings.llm_model_analyst)
 
 
 def _merge_partial_analyses(parts: list[dict]) -> dict:

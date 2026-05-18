@@ -403,7 +403,7 @@ async def _try_adilet_pdf_ocr(query: AdiletQuery, cache: CacheManager) -> list[E
                     law_id=law_id,
                     source_url=pdf_url,
                     client=client,
-                    model=settings.llm_model,
+                    model=settings.llm_model_planner,
                     query=query,
                 )
                 chunks.extend(article_chunks)

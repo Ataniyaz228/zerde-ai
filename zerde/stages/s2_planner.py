@@ -53,7 +53,7 @@ async def build_query_plan(doc_state: DocumentState) -> QueryPlan:
         raw_json = await _call_llm_with_retry(
             client=client,
             prompt=prompt,
-            model=settings.llm_model,
+            model=settings.llm_model_planner,
             max_tokens=settings.llm_max_tokens_planner,
             system_msg=(
                 "Ты — юридический аналитик-планировщик для Республики Казахстан. "

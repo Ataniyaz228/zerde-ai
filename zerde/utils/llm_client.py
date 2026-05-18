@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v7.0 — LLM Client Factory + Cached Calls + Model Routing
+LLM Client Factory + Cached Calls + Model Routing
 Создаёт AsyncOpenAI клиентов с кэшированием ответов.
 
 Model Routing:

@@ -1,1 +1,1 @@
-"""ЗЕРДЕ v6.2 — Stages package."""
+"""Stages package."""

@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Stage 6: The Auditor (ПОЛНАЯ РЕАЛИЗАЦИЯ)
+Stage 6: The Auditor 
 Вход:  AnalysisJSON + list[EvidenceChunk]
 Выход: AnalysisJSON со статусами
 
@@ -414,7 +414,7 @@ def _normalize_numbers(num_strings: set[str]) -> set[float]:
     result: set[float] = set()
     for s in num_strings:
         try:
-            from sympy import Float, sympify
+            from sympy import sympify
             val = float(sympify(s.replace(" ", "")))
             result.add(val)
         except Exception:

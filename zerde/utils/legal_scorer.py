@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Legal Scorer Utility
+Legal Scorer Utility
 WebTier классификация по домену + LegalRank inference.
 """
 

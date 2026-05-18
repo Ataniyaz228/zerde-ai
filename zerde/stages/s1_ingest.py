@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Stage 1: Document Ingestion (ПОЛНАЯ РЕАЛИЗАЦИЯ)
+Stage 1: Document Ingestion 
 Вход:  путь к файлу (PDF, DOCX, TXT)
 Выход: DocumentState
 

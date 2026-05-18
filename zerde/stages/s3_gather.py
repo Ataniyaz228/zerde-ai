@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Stage 3: Data Gathering Agents (ПОЛНАЯ РЕАЛИЗАЦИЯ)
+Stage 3: Data Gathering Agents 
 Вход:  QueryPlan
 Выход: list[EvidenceChunk]
 
@@ -507,8 +507,6 @@ async def _try_adilet_pdf_ocr(query: AdiletQuery, cache: CacheManager) -> list[E
 def _extract_pdf_bytes(pdf_bytes: bytes) -> str:
     """Извлекает текст из PDF bytes через pymupdf."""
     import fitz
-    import io
-
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = [page.get_text("text") for page in doc]  # type: ignore[arg-type]
     doc.close()

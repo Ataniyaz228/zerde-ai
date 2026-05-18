@@ -1,7 +1,7 @@
 [project]
 name = "zerde"
 version = "6.2.0"
-description = "ЗЕРДЕ v6.2 — Legal AI Pipeline для Республики Казахстан"
+description = "Legal AI Pipeline для Республики Казахстан"
 requires-python = ">=3.12"
 readme = "README.md"
 
@@ -36,7 +36,7 @@ dependencies = [
     "langdetect>=1.0.9",       # Language detection (Этап 1)
 
     # Reliability / Retry
-    "tenacity>=8.3.0",         # Retry with backoff (TODO Этап 2)
+    "tenacity>=8.3.0",         # Retry with backoff
 
     # Encoding detection
     "chardet>=5.2.0",          # TXT encoding detection

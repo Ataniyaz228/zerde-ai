@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Configuration (pydantic-settings)
+Configuration (pydantic-settings)
 Все параметры читаются из .env. Меняй только .env, не хардкодь.
 
 OpenRouter: используй OPENROUTER_API_KEY + OPENAI_BASE_URL=https://openrouter.ai/api/v1
@@ -86,7 +86,7 @@ class Settings(BaseSettings):
         description="Твой сайт для OpenRouter dashboard",
     )
     openrouter_app_name: str = Field(
-        default="ЗЕРДЕ v7.0",
+        default="",
         description="Название приложения в OpenRouter dashboard",
     )
 

@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — LLM Planner Prompt Builder (Этап 2)
+LLM Planner Prompt Builder (Этап 2)
 """
 
 from __future__ import annotations

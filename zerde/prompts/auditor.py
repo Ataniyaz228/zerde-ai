@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v7.0 — LLM Auditor Prompt Builder (Этап 5 v2)
+LLM Auditor Prompt Builder (Этап 5 v2)
 Парадигма: AUDITOR, не summarizer.
 Аналитик получает чеклист claims и проверяет каждый против корпуса.
 """

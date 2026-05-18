@@ -18,13 +18,14 @@ import json
 import logging
 import re
 import uuid
-from typing import Any
+
 
 from openai import AsyncOpenAI
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from zerde.config import get_settings
 from zerde.models import (
+    VerdictStatus,
     ClaimExtractionResult,
     ClaimSeverity,
     ClaimType,
@@ -40,7 +41,6 @@ from zerde.reference_data import (
     get_koap_article,
     get_mrp,
     get_uk_article,
-    is_law_valid,
 )
 from zerde.utils.llm_client import cached_llm_call, make_llm_client
 
@@ -104,6 +104,10 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
                 # Детерминированная проверка по реестру
                 deterministic = _check_entity(tag, entity_clean, text)
 
+                status, msg = None, None
+                if deterministic:
+                    status, msg = deterministic
+
                 cid = f"claim_{counter:04d}"
                 counter += 1
                 claims.append(
@@ -114,14 +118,15 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
                         claim_type=ctype,
                         severity=severity,
                         entities=[entity_clean],
-                        deterministic_verdict=deterministic,
+                        deterministic_verdict=msg,
+                        deterministic_status=status,
                     )
                 )
 
     return claims
 
 
-def _check_entity(tag: str, entity: str, full_text: str) -> str | None:
+def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus, str] | None:
     """Детерминированная проверка entity по reference_data. Возвращает вердикт или None."""
     entity_normalized = entity.strip().upper().replace(" ", "")
 
@@ -131,23 +136,23 @@ def _check_entity(tag: str, entity: str, full_text: str) -> str | None:
         entry = check_law_id(law_id_clean)
         if entry is not None:
             if not entry["valid"]:
-                return f"❌ ОШИБКА: '{law_id_clean}' — {entry['title']}"
-            return f"✅ Подтверждено: {law_id_clean} = «{entry['title']}» от {entry['date']}"
+                return (VerdictStatus.CONTRADICTED, f"'{law_id_clean}' — {entry['title']}")
+            return (VerdictStatus.CONFIRMED, f"{law_id_clean} = «{entry['title']}» от {entry['date']}")
         return None  # Неизвестный закон — отдаём LLM
 
     if tag == "koap_article":
         art = get_koap_article(entity_normalized)
         if art:
-            return f"✅ КоАП ст.{entity_normalized}: «{art['title']}». Макс. штраф: {art['max_fine_mrp']} МРП (физлица), {art['max_fine_mrp_entity']} МРП (юрлица)"
-        return f"⚠️ Статья {entity_normalized} КоАП не найдена в реестре"
+            return (VerdictStatus.CONFIRMED, f"КоАП ст.{entity_normalized}: «{art['title']}». Макс. штраф: {art['max_fine_mrp']} МРП (физлица), {art['max_fine_mrp_entity']} МРП (юрлица)")
+        return (VerdictStatus.UNVERIFIED, f"Статья {entity_normalized} КоАП не найдена в реестре")
 
     if tag == "uk_article":
         art = get_uk_article(entity_normalized)
         if art:
             is_related = "персональных данных" in art["notes"].lower() or "частной жизни" in art["notes"].lower()
             if not is_related:
-                return f"❌ ОШИБКА: УК РК ст.{entity_normalized} = «{art['title']}» — {art['notes']}"
-            return f"✅ УК ст.{entity_normalized}: «{art['title']}»"
+                return (VerdictStatus.CONTRADICTED, f"УК РК ст.{entity_normalized} = «{art['title']}» — {art['notes']}")
+            return (VerdictStatus.CONFIRMED, f"УК ст.{entity_normalized}: «{art['title']}»")
         return None
 
     if tag == "pprkz_num":
@@ -155,8 +160,8 @@ def _check_entity(tag: str, entity: str, full_text: str) -> str | None:
         entry = LAW_REGISTRY.get(pprkz_key)
         if entry is not None:
             if not entry["valid"]:
-                return f"❌ ОШИБКА: {pprkz_key} — {entry['title']}"
-            return f"✅ {pprkz_key} = «{entry['title']}»"
+                return (VerdictStatus.CONTRADICTED, f"{pprkz_key} — {entry['title']}")
+            return (VerdictStatus.CONFIRMED, f"{pprkz_key} = «{entry['title']}»")
         return None
 
     if tag == "mrp_value":
@@ -170,16 +175,16 @@ def _check_entity(tag: str, entity: str, full_text: str) -> str | None:
         year = int(years_in_text[-1]) if years_in_text else 2025
         real_mrp = get_mrp(year)
         if real_mrp and val != real_mrp:
-            return f"❌ ОШИБКА: документ указывает МРП={val} тг, реальный МРП {year}={real_mrp} тг"
+            return (VerdictStatus.CONTRADICTED, f"документ указывает МРП={val} тг, реальный МРП {year}={real_mrp} тг")
         if real_mrp and val == real_mrp:
-            return f"✅ МРП {year} = {val} тг — верно"
+            return (VerdictStatus.CONFIRMED, f"МРП {year} = {val} тг — верно")
         return None
 
     if tag == "hours_deadline":
         hours_val = entity_normalized
         if hours_val == "24":
             note = NOTIFICATION_DEADLINES.get("breach_notification_source", "")
-            return f"⚠️ Срок 24 часа: {note}"
+            return (VerdictStatus.UNVERIFIED, f"Срок 24 часа: {note}")
         return None
 
     return None
@@ -216,18 +221,18 @@ _LLM_CLAIM_PROMPT = """
 Найди утверждения, которые НЕ попали в список выше. Особенно:
 
 1. FACTUAL claims — конкретные факты о применении законов:
-   ✅ "Биометрическая идентификация станет обязательной с 2026 года" → factual, critical
-   ✅ "Локализация серверов обязательна для всех операторов" → factual, high
-   ✅ "Закон РК №[X] утрачивает силу с [дата]" → temporal, high
+   - "Биометрическая идентификация станет обязательной с 2026 года" → factual, critical
+   - "Локализация серверов обязательна для всех операторов" → factual, high
+   - "Закон РК №[X] утрачивает силу с [дата]" → temporal, high
 
 2. NORMATIVE claims — что закон/норма разрешает/запрещает/требует:
-   ✅ "Оператор обязан уведомить субъекта в течение X часов" → temporal, critical
-   ✅ "Штраф составляет X МРП за нарушение Y" → financial, critical
+   - "Оператор обязан уведомить субъекта в течение X часов" → temporal, critical
+   - "Штраф составляет X МРП за нарушение Y" → financial, critical
 
 3. НЕ извлекай:
-   ❌ Общие рассуждения: "Закон защищает права граждан"
-   ❌ Описания без конкретных значений: "Предусмотрена ответственность"
-   ❌ Дубли уже найденных утверждений
+   - Общие рассуждения: "Закон защищает права граждан"
+   - Описания без конкретных значений: "Предусмотрена ответственность"
+   - Дубли уже найденных утверждений
 
 {schema}
 """

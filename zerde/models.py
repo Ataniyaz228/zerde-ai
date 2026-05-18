@@ -201,6 +201,10 @@ class DocumentClaim(BaseModel):
         default=None,
         description="Вердикт из реестра НПА без LLM (например: '87-IV INVALID → правильный 94-V')",
     )
+    deterministic_status: VerdictStatus | None = Field(
+        default=None,
+        description="Точный статус (CONFIRMED/CONTRADICTED) для детерминированных проверок",
+    )
 
 
 class VerdictStatus(StrEnum):

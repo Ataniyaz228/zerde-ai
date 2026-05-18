@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — BM25 Calibration Script (ПОЛНАЯ РЕАЛИЗАЦИЯ)
+BM25 Calibration Script 
 Запуск: python scripts/calibrate_bm25.py --test-data tests/calibration_data.json
 
 Формат calibration_data.json:
@@ -234,7 +234,7 @@ def _create_sample_calibration_data(path: Path) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ЗЕРДЕ v6.2 — BM25 Calibration")
+    parser = argparse.ArgumentParser(description="BM25 Calibration")
     parser.add_argument("--test-data", default="tests/calibration_data.json")
     parser.add_argument("--start", type=float, default=0.30)
     parser.add_argument("--end", type=float, default=0.95)

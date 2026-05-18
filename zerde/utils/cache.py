@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v7.0 — SQLite Cache Manager
+SQLite Cache Manager
 Кэш для чанков Адилет/Web и LLM-ответов (токен-экономия).
 Ключ чанков: SHA256 контента. Ключ LLM: SHA256(model:prompt).
 """
@@ -13,7 +13,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Generator
+from typing import Generator
 
 from zerde.models import EvidenceChunk
 

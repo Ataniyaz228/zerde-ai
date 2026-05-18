@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Stage 7: Renderer (Markdown "Lawyer" Format)
+Stage 7: Renderer (Markdown "Lawyer" Format)
 Вход:  AnalysisJSON (валидированный)
 Выход: Markdown-отчёт
 
@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from zerde.config import get_settings
-from zerde.models import AnalysisJSON, EvidenceChunk, LegalRank, ValidationStatus
+from zerde.models import AnalysisJSON, EvidenceChunk, LegalRank, ValidationStatus, VerdictStatus
 
 logger = logging.getLogger(__name__)
 
@@ -209,11 +209,19 @@ def _render_facts_and_conclusions(
 
     if analysis.facts:
         lines.append("### Установленные факты\n")
-        for fact in analysis.facts:
+        for fact, verdict in zip(analysis.facts, analysis.verdicts):
             icon = _STATUS_ICONS.get(fact.validation_status, "⚫")
             score_str = f" (BM25: {fact.bm25_score:.2f})" if fact.bm25_score is not None else ""
             lines.append(f"#### {icon} `{fact.fact_id}`{score_str}")
-            lines.append(f"{fact.claim}\n")
+            
+            if verdict.status == VerdictStatus.CONTRADICTED:
+                lines.append(f"> [!WARNING]")
+                lines.append(f"> **[ОШИБКА]** {fact.claim}\n")
+            elif verdict.status == VerdictStatus.CONFIRMED:
+                lines.append(f"> [!NOTE]")
+                lines.append(f"> **[ПОДТВЕРЖДЕНО]** {fact.claim}\n")
+            else:
+                lines.append(f"> **[НЕ ПРОВЕРЕНО]** {fact.claim}\n")
 
             # Рендерим только реальные источники (не виртуальные)
             real_source_lines = []
@@ -340,7 +348,7 @@ def _render_reliability_footer(analysis: AnalysisJSON) -> str:
     return (
         f"## 📈 Reliability Score\n\n"
         f"{bar}\n\n"
-        f"*Сгенерировано ЗЕРДЕ v6.2 | "
+        f"*Сгенерировано Zerde AI. "
         f"Анализ носит информационный характер и не является юридической консультацией.*"
     )
 

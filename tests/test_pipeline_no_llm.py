@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Тесты без LLM-вызовов.
+Тесты без LLM-вызовов.
 Покрытие:
   - Stage 1: Ingest (DOCX парсинг)
   - Stage 3: _normalize_law_id_to_adilet_urls

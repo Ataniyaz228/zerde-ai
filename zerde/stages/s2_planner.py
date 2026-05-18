@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Stage 2: LLM Planner (ПОЛНАЯ РЕАЛИЗАЦИЯ)
+Stage 2: LLM Planner 
 Вход:  DocumentState
 Выход: QueryPlan
 

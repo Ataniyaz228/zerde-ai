@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Entry Point
+Entry Point
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ async def main(file_path: str) -> None:
     setup_logging(settings.log_level)
 
     logger = logging.getLogger("zerde.main")
-    logger.info(f"ЗЕРДЕ v6.2 | Input: {file_path}")
+    logger.info(f"Input: {file_path}")
 
     try:
         result = await run_pipeline(file_path)

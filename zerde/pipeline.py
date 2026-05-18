@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v7.0 — Pipeline Orchestrator
+Pipeline Orchestrator
 Связывает все этапы в единый асинхронный пайплайн.
 
 v7.0 изменения:
@@ -57,7 +57,7 @@ async def run_pipeline(
     output_path: str | Path | None = None,
 ) -> ZerdePipelineResult:
     """
-    Запускает полный пайплайн ЗЕРДЕ v7.0 от файла до Markdown-отчёта.
+    Запускает полный пайплайн от файла до Markdown-отчёта.
 
     Архитектура v7.0 (Auditor mode):
       S1 → S2 → S2.5 → S3 → S4 → S5(Auditor) → S6 → S7
@@ -73,7 +73,7 @@ async def run_pipeline(
     start_time = time.perf_counter()
 
     logger.info("=" * 60)
-    logger.info("ЗЕРДЕ v7.0 — Pipeline Start (Auditor Mode)")
+    logger.info("Pipeline Start (Auditor Mode)")
     logger.info(f"Input: {file_path}")
     logger.info("=" * 60)
 
@@ -141,7 +141,7 @@ async def run_pipeline(
     total_elapsed = time.perf_counter() - start_time
 
     logger.info("=" * 60)
-    logger.info(f"ЗЕРДЕ v7.0 — Pipeline Complete ({total_elapsed:.2f}s)")
+    logger.info(f"Pipeline Complete ({total_elapsed:.2f}s)")
     logger.info(
         f"Claims: {claims.total_count} | "
         f"Verdicts: {len(audited_analysis.verdicts)} | "

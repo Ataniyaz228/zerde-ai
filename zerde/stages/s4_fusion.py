@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Stage 4: Fusion & Quality Validation (ПОЛНАЯ РЕАЛИЗАЦИЯ)
+ЗЕРДЕ v6.3 — Stage 4: Fusion & Quality Validation
 Вход:  list[EvidenceChunk] (сырые)
 Выход: list[EvidenceChunk] (с флагами)
 
@@ -7,9 +7,10 @@
   1. SHA256 дедупликация — O(n)
   2. Cosine Similarity деdup — OpenAI embeddings, батчи по 100, порог 0.92
   3. HIERARCHY конфликты — rank delta + domain check
-  4. TEMPORAL конфликты — law_id + article + effective_date
-  5. FACTUAL конфликты — regex числа + нормализация
-  6. ENFORCEMENT_GAP — cosine distance норма vs. практика
+  4. TEMPORAL конфликты — law_id + article + effective_date + text-based year detection
+  5. FACTUAL конфликты — regex числа + нормализация + sectoral overlap
+  6. ENFORCEMENT_GAP — норма vs. практика (RU + EN + KK маркеры)
+  7. SECTORAL конфликты — финансовый/госорган/общий сектор (НОВОЕ v6.3)
 """
 
 from __future__ import annotations
@@ -182,6 +183,35 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 # ---------------------------------------------------------------------------
 
 
+# Regex для детектирования года в тексте (text-based temporal detection)
+_YEAR_RE = re.compile(r"\b(20[0-2]\d)\s*(?:год|г\.?|жыл)?", re.IGNORECASE)
+
+# Словарь секторов для SECTORAL конфликтов
+_SECTOR_KEYWORDS: dict[str, list[str]] = {
+    "financial": [
+        "банк", "финансов", "кредит", "страхов", "ценные бумаги", "нбрк",
+        "bank", "finance", "credit", "insurance",
+    ],
+    "government": [
+        "государственн", "госорган", "акимат", "министерств", "уполномоченн",
+        "government", "public authority", "ministry",
+    ],
+    "healthcare": [
+        "медицин", "здравоохранен", "больниц", "клиник",
+        "health", "medical", "hospital",
+    ],
+}
+
+
+def _get_sector(text: str) -> str | None:
+    """Определяет сектор чанка по ключевым словам."""
+    text_lower = text.lower()
+    for sector, keywords in _SECTOR_KEYWORDS.items():
+        if any(kw in text_lower for kw in keywords):
+            return sector
+    return None
+
+
 def _detect_conflicts(chunks: list[EvidenceChunk], hierarchy_rank_delta: int) -> list[EvidenceChunk]:
     active = [c for c in chunks if not c.is_duplicate]
 
@@ -189,6 +219,7 @@ def _detect_conflicts(chunks: list[EvidenceChunk], hierarchy_rank_delta: int) ->
     _detect_temporal_conflicts(active)
     _detect_factual_conflicts(active)
     _detect_enforcement_gap_conflicts(active)
+    _detect_sectoral_conflicts(active)  # НОВОЕ v6.3
 
     return chunks
 
@@ -236,7 +267,10 @@ def _detect_hierarchy_conflicts(chunks: list[EvidenceChunk], rank_delta: int) ->
 
 # TEMPORAL
 def _detect_temporal_conflicts(chunks: list[EvidenceChunk]) -> None:
-    """TEMPORAL: Один law_id + article, разные effective_date."""
+    """
+    TEMPORAL: Один law_id + article, разные effective_date.
+    v6.3: Также детектирует по годам из текста (для web-источников без метаданных).
+    """
     key_map: dict[tuple[str, str], list[EvidenceChunk]] = {}
 
     for chunk in chunks:
@@ -256,6 +290,32 @@ def _detect_temporal_conflicts(chunks: list[EvidenceChunk]) -> None:
                         f"[S4/TEMPORAL] {law_id} ст.{article}: "
                         f"{a.effective_date} vs {b.effective_date}"
                     )
+
+    # Text-based temporal detection (для web-источников без метаданных effective_date)
+    law_map: dict[str, list[EvidenceChunk]] = {}
+    for chunk in chunks:
+        if chunk.law_id and not chunk.effective_date:  # только те, у кого нет метаданных
+            law_map.setdefault(chunk.law_id, []).append(chunk)
+
+    for law_id, group in law_map.items():
+        if len(group) < 2:
+            continue
+        # Извлекаем годы из текстов
+        chunk_years: list[set[int]] = []
+        for chunk in group:
+            years = {int(m.group(1)) for m in _YEAR_RE.finditer(chunk.content)}
+            chunk_years.append(years)
+        # Ищем пары с непересекающимися годами (>2 года разницы)
+        for (i, years_a), (j, years_b) in combinations(enumerate(chunk_years), 2):
+            if not years_a or not years_b:
+                continue
+            min_gap = min(abs(ya - yb) for ya in years_a for yb in years_b)
+            if min_gap > 2:
+                _mark_conflict(group[i], group[j], ConflictType.TEMPORAL)
+                logger.info(
+                    f"[S4/TEMPORAL/Text] {law_id}: year gap {min_gap}y "
+                    f"({min(years_a)} vs {max(years_b)})"
+                )
 
 
 # FACTUAL
@@ -362,15 +422,64 @@ def _detect_enforcement_gap_conflicts(chunks: list[EvidenceChunk]) -> None:
 def _has_enforcement_gap_markers(text: str) -> list[str]:
     """
     Ищет маркеры несоответствия нормы и практики.
+    v6.3: добавлены EN и KK маркеры.
     """
     markers = [
+        # RU
         "на практике", "фактически", "не исполняется", "игнорируется",
         "не применяется", "обходят", "коррупция", "не работает",
         "де-факто", "де факто", "в реальности", "нарушается",
-        "не соблюдается", "de facto",
+        "не соблюдается", "слабо исполняется", "де юре",
+        # EN
+        "de facto", "in practice", "not enforced", "rarely applied",
+        "compliance gap", "unenforced", "loophole", "workaround",
+        "circumvented", "paper law",
+        # KK
+        "іс жүзінде", "орындалмайды", "сақталмайды", "бұзылады",
     ]
     found = [m for m in markers if m.lower() in text.lower()]
     return found
+
+
+# SECTORAL (новое в v6.3)
+def _detect_sectoral_conflicts(chunks: list[EvidenceChunk]) -> None:
+    """
+    SECTORAL: Чанки об одном законе, но описывающие разные секторы
+    с разными числовыми требованиями → FACTUAL конфликт.
+    Пример: финансовый сектор (5% порог) vs. общие операторы (2% порог).
+    """
+    by_law: dict[str, list[EvidenceChunk]] = {}
+    for chunk in chunks:
+        if chunk.law_id:
+            by_law.setdefault(chunk.law_id, []).append(chunk)
+
+    for law_id, group in by_law.items():
+        if len(group) < 2:
+            continue
+
+        # Определяем секторы
+        chunk_sectors = [(chunk, _get_sector(chunk.content)) for chunk in group]
+        sectored = [(c, s) for c, s in chunk_sectors if s is not None]
+
+        if len(sectored) < 2:
+            continue
+
+        # Ищем пары с РАЗНЫМИ секторами
+        for (chunk_a, sector_a), (chunk_b, sector_b) in combinations(sectored, 2):
+            if sector_a == sector_b:
+                continue
+
+            # Проверяем: есть ли числовые расхождения между этими чанками
+            nums_a = _extract_legal_numbers(chunk_a.content)
+            nums_b = _extract_legal_numbers(chunk_b.content)
+            conflicts = _find_number_conflicts(nums_a, nums_b)
+
+            if conflicts:
+                _mark_conflict(chunk_a, chunk_b, ConflictType.FACTUAL)
+                logger.info(
+                    f"[S4/SECTORAL] {law_id}: {sector_a} vs {sector_b} "
+                    f"→ conflicting values: {conflicts[:2]}"
+                )
 
 
 # ---------------------------------------------------------------------------

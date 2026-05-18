@@ -28,7 +28,6 @@ dependencies = [
     # Dedup / NLP
     "numpy>=1.26.0",           # Cosine similarity
     "rank-bm25>=0.2.2",        # BM25 scoring (Auditor)
-    "scikit-learn>=1.4.0",     # TF-IDF cosine similarity (Hybrid Validator v6.3)
 
     # Math validation
     "sympy>=1.12",             # Arithmetic verification

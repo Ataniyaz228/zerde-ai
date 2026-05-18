@@ -1,12 +1,12 @@
 """
-ЗЕРДЕ v6.3 — Stage 6: The Auditor (HYBRID VALIDATOR)
+ЗЕРДЕ v6.2 — Stage 6: The Auditor (ПОЛНАЯ РЕАЛИЗАЦИЯ)
 Вход:  AnalysisJSON + list[EvidenceChunk]
 Выход: AnalysisJSON со статусами
 
-Улучшения v6.3:
-  1. Hybrid Scoring: score = 0.4*BM25 + 0.6*TF-IDF_cosine
-  2. Cross-Lingual Alignment: если языки claim и source разные — BM25 компонент = 0
-  3. Arithmetic check (sympy)
+Реализация:
+  1. Topology check: source_ids существуют в корпусе
+  2. BM25 scoring: rank_bm25.BM25Okapi, нормализованный score
+  3. Arithmetic check: sympy парсинг чисел
   Строго без Retry: ошибка → UNVERIFIED
 """
 
@@ -18,42 +18,33 @@ import string
 from typing import NamedTuple
 
 import numpy as np
-from langdetect import detect as _langdetect_detect
-from langdetect import LangDetectException
 from rank_bm25 import BM25Okapi
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine
 
 from zerde.config import get_settings
 from zerde.models import AnalysisJSON, EvidenceChunk, Fact, ValidationStatus
 
 logger = logging.getLogger(__name__)
 
-# Стоп-слова для токенизации (русский + казахский + юридические + английский)
+# Стоп-слова для BM25 токенизации (русский + казахский + юридические)
 _STOP_WORDS = frozenset([
     "и", "в", "на", "с", "по", "от", "до", "за", "при", "о", "об", "из",
     "или", "а", "но", "что", "как", "это", "не", "к", "для", "то",
     "же", "бы", "ли", "со", "да", "уж", "ведь", "вот", "ну", "ж",
-    "the", "a", "an", "of", "in", "is", "are", "was", "were", "to", "for",
+    "the", "a", "an", "of", "in", "is", "are", "was", "were",
     "жəне", "немесе", "бойынша", "туралы",
 ])
 
 # Regex для числовых утверждений
 _NUMBER_CLAIM_RE = re.compile(
     r"\b(\d[\d\s]{0,5}(?:[.,]\d{1,4})?)"
-    r"\s*(%|млн\.?|млрд\.?|тыс\.?|тг\.?|kzt|мрп|мзп|лет|месяц\w*|дн\w*|тенге|процент\w*)\\b",
+    r"\s*(%|млн\.?|млрд\.?|тыс\.?|тг\.?|kzt|мрп|мзп|лет|месяц\w*|дн\w*|тенге|процент\w*)\b",
     re.IGNORECASE,
 )
-
-# Кэш для определения языка (chunk_id → lang)
-_lang_cache: dict[str, str] = {}
 
 
 class AuditResult(NamedTuple):
     status: ValidationStatus
     bm25_score: float | None
-    cosine_score: float | None
-    hybrid_score: float | None
     arithmetic_ok: bool
 
 
@@ -67,7 +58,7 @@ def audit_analysis(
     chunks: list[EvidenceChunk],
 ) -> AnalysisJSON:
     """
-    Этап 6: Детерминированный аудит с Hybrid Validator. Строго без Retry.
+    Этап 6: Детерминированный аудит. Строго без Retry.
     Ошибка при любой проверке → UNVERIFIED.
     """
     settings = get_settings()
@@ -78,9 +69,6 @@ def audit_analysis(
     # Строим BM25 индекс
     bm25 = _build_bm25_index(corpus_index)
 
-    # Строим TF-IDF индекс для cosine similarity (multilingual-ready)
-    tfidf = _build_tfidf_index(corpus_index)
-
     scores: list[float] = []
 
     for fact in analysis.facts:
@@ -89,24 +77,22 @@ def audit_analysis(
                 fact,
                 corpus_index,
                 bm25,
-                tfidf,
-                settings.hybrid_threshold_high,
-                settings.hybrid_threshold_medium,
-                settings.hybrid_bm25_weight,
-                settings.hybrid_cosine_weight,
+                settings.validation_threshold,
+                settings.bm25_medium_threshold,
             )
             fact.validation_status = result.status
-            fact.bm25_score = result.hybrid_score  # Сохраняем hybrid как основной score
-            if result.hybrid_score is not None:
-                scores.append(result.hybrid_score)
+            fact.bm25_score = result.bm25_score
+            if result.bm25_score is not None:
+                scores.append(result.bm25_score)
         except Exception as e:
+            # Строго без Retry
             logger.warning(f"[S6] Fact '{fact.fact_id}' audit exception: {e}")
             fact.validation_status = ValidationStatus.UNVERIFIED
 
     # Audit выводов
     _audit_conclusions(analysis, corpus_index)
 
-    # Overall reliability на основе hybrid scores
+    # Overall reliability
     if scores:
         analysis.overall_reliability = float(np.mean(scores))
 
@@ -151,7 +137,8 @@ class ZerdeBM25:
         ]
         self._bm25 = BM25Okapi(tokenized_corpus)
 
-        # Нормализационный фактор
+        # Нормализационный фактор: max score по корпусу
+        # Используем первый документ как запрос для оценки масштаба
         sample_query = _tokenize(corpus_index[self._ids[0]].content[:200])
         raw_scores = self._bm25.get_scores(sample_query)
         self._max_score = float(np.max(raw_scores)) if len(raw_scores) > 0 else 1.0
@@ -159,7 +146,11 @@ class ZerdeBM25:
             self._max_score = 1.0
 
     def score(self, query: str, source_ids: list[str]) -> float:
-        """Вычисляет BM25 score. Возвращает нормализованный score [0, 1]."""
+        """
+        Вычисляет BM25 score между query и текстами source_ids.
+        Возвращает нормализованный score [0, 1].
+        Если source_ids не в корпусе → 0.0.
+        """
         if not self._bm25 or not source_ids:
             return 0.0
 
@@ -172,6 +163,8 @@ class ZerdeBM25:
             return 0.0
 
         raw_scores = self._bm25.get_scores(query_tokens)
+
+        # Собираем scores только для source_ids
         id_to_idx = {cid: i for i, cid in enumerate(self._ids)}
         source_scores = [
             raw_scores[id_to_idx[sid]]
@@ -182,110 +175,32 @@ class ZerdeBM25:
         if not source_scores:
             return 0.0
 
+        # Берём максимальный из source scores и нормализуем
         best_raw = float(np.max(source_scores))
         normalized = min(1.0, best_raw / self._max_score)
         return max(0.0, normalized)
 
 
 def _build_bm25_index(corpus_index: dict[str, EvidenceChunk]) -> ZerdeBM25:
+    """Строит BM25 индекс. Логирует размер."""
     bm25 = ZerdeBM25(corpus_index)
     logger.info(f"[S6/BM25] Index built: {len(corpus_index)} documents")
     return bm25
 
 
-# ---------------------------------------------------------------------------
-# TF-IDF Cosine Index (Hybrid Validator — Cross-Lingual aware)
-# ---------------------------------------------------------------------------
-
-
-class ZerdeTfidfIndex:
+def _tokenize(text: str) -> list[str]:
     """
-    TF-IDF + cosine similarity index для семантического сравнения.
-    Работает cross-lingually через символьные n-gramы (char_wb, analyzer='char_wb').
-    Не требует PyTorch, весит ~10МБ.
+    Токенизация для BM25: lowercase + удаление пунктуации + стоп-слова.
     """
-
-    def __init__(self, corpus_index: dict[str, EvidenceChunk]) -> None:
-        self._index = corpus_index
-        self._ids = list(corpus_index.keys())
-        self._vectorizer: TfidfVectorizer | None = None
-        self._matrix = None
-
-        if not self._ids:
-            return
-
-        # char-level n-gramы: работают для RU/KK/EN без предобучения
-        self._vectorizer = TfidfVectorizer(
-            analyzer="char_wb",
-            ngram_range=(3, 5),
-            max_features=30_000,
-            sublinear_tf=True,
-        )
-        corpus_texts = [corpus_index[cid].content[:4000] for cid in self._ids]
-        try:
-            self._matrix = self._vectorizer.fit_transform(corpus_texts)
-            logger.info(f"[S6/TF-IDF] Index built: {len(self._ids)} docs, "
-                        f"{self._matrix.shape[1]} features")
-        except Exception as e:
-            logger.warning(f"[S6/TF-IDF] Build failed: {e}")
-            self._vectorizer = None
-
-    def score(self, query: str, source_ids: list[str]) -> float:
-        """Cosine similarity между query и лучшим из source_ids."""
-        if self._vectorizer is None or self._matrix is None or not source_ids:
-            return 0.0
-
-        valid_ids = [sid for sid in source_ids if sid in self._index]
-        if not valid_ids:
-            return 0.0
-
-        try:
-            query_vec = self._vectorizer.transform([query[:2000]])
-            id_to_idx = {cid: i for i, cid in enumerate(self._ids)}
-            source_indices = [id_to_idx[sid] for sid in valid_ids if sid in id_to_idx]
-
-            if not source_indices:
-                return 0.0
-
-            source_matrix = self._matrix[source_indices]
-            sims = sklearn_cosine(query_vec, source_matrix)[0]
-            return float(np.max(sims))
-        except Exception as e:
-            logger.debug(f"[S6/TF-IDF] Score error: {e}")
-            return 0.0
-
-
-def _build_tfidf_index(corpus_index: dict[str, EvidenceChunk]) -> ZerdeTfidfIndex:
-    return ZerdeTfidfIndex(corpus_index)
+    text = text.lower()
+    # Удаляем пунктуацию (кроме дефиса в словах)
+    text = re.sub(r"[^\w\s\-]", " ", text)
+    tokens = text.split()
+    return [t for t in tokens if len(t) > 2 and t not in _STOP_WORDS]
 
 
 # ---------------------------------------------------------------------------
-# Language Detection (Cross-Lingual Alignment)
-# ---------------------------------------------------------------------------
-
-
-def _detect_lang(text: str, chunk_id: str | None = None) -> str:
-    """
-    Определяет язык текста через langdetect.
-    Возвращает ISO 639-1 код или 'unknown'.
-    Кэширует результат по chunk_id если передан.
-    """
-    if chunk_id and chunk_id in _lang_cache:
-        return _lang_cache[chunk_id]
-
-    try:
-        lang = _langdetect_detect(text[:1000])
-    except LangDetectException:
-        lang = "unknown"
-
-    if chunk_id:
-        _lang_cache[chunk_id] = lang
-
-    return lang
-
-
-# ---------------------------------------------------------------------------
-# Fact Audit — Hybrid
+# Fact Audit
 # ---------------------------------------------------------------------------
 
 
@@ -293,67 +208,33 @@ def _audit_fact(
     fact: Fact,
     corpus_index: dict[str, EvidenceChunk],
     bm25: ZerdeBM25,
-    tfidf: ZerdeTfidfIndex,
     high_threshold: float,
     medium_threshold: float,
-    bm25_weight: float,
-    cosine_weight: float,
 ) -> AuditResult:
     """
-    Аудит одного факта с Hybrid Scoring.
-    Без catch — исключения всплывают наверх.
+    Аудит одного факта. Без catch — исключения всплывают наверх.
     """
     # 1. Topology
     if not _check_topology(fact, corpus_index):
-        return AuditResult(ValidationStatus.UNVERIFIED, None, None, None, False)
+        return AuditResult(ValidationStatus.UNVERIFIED, None, False)
 
-    # Специальный случай: UNLINKED facts
+    # Специальный случай: UNLINKED facts от LLM без источников
     if fact.source_ids == ["UNLINKED"]:
-        return AuditResult(ValidationStatus.UNVERIFIED, 0.0, 0.0, 0.0, False)
+        return AuditResult(ValidationStatus.UNVERIFIED, 0.0, False)
 
-    # 2. Определяем языки для Cross-Lingual Alignment
-    claim_lang = _detect_lang(fact.claim)
-    source_langs = set()
-    for sid in fact.source_ids:
-        if sid in corpus_index and sid != "UNLINKED":
-            chunk = corpus_index[sid]
-            source_langs.add(_detect_lang(chunk.content[:500], chunk_id=sid))
-
-    # Cross-lingual: если claim и ВСЕ источники на разных языках → BM25 не работает
-    is_cross_lingual = bool(source_langs) and all(
-        lang != claim_lang and lang != "unknown" for lang in source_langs
-    )
-
-    # 3. BM25 score
+    # 2. BM25
     bm25_score = bm25.score(fact.claim, fact.source_ids)
 
-    # 4. TF-IDF Cosine score (работает cross-lingually через char n-gramы)
-    cosine_score = tfidf.score(fact.claim, fact.source_ids)
-
-    # 5. Hybrid score
-    if is_cross_lingual:
-        # Cross-lingual: только cosine (char n-gramы частично инвариантны к языку)
-        hybrid = cosine_score
-        logger.debug(
-            f"[S6/CrossLingual] {fact.fact_id}: claim={claim_lang} "
-            f"sources={source_langs} → BM25 bypassed, cosine={cosine_score:.3f}"
-        )
-    else:
-        hybrid = bm25_weight * bm25_score + cosine_weight * cosine_score
-
-    logger.debug(
-        f"[S6/Hybrid] {fact.fact_id}: bm25={bm25_score:.3f} "
-        f"cosine={cosine_score:.3f} hybrid={hybrid:.3f} "
-        f"cross_lingual={is_cross_lingual}"
-    )
-
-    # 6. Arithmetic check
+    # 3. Arithmetic
     arithmetic_ok = _arithmetic_check(fact, corpus_index)
     if not arithmetic_ok:
-        hybrid *= 0.5
+        # Числовое расхождение → понижаем статус
+        adjusted_score = bm25_score * 0.5
+        status = _score_to_status(adjusted_score, high_threshold, medium_threshold)
+        return AuditResult(status, bm25_score, False)
 
-    status = _score_to_status(hybrid, high_threshold, medium_threshold)
-    return AuditResult(status, bm25_score, cosine_score, hybrid, arithmetic_ok)
+    status = _score_to_status(bm25_score, high_threshold, medium_threshold)
+    return AuditResult(status, bm25_score, True)
 
 
 def _score_to_status(
@@ -398,11 +279,12 @@ def _check_topology(fact: Fact, corpus_index: dict[str, EvidenceChunk]) -> bool:
 def _arithmetic_check(fact: Fact, corpus_index: dict[str, EvidenceChunk]) -> bool:
     """
     Проверяет числа в claim против оригинальных источников.
+    Использует sympy для нормализации чисел.
     Возвращает True если конфликтов не найдено.
     """
     claim_numbers = _extract_numbers_with_units(fact.claim)
     if not claim_numbers:
-        return True
+        return True  # Нет чисел — проверять нечего
 
     source_texts = " ".join(
         corpus_index[sid].content
@@ -414,16 +296,19 @@ def _arithmetic_check(fact: Fact, corpus_index: dict[str, EvidenceChunk]) -> boo
 
     source_numbers = _extract_numbers_with_units(source_texts)
 
+    # Для каждого числа из claim ищем подтверждение в источниках
     for unit, claim_values in claim_numbers.items():
         if unit not in source_numbers:
-            continue
+            continue  # Эта единица не упоминается в источниках — OK
 
         source_values = source_numbers[unit]
         claim_sym = _normalize_numbers(claim_values)
         source_sym = _normalize_numbers(source_values)
 
+        # Конфликт: claim утверждает значение, которого нет ни в одном источнике
         for cv in claim_sym:
             if source_sym and cv not in source_sym:
+                # Допускаем 5% погрешность для округлений
                 if not any(abs(cv - sv) / max(abs(sv), 0.001) < 0.05 for sv in source_sym):
                     logger.warning(
                         f"[S6/Arithmetic] Fact '{fact.fact_id}': "
@@ -449,7 +334,7 @@ def _normalize_numbers(num_strings: set[str]) -> set[float]:
     result: set[float] = set()
     for s in num_strings:
         try:
-            from sympy import sympify
+            from sympy import Float, sympify
             val = float(sympify(s.replace(" ", "")))
             result.add(val)
         except Exception:
@@ -458,14 +343,6 @@ def _normalize_numbers(num_strings: set[str]) -> set[float]:
             except ValueError:
                 pass
     return result
-
-
-def _tokenize(text: str) -> list[str]:
-    """Токенизация для BM25: lowercase + пунктуация + стоп-слова."""
-    text = text.lower()
-    text = re.sub(r"[^\w\s\-]", " ", text)
-    tokens = text.split()
-    return [t for t in tokens if len(t) > 2 and t not in _STOP_WORDS]
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +358,7 @@ def _audit_conclusions(
     fact_ids = {f.fact_id for f in analysis.facts}
 
     for conclusion in analysis.conclusions:
+        # Topology
         valid_sources = [
             sid for sid in conclusion.source_ids
             if sid not in ("UNLINKED",) and sid in corpus_index

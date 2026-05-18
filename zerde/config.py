@@ -112,38 +112,19 @@ class Settings(BaseSettings):
     )
 
     # -----------------------------------------------------------------------
-    # Auditor — Hybrid Validator (BM25 + TF-IDF Cosine)
+    # Auditor / BM25
     # -----------------------------------------------------------------------
-    # Веса гибридного скора: hybrid = bm25_weight * BM25 + cosine_weight * Cosine
-    hybrid_bm25_weight: float = Field(default=0.4, ge=0.0, le=1.0)
-    hybrid_cosine_weight: float = Field(default=0.6, ge=0.0, le=1.0)
-
-    # Пороги гибридного скора (заменяют BM25-only пороги)
-    hybrid_threshold_high: float = Field(
-        default=0.55,
-        ge=0.0,
-        le=1.0,
-        description="Hybrid-score порог для статуса HIGH. ~0.55 оптимально для multilingual.",
-    )
-    hybrid_threshold_medium: float = Field(
-        default=0.30,
-        ge=0.0,
-        le=1.0,
-        description="Hybrid-score порог для статуса MEDIUM (ниже → LOW)",
-    )
-
-    # Обратная совместимость (используется только если явно задан в .env)
     validation_threshold: float = Field(
         default=0.35,
         ge=0.0,
         le=1.0,
-        description="[Legacy] BM25-only порог. Используй hybrid_threshold_high вместо него.",
+        description="BM25 порог для статуса HIGH (VALIDATION_THRESHOLD). Калибруй через scripts/calibrate_bm25.py",
     )
     bm25_medium_threshold: float = Field(
         default=0.15,
         ge=0.0,
         le=1.0,
-        description="[Legacy] BM25-only MEDIUM порог. Используй hybrid_threshold_medium вместо него.",
+        description="BM25 порог для статуса MEDIUM (ниже → LOW)",
     )
 
     # -----------------------------------------------------------------------

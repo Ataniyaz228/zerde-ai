@@ -9,24 +9,24 @@ _PLANNER_SYSTEM_SCHEMA = """
 {
   "adilet_queries": [
     {
-      "query_text": "...",
-      "law_ids": ["550-IV", ...],
-      "articles": ["15", "15-1", ...],
-      "date_from": "YYYY-MM-DD",  // optional
-      "date_to": "YYYY-MM-DD"    // optional
+      "query_text": "Название закона",
+      "law_ids": ["550-IV"],
+      "articles": ["15", "15-1"],
+      "date_from": "2020-01-01",
+      "date_to": "2023-12-31"
     }
   ],
   "web_queries_ru": [
     {
-      "query_text": "...",
-      "include_domains": ["gov.kz", ...],  // optional
+      "query_text": "запрос",
+      "include_domains": ["gov.kz"],
       "max_results": 10
     }
   ],
-  "web_queries_kk": [...],
-  "web_queries_en": [...],
-  "expected_elements": ["список ожидаемых элементов анализа"],
-  "bylaw_triggers": ["список потенциальных подзаконных актов"]
+  "web_queries_kk": [],
+  "web_queries_en": [],
+  "expected_elements": ["элемент 1"],
+  "bylaw_triggers": ["акт 1"]
 }
 """
 

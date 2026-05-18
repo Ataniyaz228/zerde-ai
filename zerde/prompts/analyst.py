@@ -12,7 +12,7 @@ _ANALYST_SCHEMA = """
   "facts": [
     {
       "claim": "Точное фактическое утверждение",
-      "source_ids": ["СКОПИРУЙ_ТОЧНЫЙ_ID_ИЗ_SOURCE_ID"],  // ОБЯЗАТЕЛЬНО минимум 1. КОПИРУЙ ДОСЛОВНО из ### SOURCE_ID: выше
+      "source_ids": ["СКОПИРУЙ_ТОЧНЫЙ_ID_ИЗ_SOURCE_ID"],
       "confidence": 0.95
     }
   ],

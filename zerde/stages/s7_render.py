@@ -124,7 +124,7 @@ async def render_report(
 def _render_header(analysis: AnalysisJSON) -> str:
     """Заголовок отчёта."""
     return (
-        f"# 🏛️ ЗЕРДЕ v6.2 — Юридический Анализ\n\n"
+        f"# 🏛️ ЗЕРДЕ - Юридический Анализ\n\n"
         f"**ID анализа:** `{analysis.analysis_id}`  \n"
         f"**Дата:** {analysis.analyzed_at.strftime('%d.%m.%Y %H:%M')} UTC  \n"
         f"**Модель:** `{analysis.llm_model_used}`  \n"
@@ -134,11 +134,16 @@ def _render_header(analysis: AnalysisJSON) -> str:
 def _render_executive_summary(analysis: AnalysisJSON) -> str:
     """Executive Summary секция."""
     reliability_bar = _reliability_bar(analysis.overall_reliability)
+    confirmed = sum(1 for v in analysis.verdicts if v.status.value == "CONFIRMED")
+    contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
+    unverified = sum(1 for v in analysis.verdicts if v.status.value == "UNVERIFIED")
+
     return (
         f"## 📋 Executive Summary\n\n"
         f"{reliability_bar}\n\n"
-        f"- **Фактов подтверждено:** {analysis.validated_facts_count} / {len(analysis.facts)}\n"
-        f"- **Неверифицировано:** {analysis.unverified_facts_count}\n"
+        f"- **Подтверждено (✅):** {confirmed}\n"
+        f"- **Опровергнуто (❌):** {contradicted}\n"
+        f"- **Не проверено (⚠️):** {unverified}\n"
         f"- **Выводов:** {len(analysis.conclusions)}\n"
         f"- **Пробелов регулирования:** {len(analysis.negative_space)}\n"
     )

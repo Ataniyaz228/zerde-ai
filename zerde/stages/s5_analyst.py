@@ -301,7 +301,7 @@ def _parse_conclusions(raw_list: list) -> list[Conclusion]:
             conclusion_id=f"conc_{i:04d}",
             statement=statement,
             reasoning_type=reasoning,  # type: ignore[arg-type]
-            supporting_fact_ids=_safe_str_list(item.get("supporting_fact_ids", [])),
+            supporting_fact_ids=_safe_str_list(item.get("supporting_fact_ids", [])) or ["UNLINKED"],
             source_ids=_safe_str_list(item.get("source_ids", [])) or ["UNLINKED"],
         ))
     return result

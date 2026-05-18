@@ -67,6 +67,7 @@ async def run_analyst(chunks: list[EvidenceChunk], plan: QueryPlan) -> AnalysisJ
     else:
         prompt = build_analyst_prompt(active, plan, conflict_ids)
         raw_json = await _call_analyst_with_retry(client, prompt, settings)
+        _save_raw_response(raw_json)
         analysis = _parse_analysis(raw_json, plan, settings.llm_model_analyst)
 
     _validate_conflict_coverage(analysis, conflict_ids)
@@ -76,6 +77,16 @@ async def run_analyst(chunks: list[EvidenceChunk], plan: QueryPlan) -> AnalysisJ
         f"neg_space={len(analysis.negative_space)}"
     )
     return analysis
+
+
+def _save_raw_response(data: dict) -> None:
+    """Сохраняет сырой JSON на случай падения парсера для отладки без траты токенов."""
+    try:
+        with open("last_analyst_raw_response.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.info("[S5] Raw Analyst JSON saved to last_analyst_raw_response.json")
+    except Exception as e:
+        logger.warning(f"[S5] Failed to save raw response: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +188,7 @@ async def _run_chunked_analysis(
 
     # Синтез: объединяем все результаты
     merged = _merge_partial_analyses(partial_analyses)
+    _save_raw_response(merged)
     return _parse_analysis(merged, plan, settings.llm_model_analyst)
 
 

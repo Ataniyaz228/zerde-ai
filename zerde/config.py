@@ -53,16 +53,25 @@ class Settings(BaseSettings):
     # LLM Models
     # -----------------------------------------------------------------------
     llm_model_planner: str = Field(
-        default="deepseek/deepseek-v4-flash:free",
-        description="ID модели для Этапа 2 (Planner) и простых задач. Должна хорошо поддерживать JSON.",
+        default="moonshotai/kimi-k2.6",
+        description="ID модели для Этапа 2 (Planner). Kimi K2.6 — стабильный JSON, не обрезает вывод.",
+    )
+    llm_model_extractor: str = Field(
+        default="tencent/hy3-preview",
+        description="ID модели для Этапа 2.5 (Claim Extractor). Быстрая модель — простое извлечение фактов.",
     )
     llm_model_analyst: str = Field(
         default="deepseek/deepseek-v4-pro",
-        description="ID модели для Этапа 5 (Analyst). Рекомендуется мощная Reasoning модель.",
+        description="ID модели для Этапа 5 (Auditor). Рекомендуется мощная Reasoning модель.",
+    )
+    llm_model_renderer: str = Field(
+        default="deepseek/deepseek-chat",
+        description="ID модели для Этапа 7 (Renderer) и форматирования. Лёгкая быстрая модель.",
     )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=0.0)  # Zero — locked
-    llm_max_tokens_planner: int = Field(default=4096)
+    llm_max_tokens_planner: int = Field(default=8192, description="Увеличено с 4096: QueryPlan с 10+ запросами занимает 5-7K токенов")
     llm_max_tokens_analyst: int = Field(default=16384, description="DeepSeek R1 поддерживает до 32k")
+    llm_max_tokens_renderer: int = Field(default=8192)
 
     embedding_model: str = Field(
         default="text-embedding-3-small",
@@ -77,7 +86,7 @@ class Settings(BaseSettings):
         description="Твой сайт для OpenRouter dashboard",
     )
     openrouter_app_name: str = Field(
-        default="ЗЕРДЕ v6.2",
+        default="ЗЕРДЕ v7.0",
         description="Название приложения в OpenRouter dashboard",
     )
 

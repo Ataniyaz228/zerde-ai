@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Stage 4: Fusion & Quality Validation (ПОЛНАЯ РЕАЛИЗАЦИЯ)
+Stage 4: Fusion & Quality Validation
 Вход:  list[EvidenceChunk] (сырые)
 Выход: list[EvidenceChunk] (с флагами)
 
@@ -57,6 +57,104 @@ _SECTOR_KEYWORDS: dict[str, list[str]] = {
 
 _EMBEDDING_BATCH_SIZE = 50  # чанков за один API вызов
 
+# ---------------------------------------------------------------------------
+# ContentSpamFilter — детерминированный фильтр мусора (перед дедупликацией)
+# ---------------------------------------------------------------------------
+
+# URL-паттерны которые гарантируют мусор
+_SPAM_URL_PATTERNS: list[str] = [
+    "egov.kz/cms", "egov.kz/news", "egov.kz/mobile",
+    "/press/news/", "/press/article/", "/memleket/entities/",
+    "akimat.", "oq.gov.kz", "cert.gov.kz/news",
+    "pki.gov.kz", "eresidency.gov.kz",
+]
+
+# Контентные паттерны — новости, инструкции, пресс-релизы
+_SPAM_CONTENT_RE = re.compile(
+    r"eGov\s*Mobile|скачать\s*приложени|пошаговая\s*инструкц"
+    r"|войти\s*через|QR.?код|биометрическ.*идентификаци.*как"
+    r"|пресс.?релиз|новости\s*министерств"
+    r"|ЦОН\s*находится|государственная\s*корпорация.*граждан"
+    r"|удостоверение\s*личности.*заменить|eGov.*результат\w*",
+    re.IGNORECASE,
+)
+
+# Юридические сигналы — если нет НИ ОДНОГО из них → web-чанк бесполезен
+_LEGAL_SIGNAL_RE = re.compile(
+    r"стать[яиью]\s*\d+"
+    r"|№\s*\d+.{1,5}[IVXVIIIVIII]+"
+    r"|Кодекс\s*РК|Закон\s*РК|УК\s*РК|КоАП\s*РК"
+    r"|МРП|месячн\w+\s*расчетн"
+    r"|штраф|санкци|ответственност"
+    r"|пункт\s*\d+|часть\s*\d+"
+    # Расширенные сигналы для Tavily-источников:
+    r"|персональн\w+\s*данн"
+    r"|субъект\w*\s*данн|оператор\w*\s*данн"
+    r"|уведомлени|обработк\w+\s*данн"
+    r"|законопроект|нормативн|регулирован"
+    r"|согласи\w+\s*субъект|трансграничн"
+    r"|локализаци\w+\s*данн|локализаци\w+\s*сервер"
+    r"|уполномоченн\w+\s*орган|кибербезопасност|информационн\w+\s*безопасн"
+    r"|защит\w+\s*данн|конфиденциальн"
+    r"|биометрическ|идентификаци|дактилоскоп"
+    r"|цифров\w+\s*Казахстан|электронн\w+\s*правительств"
+    r"|административн\w+\s*правонарушен"
+    r"|уголовн\w+\s*ответственност",
+    re.IGNORECASE,
+)
+
+# URL-белый список: Tier-1 источники всегда пропускаются
+_TRUSTED_URL_PATTERNS: list[str] = [
+    "adilet.zan.kz", "online.zakon.kz", "prokuror.gov.kz",
+    "supreme.kz", "parlam.kz", "tengrinews.kz/zakon",
+    "informburo.kz", "zakon.kz",
+]
+
+
+def _is_spam(chunk: "EvidenceChunk") -> bool:
+    """
+    Детерминированный спам-фильтр для web-чанков.
+    Adilet-чанки всегда проходят.
+    Tier-1 URL (доверенные источники) пропускаются при наличии юр. сигналов.
+    """
+    # Adilet-источники — всегда доверяем
+    if chunk.adilet_fallback_used is not None:
+        return False
+
+    url = chunk.source_url.lower()
+    content = chunk.content
+
+    # 1. URL-блэклист
+    if any(pattern in url for pattern in _SPAM_URL_PATTERNS):
+        return True
+
+    # 2. Контентный спам
+    if _SPAM_CONTENT_RE.search(content):
+        return True
+
+    # 3. Слишком короткий web-чанк
+    if len(content) < 150:
+        return True
+
+    # 4. Нет юридических сигналов вообще (но доверенные URL пропускаем)
+    has_legal = _LEGAL_SIGNAL_RE.search(content)
+    is_trusted = any(t in url for t in _TRUSTED_URL_PATTERNS)
+
+    if not has_legal and not is_trusted:
+        return True
+
+    return False
+
+
+def _apply_spam_filter(chunks: list["EvidenceChunk"]) -> list["EvidenceChunk"]:
+    """Применяет спам-фильтр, логирует результат."""
+    before = len(chunks)
+    filtered = [c for c in chunks if not _is_spam(c)]
+    dropped = before - len(filtered)
+    if dropped:
+        logger.info(f"[S4/SpamFilter] Dropped {dropped} spam chunks ({before} → {len(filtered)})")
+    return filtered
+
 
 def _get_sector(text: str) -> str | None:
     """Определяет сектор чанка по ключевым словам."""
@@ -73,9 +171,12 @@ def _get_sector(text: str) -> str | None:
 
 
 async def fuse_and_validate(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
-    """Этап 4: Дедупликация + детерминированный поиск конфликтов."""
+    """Этап 4: Спам-фильтр + дедупликация + детерминированный поиск конфликтов."""
     settings = get_settings()
     logger.info(f"[S4] Fusion start. Input: {len(chunks)} chunks")
+
+    # 0. ContentSpamFilter — убираем мусор до дедупликации
+    chunks = _apply_spam_filter(chunks)
 
     # 1. SHA256
     chunks = _dedup_by_hash(chunks)

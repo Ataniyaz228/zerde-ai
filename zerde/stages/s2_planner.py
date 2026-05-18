@@ -28,7 +28,7 @@ from tenacity import (
 from zerde.config import get_settings
 from zerde.models import AdiletQuery, DocumentState, QueryPlan, WebQuery, WebTier
 from zerde.prompts.planner import build_planner_prompt
-from zerde.utils.llm_client import make_llm_client
+from zerde.utils.llm_client import cached_llm_call, make_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 async def build_query_plan(doc_state: DocumentState) -> QueryPlan:
     """
     Этап 2: LLM декомпозирует документ на структурированный план запросов.
+    Один документ = один план. При повторном запуске берётся из кэша (0 токенов).
     """
     settings = get_settings()
     client = make_llm_client(settings)
@@ -48,22 +49,55 @@ async def build_query_plan(doc_state: DocumentState) -> QueryPlan:
     logger.info(f"[S2] Building plan. doc_id={doc_state.doc_id[:8]}… chars={doc_state.char_count}")
 
     prompt = build_planner_prompt(doc_state.normalized_text)
+    system_msg = "JSON. Юридический планировщик РК. Только JSON по схеме. Без пояснений."
 
-    try:
-        raw_json = await _call_llm_with_retry(
-            client=client,
-            prompt=prompt,
-            model=settings.llm_model_planner,
-            max_tokens=settings.llm_max_tokens_planner,
-            system_msg=(
-                "Ты — юридический аналитик-планировщик для Республики Казахстан. "
-                "Отвечай ТОЛЬКО валидным JSON строго по указанной схеме. "
-                "Никакого текста кроме JSON."
-            ),
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": prompt},
+    ]
+
+    raw_json = {}
+    MAX_RETRIES = 3
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            raw_json = await cached_llm_call(
+                client=client,
+                model=settings.llm_model_planner,
+                messages=messages,
+                settings=settings,
+                ttl_seconds=None,
+                max_tokens=settings.llm_max_tokens_planner,
+            )
+        except Exception as e:
+            logger.error(f"[S2] LLM failed (attempt {attempt}/{MAX_RETRIES}): {e}")
+            raw_json = {}
+
+        # Проверяем что ответ содержит хоть какие-то запросы
+        has_queries = (
+            raw_json.get("adilet_queries")
+            or raw_json.get("web_queries_ru")
+            or raw_json.get("web_queries_kk")
+            or raw_json.get("web_queries_en")
         )
-    except Exception as e:
-        logger.error(f"[S2] LLM failed after retries: {e}. Returning empty plan.")
-        raw_json = {}
+        if has_queries:
+            break
+
+        logger.warning(
+            f"[S2] Attempt {attempt}/{MAX_RETRIES}: planner returned 0 queries. "
+            f"Response keys: {list(raw_json.keys()) if raw_json else 'empty'}"
+        )
+        # Инвалидируем кэш чтобы при retry получить новый ответ
+        from zerde.utils.cache import LLMCache
+        llm_cache = LLMCache(settings.cache_db_path)
+        prompt_key = json.dumps([{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}], ensure_ascii=False, sort_keys=True)
+        cache_key = LLMCache._make_key(settings.llm_model_planner, prompt_key)
+        llm_cache._delete(cache_key)
+        logger.info(f"[S2] Cache invalidated for retry {attempt + 1}")
+
+    # Сохраняем для отладки
+    with open("last_planner_raw_response.json", "w", encoding="utf-8") as f:
+        json.dump(raw_json, f, ensure_ascii=False, indent=2)
+    logger.info("[S2] Raw Planner JSON saved to last_planner_raw_response.json")
 
     plan = _parse_llm_plan(raw_json, doc_state)
     logger.info(

@@ -1,5 +1,5 @@
 """
-ЗЕРДЕ v6.2 — Pydantic Models (Core Data Contracts)
+Pydantic Models (Core Data Contracts)
 Все обмены между этапами СТРОГО через эти модели.
 """
 
@@ -162,6 +162,97 @@ class QueryPlan(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# 3.5. ЭТАП 2.5 — DocumentClaim (Claim Extractor)
+# ---------------------------------------------------------------------------
+
+
+class ClaimType(StrEnum):
+    """Тип проверяемого утверждения."""
+    LEGAL_ID = "legal_id"         # Номер закона, кодекса (87-IV, 94-V)
+    LEGAL_REF = "legal_ref"       # Ссылка на статью (ст. 207 УК, ст. 79 КоАП)
+    FINANCIAL = "financial"       # Числа, штрафы, МРП, суммы
+    TEMPORAL = "temporal"         # Сроки, даты вступления, сроки уведомлений
+    FACTUAL = "factual"           # Фактические утверждения (биометрия обязательна с 2026)
+    NORMATIVE = "normative"       # Утверждения о нормах (закон запрещает X)
+
+
+class ClaimSeverity(StrEnum):
+    """Приоритет проверки: чем критичнее — тем выше угроза легализовать ошибку."""
+    CRITICAL = "critical"   # Номера законов, статьи УК/КоАП, размеры штрафов
+    HIGH = "high"           # Даты, сроки уведомлений, МРП
+    MEDIUM = "medium"       # Фактические утверждения, нормы
+    LOW = "low"             # Общие описания, контекст
+
+
+class DocumentClaim(BaseModel):
+    """Одно проверяемое утверждение, извлечённое из входного документа."""
+
+    claim_id: str = Field(description="Уникальный ID утверждения (claim_0001 и т.д.)")
+    claim_text: str = Field(description="Точная формулировка утверждения")
+    quote: str = Field(default="", description="Прямая цитата из документа")
+    claim_type: ClaimType
+    severity: ClaimSeverity
+    entities: list[str] = Field(
+        default_factory=list,
+        description="Конкретные сущности (87-IV, 3450, ст.207, 500 МРП)",
+    )
+    # Заполняется детерминированно из reference_data.py (без LLM)
+    deterministic_verdict: str | None = Field(
+        default=None,
+        description="Вердикт из реестра НПА без LLM (например: '87-IV INVALID → правильный 94-V')",
+    )
+
+
+class VerdictStatus(StrEnum):
+    CONFIRMED = "CONFIRMED"         # Утверждение подтверждено источниками
+    CONTRADICTED = "CONTRADICTED"   # Утверждение опровергнуто источниками
+    UNVERIFIED = "UNVERIFIED"       # Нет данных в корпусе для проверки
+
+
+class ClaimVerdict(BaseModel):
+    """Результат верификации одного утверждения аналитиком."""
+
+    claim_id: str
+    status: VerdictStatus
+    source_ids: list[str] = Field(default_factory=list, description="chunk_id доказательств")
+    found_value: str | None = Field(
+        default=None,
+        description="Что реально найдено в источниках (напр: '94-V', '3932 тенге')",
+    )
+    document_value: str | None = Field(
+        default=None,
+        description="Что утверждает документ (напр: '87-IV', '3450 тенге')",
+    )
+    contradiction_detail: str | None = Field(
+        default=None,
+        description="Подробное описание противоречия",
+    )
+    confidence: Literal["HIGH", "MEDIUM", "LOW"] = "MEDIUM"
+    is_deterministic: bool = Field(
+        default=False,
+        description="True если вердикт вынесен из reference_data без LLM",
+    )
+
+
+class ClaimExtractionResult(BaseModel):
+    """Выход Stage 2.5: список извлечённых утверждений."""
+
+    doc_id: str
+    claims: list[DocumentClaim] = Field(default_factory=list)
+    extracted_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def critical_claims(self) -> list[DocumentClaim]:
+        return [c for c in self.claims if c.severity == ClaimSeverity.CRITICAL]
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def total_count(self) -> int:
+        return len(self.claims)
+
+
+# ---------------------------------------------------------------------------
 # 4. ЭТАП 3 — EvidenceChunk
 # ---------------------------------------------------------------------------
 
@@ -301,13 +392,20 @@ class AnalysisJSON(BaseModel):
     llm_model_used: str = ""
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
 
-    # Заполняется Аудитором
+    # Заполняется Аудитором (BM25 reliability)
     overall_reliability: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
         description="Средний BM25 score всех фактов",
     )
+
+    # Заполняется Claim Verifier (Stage 2.5 + Auditor v2)
+    verdicts: list[ClaimVerdict] = Field(
+        default_factory=list,
+        description="Вердикты по каждому утверждению документа",
+    )
+
 
     @computed_field  # type: ignore[misc]
     @property

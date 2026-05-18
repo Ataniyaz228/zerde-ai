@@ -75,6 +75,15 @@ async def render_report(
 
     # Индекс чанков для быстрого доступа
     corpus_index: dict[str, EvidenceChunk] = {c.chunk_id: c for c in chunks}
+    # Prefix index: 12-символьный prefix → полный chunk_id
+    # LLM возвращает обрезанные IDs — ищем по префиксу
+    prefix_index: dict[str, str] = {}
+    for cid in corpus_index:
+        for prefix_len in (12, 8):
+            pfx = cid[:prefix_len]
+            if pfx not in prefix_index:
+                prefix_index[pfx] = cid
+
     active_chunks = [c for c in chunks if not c.is_duplicate]
     conflict_chunks = [c for c in active_chunks if c.is_conflict]
 
@@ -83,7 +92,7 @@ async def render_report(
         _render_executive_summary(analysis),
         _render_normative_base(active_chunks),
         _render_conflicts(conflict_chunks),
-        _render_facts_and_conclusions(analysis, corpus_index),
+        _render_facts_and_conclusions(analysis, corpus_index, prefix_index),
         _render_negative_space(analysis),
         _render_normative_assessments(analysis),
         _render_pros_cons(analysis),
@@ -187,8 +196,10 @@ def _render_conflicts(conflict_chunks: list[EvidenceChunk]) -> str:
 def _render_facts_and_conclusions(
     analysis: AnalysisJSON,
     corpus_index: dict[str, EvidenceChunk],
+    prefix_index: dict[str, str],
 ) -> str:
     """Факты и выводы с источниками и статусами."""
+    virtual_ids = {"UNLINKED", "reference_data", "reference_da"}
     lines = ["## 🔍 Факты и Выводы\n"]
 
     if analysis.facts:
@@ -198,14 +209,24 @@ def _render_facts_and_conclusions(
             score_str = f" (BM25: {fact.bm25_score:.2f})" if fact.bm25_score is not None else ""
             lines.append(f"#### {icon} `{fact.fact_id}`{score_str}")
             lines.append(f"{fact.claim}\n")
-            if fact.source_ids:
+
+            # Рендерим только реальные источники (не виртуальные)
+            real_source_lines = []
+            for sid in fact.source_ids:
+                if sid in virtual_ids:
+                    continue  # reference_data / UNLINKED — не показываем
+                # Резолвим prefix → full ID
+                full_id = prefix_index.get(sid, sid)
+                chunk = corpus_index.get(full_id)
+                if chunk:
+                    real_source_lines.append(
+                        f"- [{chunk.source_title}]({chunk.source_url}) `{full_id[:12]}…`"
+                    )
+                # Не нашли — просто пропускаем (не засоряем отчёт)
+
+            if real_source_lines:
                 lines.append("**Источники:**")
-                for sid in fact.source_ids:
-                    chunk = corpus_index.get(sid)
-                    if chunk:
-                        lines.append(f"- [{chunk.source_title}]({chunk.source_url}) `{sid[:12]}…`")
-                    else:
-                        lines.append(f"- *(источник не найден)* `{sid[:12]}…`")
+                lines.extend(real_source_lines)
             lines.append("")
 
     if analysis.conclusions:

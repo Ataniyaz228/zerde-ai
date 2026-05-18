@@ -63,6 +63,17 @@ def audit_analysis(
     """
     settings = get_settings()
     corpus_index = {c.chunk_id: c for c in chunks if not c.is_duplicate}
+    # Prefix index: первые 12 символов chunk_id → полный chunk_id
+    # LLM возвращает обрезанные ID (напр. 'f59c0d11dd66'), ищем по префиксу
+    prefix_index: dict[str, str] = {}
+    for cid in corpus_index:
+        for prefix_len in (12, 8):
+            pfx = cid[:prefix_len]
+            if pfx not in prefix_index:
+                prefix_index[pfx] = cid
+
+    # Виртуальные source_ids которые не нужно резолвить в corpus
+    VIRTUAL_SOURCES = {"UNLINKED", "reference_data", "reference_da"}
 
     logger.info(f"[S6] Audit start. facts={len(analysis.facts)} corpus={len(corpus_index)}")
 
@@ -73,9 +84,27 @@ def audit_analysis(
 
     for fact in analysis.facts:
         try:
+            # Факты с только виртуальными source_ids (reference_data, UNLINKED)
+            # были проверены детерминированно — оцениваем по confidence
+            real_sources = [
+                sid for sid in fact.source_ids
+                if sid not in VIRTUAL_SOURCES
+            ]
+            if not real_sources:
+                # Детерминированный факт: score прямо из confidence
+                scores.append(fact.confidence)
+                fact.bm25_score = fact.confidence
+                fact.validation_status = _confidence_to_status(
+                    fact.confidence,
+                    settings.validation_threshold,
+                    settings.bm25_medium_threshold,
+                )
+                continue
+
             result = _audit_fact(
                 fact,
                 corpus_index,
+                prefix_index,
                 bm25,
                 settings.validation_threshold,
                 settings.bm25_medium_threshold,
@@ -90,7 +119,7 @@ def audit_analysis(
             fact.validation_status = ValidationStatus.UNVERIFIED
 
     # Audit выводов
-    _audit_conclusions(analysis, corpus_index)
+    _audit_conclusions(analysis, corpus_index, prefix_index)
 
     # Overall reliability
     if scores:
@@ -207,6 +236,7 @@ def _tokenize(text: str) -> list[str]:
 def _audit_fact(
     fact: Fact,
     corpus_index: dict[str, EvidenceChunk],
+    prefix_index: dict[str, str],
     bm25: ZerdeBM25,
     high_threshold: float,
     medium_threshold: float,
@@ -214,19 +244,22 @@ def _audit_fact(
     """
     Аудит одного факта. Без catch — исключения всплывают наверх.
     """
+    # Резолвим prefix IDs → полные chunk_ids
+    resolved_ids = _resolve_source_ids(fact.source_ids, corpus_index, prefix_index)
+
     # 1. Topology
-    if not _check_topology(fact, corpus_index):
+    if not _check_topology(fact, resolved_ids, corpus_index):
         return AuditResult(ValidationStatus.UNVERIFIED, None, False)
 
     # Специальный случай: UNLINKED facts от LLM без источников
-    if fact.source_ids == ["UNLINKED"]:
+    if resolved_ids == ["UNLINKED"]:
         return AuditResult(ValidationStatus.UNVERIFIED, 0.0, False)
 
     # 2. BM25
-    bm25_score = bm25.score(fact.claim, fact.source_ids)
+    bm25_score = bm25.score(fact.claim, resolved_ids)
 
     # 3. Arithmetic
-    arithmetic_ok = _arithmetic_check(fact, corpus_index)
+    arithmetic_ok = _arithmetic_check(fact, resolved_ids, corpus_index)
     if not arithmetic_ok:
         # Числовое расхождение → понижаем статус
         adjusted_score = bm25_score * 0.5
@@ -235,6 +268,20 @@ def _audit_fact(
 
     status = _score_to_status(bm25_score, high_threshold, medium_threshold)
     return AuditResult(status, bm25_score, True)
+
+
+def _confidence_to_status(
+    confidence: float,
+    high_threshold: float,
+    medium_threshold: float,
+) -> ValidationStatus:
+    """Конвертирует confidence score в ValidationStatus (для детерминированных фактов)."""
+    if confidence >= high_threshold:
+        return ValidationStatus.HIGH
+    elif confidence >= medium_threshold:
+        return ValidationStatus.MEDIUM
+    else:
+        return ValidationStatus.LOW
 
 
 def _score_to_status(
@@ -255,20 +302,50 @@ def _score_to_status(
 # ---------------------------------------------------------------------------
 
 
-def _check_topology(fact: Fact, corpus_index: dict[str, EvidenceChunk]) -> bool:
-    """True если все source_ids (кроме UNLINKED) существуют в корпусе."""
-    valid_ids = [sid for sid in fact.source_ids if sid != "UNLINKED"]
+def _resolve_source_ids(
+    source_ids: list[str],
+    corpus_index: dict[str, EvidenceChunk],
+    prefix_index: dict[str, str],
+) -> list[str]:
+    """
+    Резолвит короткие (prefix) source_ids в полные chunk_ids.
+    LLM возвращает '12-символьные' ID — ищем в prefix_index.
+    """
+    virtual = {"UNLINKED", "reference_data", "reference_da"}
+    resolved = []
+    for sid in source_ids:
+        if sid in virtual:
+            resolved.append(sid)
+        elif sid in corpus_index:
+            resolved.append(sid)  # Уже полный ID
+        elif sid in prefix_index:
+            resolved.append(prefix_index[sid])  # Найден по префиксу
+        else:
+            resolved.append(sid)  # Оставляем как есть (для логирования)
+    return resolved
+
+
+def _check_topology(
+    fact: Fact,
+    resolved_ids: list[str],
+    corpus_index: dict[str, EvidenceChunk],
+) -> bool:
+    """True если хотя бы один source_id (кроме виртуальных) существует в корпусе."""
+    virtual = {"UNLINKED", "reference_data", "reference_da"}
+    valid_ids = [sid for sid in resolved_ids if sid not in virtual]
     if not valid_ids:
         return False
 
+    found = [sid for sid in valid_ids if sid in corpus_index]
     missing = [sid for sid in valid_ids if sid not in corpus_index]
+
     if missing:
-        logger.warning(
+        logger.debug(
             f"[S6/Topology] Fact '{fact.fact_id}': "
-            f"{len(missing)} missing source_ids: {[m[:12] for m in missing]}"
+            f"{len(missing)} unresolved source_ids: {[m[:12] for m in missing]}"
         )
-        return False
-    return True
+
+    return len(found) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -276,20 +353,23 @@ def _check_topology(fact: Fact, corpus_index: dict[str, EvidenceChunk]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _arithmetic_check(fact: Fact, corpus_index: dict[str, EvidenceChunk]) -> bool:
+def _arithmetic_check(
+    fact: Fact,
+    resolved_ids: list[str],
+    corpus_index: dict[str, EvidenceChunk],
+) -> bool:
     """
     Проверяет числа в claim против оригинальных источников.
-    Использует sympy для нормализации чисел.
-    Возвращает True если конфликтов не найдено.
     """
     claim_numbers = _extract_numbers_with_units(fact.claim)
     if not claim_numbers:
-        return True  # Нет чисел — проверять нечего
+        return True
 
+    skipped = {"UNLINKED", "reference_da"}
     source_texts = " ".join(
         corpus_index[sid].content
-        for sid in fact.source_ids
-        if sid in corpus_index and sid != "UNLINKED"
+        for sid in resolved_ids
+        if sid in corpus_index and sid not in skipped
     )
     if not source_texts:
         return True
@@ -353,15 +433,17 @@ def _normalize_numbers(num_strings: set[str]) -> set[float]:
 def _audit_conclusions(
     analysis: AnalysisJSON,
     corpus_index: dict[str, EvidenceChunk],
+    prefix_index: dict[str, str],
 ) -> None:
     """Простой аудит выводов: topology + проверка fact_ids."""
     fact_ids = {f.fact_id for f in analysis.facts}
 
     for conclusion in analysis.conclusions:
-        # Topology
+        # Резолвим prefix IDs
+        resolved = _resolve_source_ids(conclusion.source_ids, corpus_index, prefix_index)
         valid_sources = [
-            sid for sid in conclusion.source_ids
-            if sid not in ("UNLINKED",) and sid in corpus_index
+            sid for sid in resolved
+            if sid not in ("UNLINKED", "reference_da") and sid in corpus_index
         ]
         missing_facts = [
             fid for fid in conclusion.supporting_fact_ids

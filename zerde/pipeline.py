@@ -1,21 +1,34 @@
 """
-ЗЕРДЕ v6.2 — Pipeline Orchestrator
-Связывает все 7 этапов в единый асинхронный пайплайн.
+ЗЕРДЕ v7.0 — Pipeline Orchestrator
+Связывает все этапы в единый асинхронный пайплайн.
+
+v7.0 изменения:
+  - Stage 2.5: Claim Extractor (гибридный regex + LLM)
+  - Stage 5: run_auditor() вместо run_analyst() — claim-by-claim верификация
+  - reference_data.py: детерминированные вердикты без LLM
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
 
 from zerde.config import get_settings
-from zerde.models import AnalysisJSON, DocumentState, EvidenceChunk, QueryPlan
+from zerde.models import (
+    AnalysisJSON,
+    ClaimExtractionResult,
+    DocumentState,
+    EvidenceChunk,
+    QueryPlan,
+)
 from zerde.stages.s1_ingest import ingest_document
 from zerde.stages.s2_planner import build_query_plan
+from zerde.stages.s2_5_claim_extractor import extract_claims
 from zerde.stages.s3_gather import gather_evidence
 from zerde.stages.s4_fusion import fuse_and_validate
-from zerde.stages.s5_analyst import run_analyst
+from zerde.stages.s5_analyst import run_auditor
 from zerde.stages.s6_auditor import audit_analysis
 from zerde.stages.s7_render import render_report
 
@@ -30,6 +43,7 @@ class ZerdePipelineResult(dict):
 
     doc_state: DocumentState
     query_plan: QueryPlan
+    claims: ClaimExtractionResult
     raw_chunks: list[EvidenceChunk]
     fused_chunks: list[EvidenceChunk]
     analysis: AnalysisJSON
@@ -43,7 +57,10 @@ async def run_pipeline(
     output_path: str | Path | None = None,
 ) -> ZerdePipelineResult:
     """
-    Запускает полный пайплайн ЗЕРДЕ v6.2 от файла до Markdown-отчёта.
+    Запускает полный пайплайн ЗЕРДЕ v7.0 от файла до Markdown-отчёта.
+
+    Архитектура v7.0 (Auditor mode):
+      S1 → S2 → S2.5 → S3 → S4 → S5(Auditor) → S6 → S7
 
     Args:
         file_path: Путь к входному документу (PDF/DOCX/TXT).
@@ -56,7 +73,7 @@ async def run_pipeline(
     start_time = time.perf_counter()
 
     logger.info("=" * 60)
-    logger.info("ЗЕРДЕ v6.2 — Pipeline Start")
+    logger.info("ЗЕРДЕ v7.0 — Pipeline Start (Auditor Mode)")
     logger.info(f"Input: {file_path}")
     logger.info("=" * 60)
 
@@ -64,13 +81,21 @@ async def run_pipeline(
     t1 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 1: Document Ingestion")
     doc_state = await ingest_document(file_path)
-    logger.info(f"[Pipeline] ✓ Stage 1 done ({time.perf_counter() - t1:.2f}s)")
+    logger.info(f"[Pipeline] ✓ Stage 1 done ({time.perf_counter() - t1:.2f}s) — {doc_state.char_count} chars")
 
-    # ─── ЭТАП 2: LLM Planner ─────────────────────────────────────────────
+    # ─── ЭТАП 2 + 2.5: LLM Planner и Claim Extractor (ПАРАЛЛЕЛЬНО) ────────────
     t2 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 2: LLM Planner")
-    query_plan = await build_query_plan(doc_state)
-    logger.info(f"[Pipeline] ✓ Stage 2 done ({time.perf_counter() - t2:.2f}s)")
+    logger.info("[Pipeline] ► Stage 2 + 2.5: LLM Planner и Claim Extractor (параллельно)")
+    query_plan, claims = await asyncio.gather(
+        build_query_plan(doc_state),
+        extract_claims(doc_state),
+    )
+    elapsed_2 = time.perf_counter() - t2
+    logger.info(
+        f"[Pipeline] ✓ Stage 2 done — {query_plan.total_queries} queries | "
+        f"Stage 2.5 done — {claims.total_count} claims ({len(claims.critical_claims)} critical) "
+        f"| время: {elapsed_2:.2f}s"
+    )
 
     # ─── ЭТАП 3: Data Gathering ───────────────────────────────────────────
     t3 = time.perf_counter()
@@ -85,11 +110,20 @@ async def run_pipeline(
     active_chunks = [c for c in fused_chunks if not c.is_duplicate]
     logger.info(f"[Pipeline] ✓ Stage 4 done ({time.perf_counter() - t4:.2f}s) — {len(active_chunks)} active")
 
-    # ─── ЭТАП 5: LLM Analyst ─────────────────────────────────────────────
+    # ─── ЭТАП 5: LLM Auditor (claim-by-claim) ────────────────────────────
     t5 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 5: LLM Analyst")
-    analysis = await run_analyst(active_chunks, query_plan)
-    logger.info(f"[Pipeline] ✓ Stage 5 done ({time.perf_counter() - t5:.2f}s)")
+    logger.info("[Pipeline] ► Stage 5: LLM Auditor (claim-by-claim verification)")
+    analysis = await run_auditor(
+        chunks=active_chunks,
+        plan=query_plan,
+        claims=claims,
+        doc_text=doc_state.normalized_text,
+    )
+    contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
+    logger.info(
+        f"[Pipeline] ✓ Stage 5 done ({time.perf_counter() - t5:.2f}s) — "
+        f"verdicts={len(analysis.verdicts)} contradicted={contradicted}"
+    )
 
     # ─── ЭТАП 6: Auditor ─────────────────────────────────────────────────
     t6 = time.perf_counter()
@@ -107,10 +141,11 @@ async def run_pipeline(
     total_elapsed = time.perf_counter() - start_time
 
     logger.info("=" * 60)
-    logger.info(f"ЗЕРДЕ v6.2 — Pipeline Complete ({total_elapsed:.2f}s)")
+    logger.info(f"ЗЕРДЕ v7.0 — Pipeline Complete ({total_elapsed:.2f}s)")
     logger.info(
-        f"Facts: {len(audited_analysis.facts)} | "
-        f"Validated: {audited_analysis.validated_facts_count} | "
+        f"Claims: {claims.total_count} | "
+        f"Verdicts: {len(audited_analysis.verdicts)} | "
+        f"Contradicted: {contradicted} | "
         f"Reliability: {audited_analysis.overall_reliability or 'N/A'}"
     )
     logger.info("=" * 60)
@@ -118,6 +153,7 @@ async def run_pipeline(
     result = ZerdePipelineResult(
         doc_state=doc_state,
         query_plan=query_plan,
+        claims=claims,
         raw_chunks=raw_chunks,
         fused_chunks=fused_chunks,
         analysis=audited_analysis,

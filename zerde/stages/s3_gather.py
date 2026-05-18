@@ -48,6 +48,87 @@ logger = logging.getLogger(__name__)
 _ADILET_SEMAPHORE = asyncio.Semaphore(3)
 _WEB_SEMAPHORE = asyncio.Semaphore(5)
 
+# ---------------------------------------------------------------------------
+# Нормализация Law ID для Adilet
+# ---------------------------------------------------------------------------
+
+# Известные маппинги коротких ID на полные Adilet-коды
+_LAW_ID_KNOWN: dict[str, str] = {
+    # Законы РК
+    "94-V": "Z1300000094",
+    "87-IV": "Z1300000094",   # исправленное отображение ошибки в документе
+    "418-V": "Z1500000418",
+    "370-II": "Z030000370_",
+    "550-IV": "Z1300000550",
+    "401-II": "Z0300000401",
+    "73-V": "Z1300000073",
+    "223-VIII": "Z1700000223",
+    "240-IV": "Z1100000240",
+    # Кодексы РК
+    "235-V": "K1400000235",
+    "226-V": "K1400000226",
+    "350-VI": "K2000000350",
+    "212-IV": "K070000212_",
+    # Уголовный кодекс
+    "226-V-UK": "K1400000226",
+}
+
+_LAW_ID_PREFIX_MAP: dict[str, str] = {
+    "I": "Z",    # Законы РК (I, II, III, IV, V, VI...)
+    "V": "Z",
+    "IV": "Z",
+    "III": "Z",
+    "II": "Z",
+    "VI": "Z",
+    "VII": "Z",
+    "VIII": "Z",
+}
+
+
+def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
+    """
+    Преобразует краткий ID (напр. '94-V') в список URL-вариантов для Adilet.
+    Приоритет: known map → минимальные эвристики.
+    """
+    urls: list[str] = []
+
+    # 1. Known exact mapping — если есть, возвращаем ONLY this
+    if law_id in _LAW_ID_KNOWN:
+        adilet_code = _LAW_ID_KNOWN[law_id]
+        urls.append(f"{base}/rus/docs/{adilet_code}")
+        return urls  # Точный маппинг — не нужны переборы
+
+    # 2. Генерик преобразование для неизвестных ID (3-4 варианта вместо 14)
+    m = re.match(r"^(\d+)-([A-Z]+)$", law_id)
+    if m:
+        num_str = m.group(1).zfill(4)
+        suffix = m.group(2)
+        # Ограниченный набор годов: поколению суффикса
+        year_map = {
+            "I": ["90", "95"],
+            "II": ["03", "04", "05"],
+            "III": ["06", "07"],
+            "IV": ["09", "10", "11", "12"],
+            "V": ["13", "14", "15"],
+            "VI": ["16", "17", "18"],
+            "VII": ["19", "20"],
+            "VIII": ["21", "22", "23"],
+        }
+        years = year_map.get(suffix, ["13", "14", "15"])
+        prefix = "K" if int(m.group(1)) > 200 and suffix in ("IV", "V", "VI") else "Z"
+        for yr in years:
+            candidate = f"{prefix}{yr}0000{num_str}"
+            url = f"{base}/rus/docs/{candidate}"
+            if url not in urls:
+                urls.append(url)
+
+    # 3. As-is
+    as_is = f"{base}/rus/docs/{law_id}"
+    if as_is not in urls:
+        urls.append(as_is)
+
+    return urls
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -95,7 +176,9 @@ async def _run_adilet_agent(queries: list[AdiletQuery], cache: CacheManager) -> 
 
 async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -> list[EvidenceChunk]:
     async with _ADILET_SEMAPHORE:
-        for strategy_fn in [_try_adilet_xhr, _try_adilet_css_selectors, _try_adilet_pdf_ocr]:
+        # XHR пропускаем — Adilet не имеет JSON API (всегда 404).
+        # Сразу CSS → PDF.
+        for strategy_fn in [_try_adilet_css_selectors, _try_adilet_pdf_ocr]:
             try:
                 chunks = await strategy_fn(query, cache)
                 if chunks:
@@ -132,30 +215,22 @@ async def _try_adilet_xhr(query: AdiletQuery, cache: CacheManager) -> list[Evide
         headers={"Accept": "application/json", "User-Agent": "ZERDE/6.2"},
     ) as client:
         for law_id in query.law_ids:
-            # Попытка 1: JSON API
-            api_url = f"{base}/rus/api/docs/{law_id}/articles"
-            try:
-                resp = await client.get(api_url)
-                if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("application/json"):
-                    data = resp.json()
-                    parsed = _parse_adilet_json_response(data, law_id, query)
-                    if parsed:
-                        chunks.extend(parsed)
-                        continue
-            except Exception:
-                pass
+            # Получаем все варианты URL для этого law_id
+            candidate_urls = _normalize_law_id_to_adilet_urls(law_id, base)
 
-            # Попытка 2: Проверка search endpoint
-            search_url = f"{base}/rus/search"
-            try:
-                resp = await client.get(search_url, params={"q": law_id})
-                if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
-                    # Нашли структурированный ответ
-                    data = resp.json()
-                    parsed = _parse_adilet_json_response(data, law_id, query)
-                    chunks.extend(parsed)
-            except Exception:
-                pass
+            for candidate_url in candidate_urls[:4]:  # Пробуем первые 4 варианта
+                # Попытка 1: JSON API
+                api_url = candidate_url.rstrip("/") + "/articles"
+                try:
+                    resp = await client.get(api_url.replace("/rus/docs/", "/rus/api/docs/"))
+                    if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("application/json"):
+                        data = resp.json()
+                        parsed = _parse_adilet_json_response(data, law_id, query)
+                        if parsed:
+                            chunks.extend(parsed)
+                            break
+                except Exception:
+                    pass
 
     return chunks
 
@@ -208,14 +283,17 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> 
 
     urls_to_try: list[str] = []
 
-    # Строим URL для каждого law_id
+    # Строим URL для каждого law_id, нормализуя формат
     for law_id in query.law_ids:
-        # Формат Адилет: /rus/docs/Z000000550
-        urls_to_try.append(f"{base}/rus/docs/{law_id}")
+        candidate_urls = _normalize_law_id_to_adilet_urls(law_id, base)
+        urls_to_try.extend(candidate_urls[:3])  # Топ-3 варианта для каждого ID
 
     # Если нет law_ids — пробуем поиск
     if not urls_to_try:
         urls_to_try = await _search_adilet_for_query(query, base)
+
+    # НЕ используем Adilet Search как доп. источник если law_ids есть —
+    # для known IDs он всегда 404
 
     async with httpx.AsyncClient(
         timeout=settings.adilet_timeout_seconds,
@@ -226,7 +304,11 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> 
             "Accept-Language": "ru-RU,ru;q=0.9",
         },
     ) as client:
-        for url in urls_to_try[:3]:  # Максимум 3 страницы
+        seen_urls: set[str] = set()
+        for url in urls_to_try[:6]:  # Максимум 6 страниц
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
             try:
                 resp = await client.get(url)
                 if resp.status_code != 200:
@@ -236,6 +318,8 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> 
                 page_chunks = _parse_adilet_html(html, url, query)
                 chunks.extend(page_chunks)
                 logger.debug(f"[S3/CSS] {url}: {len(page_chunks)} articles parsed")
+                if page_chunks:
+                    break  # Удалось с этим URL
 
             except Exception as e:
                 logger.warning(f"[S3/CSS] Failed {url}: {e}")
@@ -377,31 +461,36 @@ async def _try_adilet_pdf_ocr(query: AdiletQuery, cache: CacheManager) -> list[E
 
     async with httpx.AsyncClient(timeout=60, follow_redirects=True, verify=False) as http:
         for law_id in query.law_ids[:2]:  # Максимум 2 PDF
-            # Попытка найти PDF ссылку
-            pdf_url = f"{base}/rus/docs/{law_id}/download"
+            candidate_urls = _normalize_law_id_to_adilet_urls(law_id, base)
+
+            pdf_bytes: bytes | None = None
+            pdf_url_used = ""
+            for candidate_base_url in candidate_urls[:3]:
+                # Попытка найти PDF
+                for pdf_url in [candidate_base_url + "/download", candidate_base_url.replace("/docs/", "/download/")]:
+                    try:
+                        resp = await http.get(pdf_url)
+                        if resp.status_code == 200 and "pdf" in resp.headers.get("content-type", "").lower():
+                            pdf_bytes = resp.content
+                            pdf_url_used = pdf_url
+                            break
+                    except Exception:
+                        pass
+                if pdf_bytes:
+                    break
+
+            if not pdf_bytes or len(pdf_bytes) < 1000:
+                continue
+
             try:
-                resp = await http.get(pdf_url)
-                if resp.status_code != 200 or "pdf" not in resp.headers.get("content-type", "").lower():
-                    # Пробуем альтернативный URL
-                    pdf_url = f"{base}/rus/download/{law_id}"
-                    resp = await http.get(pdf_url)
-                    if resp.status_code != 200:
-                        continue
-
-                pdf_bytes = resp.content
-                if len(pdf_bytes) < 1000:
-                    continue
-
-                # Извлекаем текст через pymupdf
                 text = _extract_pdf_bytes(pdf_bytes)
                 if len(text.strip()) < 200:
                     continue
 
-                # LLM сплиттер на статьи
                 article_chunks = await _llm_split_articles(
                     text=text,
                     law_id=law_id,
-                    source_url=pdf_url,
+                    source_url=pdf_url_used,
                     client=client,
                     model=settings.llm_model_planner,
                     query=query,

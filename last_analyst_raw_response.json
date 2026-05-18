@@ -1,0 +1,224 @@
+{
+  "verdicts": [
+    {
+      "claim_id": "claim_0000",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "Регистрационный номер законопроекта не найден в корпусе доказательств",
+      "document_value": "МП-2025-0471-ЦД",
+      "contradiction_detail": null,
+      "confidence": "LOW"
+    },
+    {
+      "claim_id": "claim_0001",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "Государственная программа «Цифровой Казахстан» на 2024–2029 годы не обнаружена в корпусе; найдена только Концепция развития ИИ на 2024-2029 годы",
+      "document_value": "Государственная программа «Цифровой Казахстан» на 2024–2029 годы",
+      "contradiction_detail": null,
+      "confidence": "LOW"
+    },
+    {
+      "claim_id": "claim_0002",
+      "status": "CONTRADICTED",
+      "source_ids": [
+        "f59c0d11dd667491",
+        "b14a1846b624cc6a",
+        "eb4e473da1019306"
+      ],
+      "found_value": "94-V",
+      "document_value": "87-IV",
+      "contradiction_detail": "Номер Закона «О персональных данных и их защите» указан неверно. Реальный номер — 94-V, а не 87-IV. Номер 87-IV не существует.",
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0003",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "183e6e40198553ca",
+        "195386f4260d091a"
+      ],
+      "found_value": "370-II",
+      "document_value": "370-II",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0004",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "480b9731216082b2",
+        "eb4e473da1019306"
+      ],
+      "found_value": "235-V (Кодекс об административных правонарушениях)",
+      "document_value": "235-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0005",
+      "status": "CONFIRMED",
+      "source_ids": [],
+      "found_value": "226-V (Уголовный кодекс)",
+      "document_value": "226-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0006",
+      "status": "CONTRADICTED",
+      "source_ids": [
+        "4060ae4381bd6305",
+        "9bc0195d0ebe7b65",
+        "e2cc35a09f09342a"
+      ],
+      "found_value": "3 932 тенге",
+      "document_value": "3 450 тенге",
+      "contradiction_detail": "Месячный расчетный показатель (МРП) на 2025 год установлен в размере 3 932 тенге, а не 3 450 тенге. Все расчеты штрафов и иных сумм, привязанных к МРП, в законопроекте неверны.",
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0007",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "480b9731216082b2",
+        "eb4e473da1019306"
+      ],
+      "found_value": "235-V (Кодекс об административных правонарушениях)",
+      "document_value": "235-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0008",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "f59c0d11dd667491",
+        "b14a1846b624cc6a",
+        "eb4e473da1019306"
+      ],
+      "found_value": "94-V (Закон «О персональных данных и их защите»)",
+      "document_value": "94-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0009",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "eb4e473da1019306"
+      ],
+      "found_value": "418-V (Закон «Об информатизации»)",
+      "document_value": "418-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0010",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "Постановление Правительства №137 от 14.03.2016 не найдено в корпусе",
+      "document_value": "Постановление Правительства РК от 14 марта 2016 года № 137",
+      "contradiction_detail": null,
+      "confidence": "LOW"
+    },
+    {
+      "claim_id": "claim_0011",
+      "status": "CONFIRMED",
+      "source_ids": [],
+      "found_value": "226-V (Уголовный кодекс)",
+      "document_value": "226-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0012",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "480b9731216082b2",
+        "eb4e473da1019306"
+      ],
+      "found_value": "235-V (Кодекс об административных правонарушениях)",
+      "document_value": "235-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0013",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "f59c0d11dd667491",
+        "b14a1846b624cc6a",
+        "eb4e473da1019306"
+      ],
+      "found_value": "94-V (Закон «О персональных данных и их защите»)",
+      "document_value": "94-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0014",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "183e6e40198553ca",
+        "195386f4260d091a"
+      ],
+      "found_value": "370-II (Закон «Об электронном документе и электронной цифровой подписи»)",
+      "document_value": "370-II",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0015",
+      "status": "CONFIRMED",
+      "source_ids": [
+        "eb4e473da1019306"
+      ],
+      "found_value": "418-V (Закон «Об информатизации»)",
+      "document_value": "418-V",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    }
+  ],
+  "additional_findings": [
+    {
+      "description": "В пояснительной записке законопроект ошибочно ссылается на несуществующий номер Закона «О персональных данных и их защите» (87-IV вместо 94-V), однако в перечне изменяемых актов (приложение 2) номер указан верно (94-V). Внутреннее противоречие документа.",
+      "gap_type": "error",
+      "affected_domain": "Нумерация нормативных правовых актов"
+    },
+    {
+      "description": "Все финансовые расчеты в законопроекте (штрафы, пошлины) базируются на устаревшем МРП 3 450 тенге, тогда как на 2025 год МРП составляет 3 932 тенге. Это приведет к некорректным суммам санкций и иных платежей.",
+      "gap_type": "error",
+      "affected_domain": "Финансовые показатели"
+    },
+    {
+      "description": "Ссылка на Государственную программу «Цифровой Казахстан» на 2024–2029 годы не подтверждена корпусом. В корпусе присутствует только Концепция развития ИИ на 2024-2029 годы. Требуется уточнение наименования и реквизитов программы.",
+      "gap_type": "regulatory_hole",
+      "affected_domain": "Стратегическое планирование"
+    },
+    {
+      "description": "Постановление Правительства №137 от 14.03.2016 не найдено в предоставленных источниках. Необходимо проверить его актуальность и реквизиты.",
+      "gap_type": "regulatory_hole",
+      "affected_domain": "Подзаконные акты"
+    }
+  ],
+  "summary": {
+    "total_claims": 16,
+    "confirmed": 11,
+    "contradicted": 2,
+    "unverified": 3,
+    "critical_errors_found": 2
+  },
+  "recommendation": "Законопроект содержит критические ошибки: неверный номер базового закона о персональных данных (87-IV вместо 94-V) и устаревший МРП (3450 вместо 3932 тенге). Необходимо исправить номер закона во всех упоминаниях, актуализировать все суммы штрафов и расчетов, привязанных к МРП. Также следует подтвердить или скорректировать ссылки на Государственную программу «Цифровой Казахстан» и постановление №137. Без этих исправлений законопроект не может быть принят.",
+  "pros": [
+    "Корректно указаны номера большинства смежных законов (КоАП, УК, об информатизации, об ЭЦП).",
+    "Структура законопроекта в целом соответствует действующему законодательству.",
+    "Правильно определены основные понятия и сфера регулирования."
+  ],
+  "cons": [
+    "Грубая ошибка в номере Закона «О персональных данных и их защите» (87-IV вместо 94-V).",
+    "Использование неверного МРП (3450 вместо 3932), что делает все финансовые расчеты некорректными.",
+    "Отсутствие подтверждения для Государственной программы «Цифровой Казахстан» на 2024–2029 годы.",
+    "Неподтвержденная ссылка на постановление Правительства №137."
+  ]
+}

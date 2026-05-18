@@ -1,16 +1,70 @@
 """
-ЗЕРДЕ v6.2 — LLM Client Factory
-Создаёт AsyncOpenAI клиентов для разных провайдеров.
-OpenRouter: base_url + HTTP headers
-OpenAI: стандартный клиент
-Embeddings: всегда OpenAI (отдельный ключ или тот же)
+ЗЕРДЕ v7.0 — LLM Client Factory + Cached Calls + Model Routing
+Создаёт AsyncOpenAI клиентов с кэшированием ответов.
+
+Model Routing:
+  heavy  → llm_model_analyst  (DeepSeek V4 Pro / Kimi) — только Stage 5 Auditor
+  medium → llm_model_planner  (DeepSeek Flash)          — Stage 2, 2.5
+  cheap  → llm_model_renderer (DeepSeek Chat)           — Stage 7 Renderer
 """
 
 from __future__ import annotations
 
+import json
+import logging
+
 from openai import AsyncOpenAI
 
 from zerde.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
+
+
+def _repair_truncated_json(raw: str) -> dict | None:
+    """
+    Пытается восстановить обрезанный JSON.
+    DeepSeek Flash часто обрезает ответ посередине строки.
+    Стратегия: обрезаем до последнего валидного } или ], потом закрываем.
+    """
+    if not raw or not raw.strip().startswith("{"):
+        return None
+
+    # Стратегия 1: обрезать до последней закрытой структуры
+    for end_char in ["}", "]"]:
+        last_pos = raw.rfind(end_char)
+        if last_pos > 0:
+            candidate = raw[: last_pos + 1]
+            # Балансируем скобки
+            open_braces = candidate.count("{") - candidate.count("}")
+            open_brackets = candidate.count("[") - candidate.count("]")
+            candidate += "]" * max(0, open_brackets)
+            candidate += "}" * max(0, open_braces)
+            try:
+                result = json.loads(candidate)
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                continue
+
+    # Стратегия 2: грубая — закрываем все открытые скобки
+    cleaned = raw.rstrip()
+    # Убираем незавершённую строку (обрезанную посередине)
+    if cleaned.count('"') % 2 != 0:
+        last_quote = cleaned.rfind('"')
+        cleaned = cleaned[:last_quote + 1]
+
+    open_braces = cleaned.count("{") - cleaned.count("}")
+    open_brackets = cleaned.count("[") - cleaned.count("]")
+    cleaned += "]" * max(0, open_brackets)
+    cleaned += "}" * max(0, open_braces)
+    try:
+        result = json.loads(cleaned)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    return None
 
 
 def make_llm_client(settings: Settings | None = None) -> AsyncOpenAI:
@@ -42,3 +96,103 @@ def make_embedding_client(settings: Settings | None = None) -> AsyncOpenAI | Non
         api_key=s.effective_embedding_key,
         base_url="https://api.openai.com/v1",  # Фиксировано — не OpenRouter
     )
+
+
+def get_model_for_tier(tier: str, settings: Settings | None = None) -> str:
+    """
+    Model Routing: выбирает модель по весу задачи.
+
+    Tiers:
+      heavy  → llm_model_analyst  (reasoning, deep analysis)
+      medium → llm_model_planner  (structured output, JSON)
+      cheap  → llm_model_renderer (formatting, templating)
+    """
+    s = settings or get_settings()
+    return {
+        "heavy": s.llm_model_analyst,
+        "medium": s.llm_model_planner,
+        "cheap": s.llm_model_renderer,
+    }.get(tier, s.llm_model_planner)
+
+
+async def cached_llm_call(
+    client: AsyncOpenAI,
+    model: str,
+    messages: list[dict],
+    settings: Settings | None = None,
+    ttl_seconds: int | None = None,
+    max_tokens: int = 4096,
+    temperature: float = 0.0,
+) -> dict:
+    """
+    LLM-вызов с кэшированием ответов в SQLite.
+
+    Ключ кэша = SHA256(model + сериализованные messages).
+    Одинаковый промпт → мгновенный ответ из кэша, 0 токенов.
+
+    Args:
+        client: AsyncOpenAI клиент.
+        model: ID модели.
+        messages: Список сообщений [{role, content}].
+        settings: Settings (для cache_db_path).
+        ttl_seconds: None = постоянный кэш, int = TTL в секундах.
+        max_tokens: Макс. токенов ответа.
+        temperature: Температура (0 для детерминированности).
+
+    Returns:
+        Parsed JSON dict от LLM (из кэша или свежий).
+    """
+    # Импортируем здесь чтобы избежать циклических импортов
+    from zerde.utils.cache import LLMCache
+
+    s = settings or get_settings()
+    cache = LLMCache(s.cache_db_path)
+
+    # Очищаем устаревшие при каждом вызове (дёшево — O(idx))
+    cache.invalidate_expired()
+
+    # Ключ = model + все messages (system + user)
+    prompt_key = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+
+    # Проверяем кэш
+    cached = cache.get(model, prompt_key)
+    if cached is not None:
+        return cached
+
+    # Делаем реальный LLM-вызов
+    response = await client.chat.completions.create(
+        model=model,
+        temperature=temperature,
+        response_format={"type": "json_object"},
+        max_tokens=max_tokens,
+        messages=messages,
+    )
+
+    content = response.choices[0].message.content or "{}"
+    parse_failed = False
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.error(f"[LLMCall] JSON parse error: {e}. Raw: {content[:200]}")
+        # Попытка восстановить обрезанный JSON
+        parsed = _repair_truncated_json(content)
+        if parsed:
+            logger.info(f"[LLMCall] Repaired truncated JSON. Keys: {list(parsed.keys())}")
+        else:
+            parsed = {}
+            parse_failed = True
+
+
+    if not isinstance(parsed, dict):
+        logger.warning(f"[LLMCall] LLM returned non-dict JSON, wrapping.")
+        parsed = {"_raw": parsed}
+
+    # НЕ кэшируем сломанные ответы: пустой dict или parse_failed
+    if parse_failed or not parsed:
+        logger.warning(f"[LLMCall] Skipping cache — response is empty or malformed.")
+        return parsed
+
+    # Сохраняем в кэш только валидные непустые ответы
+    cache.put(model, prompt_key, parsed, ttl_seconds=ttl_seconds)
+
+    return parsed

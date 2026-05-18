@@ -205,7 +205,7 @@ class EvidenceChunk(BaseModel):
     @model_validator(mode="after")
     def compute_chunk_id(self) -> "EvidenceChunk":
         if not self.chunk_id:
-            self.chunk_id = hashlib.sha256(self.content.encode()).hexdigest()
+            self.chunk_id = hashlib.sha256(self.content.encode()).hexdigest()[:16]
         return self
 
     @computed_field  # type: ignore[misc]

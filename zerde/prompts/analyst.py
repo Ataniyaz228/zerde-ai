@@ -12,7 +12,7 @@ _ANALYST_SCHEMA = """
   "facts": [
     {
       "claim": "Точное фактическое утверждение",
-      "source_ids": ["chunk_id_1", "chunk_id_2"],  // ОБЯЗАТЕЛЬНО минимум 1
+      "source_ids": ["СКОПИРУЙ_ТОЧНЫЙ_ID_ИЗ_SOURCE_ID"],  // ОБЯЗАТЕЛЬНО минимум 1. КОПИРУЙ ДОСЛОВНО из ### SOURCE_ID: выше
       "confidence": 0.95
     }
   ],
@@ -21,7 +21,7 @@ _ANALYST_SCHEMA = """
       "statement": "Логический вывод",
       "reasoning_type": "deduction|analogy|induction",
       "supporting_fact_ids": ["fact_0001"],
-      "source_ids": ["chunk_id_1"]
+      "source_ids": ["СКОПИРУЙ_ТОЧНЫЙ_ID_ИЗ_SOURCE_ID"]
     }
   ],
   "negative_space": [
@@ -38,7 +38,7 @@ _ANALYST_SCHEMA = """
       "economic_impact": "...",
       "social_impact": "...",
       "risk_level": "LOW|MEDIUM|HIGH|CRITICAL",
-      "source_ids": ["chunk_id_1"]
+      "source_ids": ["СКОПИРУЙ_ТОЧНЫЙ_ID_ИЗ_SOURCE_ID"]
     }
   ],
   "pros": ["Преимущество 1", "Преимущество 2"],
@@ -51,7 +51,7 @@ _ANALYST_SCHEMA = """
     }
   ],
   "recommendation": "Итоговая юридическая рекомендация",
-  "conflict_chunk_ids_referenced": ["chunk_id конфликтных источников, упомянутых в анализе"]
+  "conflict_chunk_ids_referenced": ["СКОПИРУЙ_ТОЧНЫЙ_ID конфликтных источников"]
 }
 """
 
@@ -64,11 +64,15 @@ _ANALYST_USER_TEMPLATE = """
 Потенциальные подзаконные акты: {bylaw_triggers}
 
 ## ⚠️ КРИТИЧЕСКИЕ ПРАВИЛА:
-1. Каждый факт (fact) ОБЯЗАН содержать source_ids из предоставленного корпуса
-2. Следующие источники помечены как КОНФЛИКТНЫЕ и ОБЯЗАТЕЛЬНО должны быть упомянуты в анализе:
+1. Каждый факт (fact) ОБЯЗАН содержать source_ids из предоставленного корпуса.
+2. В поле source_ids КОПИРУЙ ДОСЛОВНО строку после "### SOURCE_ID:" — не сокращай и не изменяй.
+   ПРАВИЛЬНО: "source_ids": ["0f41ba7f55cb31d1"]
+   НЕПРАВИЛЬНО: "source_ids": ["0f41ba7f"] или ["chunk_1"]
+3. Если укажешь неверный source_id — факт будет помечен UNVERIFIED и не попадёт в отчёт.
+4. Следующие источники помечены как КОНФЛИКТНЫЕ и ОБЯЗАТЕЛЬНО должны быть упомянуты:
    {conflict_ids}
-3. При анализе пробелов (negative_space) ищи: regulatory_hole (нет нормы), intentional_silence (намеренное умолчание), delegation_gap (отсылка к несуществующему акту)
-4. Используй ТОЛЬКО информацию из предоставленного корпуса. Не выдумывай нормы.
+5. При анализе пробелов (negative_space) ищи: regulatory_hole (нет нормы), intentional_silence (намеренное умолчание), delegation_gap (отсылка к несуществующему акту)
+6. Используй ТОЛЬКО информацию из предоставленного корпуса. Не выдумывай нормы.
 
 ## Корпус доказательств ({chunk_count} источников):
 

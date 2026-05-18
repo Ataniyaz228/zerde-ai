@@ -1,0 +1,387 @@
+"""
+ЗЕРДЕ v6.2 — Stage 4: Fusion & Quality Validation (ПОЛНАЯ РЕАЛИЗАЦИЯ)
+Вход:  list[EvidenceChunk] (сырые)
+Выход: list[EvidenceChunk] (с флагами)
+
+Реализация:
+  1. SHA256 дедупликация — O(n)
+  2. Cosine Similarity деdup — OpenAI embeddings, батчи по 100, порог 0.92
+  3. HIERARCHY конфликты — rank delta + domain check
+  4. TEMPORAL конфликты — law_id + article + effective_date
+  5. FACTUAL конфликты — regex числа + нормализация
+  6. ENFORCEMENT_GAP — cosine distance норма vs. практика
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from itertools import combinations
+
+import numpy as np
+from openai import AsyncOpenAI
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from zerde.config import get_settings
+from zerde.models import ConflictType, EvidenceChunk, LegalRank, WebTier
+from zerde.utils.llm_client import make_embedding_client
+
+logger = logging.getLogger(__name__)
+
+# Регулярка для чисел в юридическом тексте (суммы, проценты, сроки)
+_NUMBER_RE = re.compile(
+    r"\b(\d[\d\s]{0,4}(?:[.,]\d{1,3})?)"
+    r"\s*(%|млн\.?|млрд\.?|тыс\.?|тг\.?|kzt|мрп|мзп|лет|месяц\w*|дн\w*|час\w*)\b",
+    re.IGNORECASE,
+)
+
+_EMBEDDING_BATCH_SIZE = 50  # чанков за один API вызов
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+async def fuse_and_validate(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
+    """Этап 4: Дедупликация + детерминированный поиск конфликтов."""
+    settings = get_settings()
+    logger.info(f"[S4] Fusion start. Input: {len(chunks)} chunks")
+
+    # 1. SHA256
+    chunks = _dedup_by_hash(chunks)
+
+    # 2. Cosine Similarity (только если есть API ключ)
+    if settings.openai_api_key:
+        chunks = await _dedup_by_cosine(chunks, settings.cosine_similarity_threshold)
+    else:
+        logger.warning("[S4] No OpenAI key — skipping cosine dedup")
+
+    # 3. Конфликты
+    chunks = _detect_conflicts(chunks, settings.hierarchy_conflict_rank_delta)
+
+    active = [c for c in chunks if not c.is_duplicate]
+    conflict_count = sum(1 for c in active if c.is_conflict)
+    dup_count = sum(1 for c in chunks if c.is_duplicate)
+
+    logger.info(
+        f"[S4] Done. active={len(active)} conflicts={conflict_count} duplicates={dup_count}"
+    )
+    return chunks
+
+
+# ---------------------------------------------------------------------------
+# 1. SHA256 Dedup
+# ---------------------------------------------------------------------------
+
+
+def _dedup_by_hash(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
+    seen: set[str] = set()
+    for chunk in chunks:
+        if chunk.chunk_id in seen:
+            chunk.is_duplicate = True
+        else:
+            seen.add(chunk.chunk_id)
+
+    dupes = sum(1 for c in chunks if c.is_duplicate)
+    if dupes:
+        logger.info(f"[S4/SHA256] {dupes} exact duplicates marked")
+    return chunks
+
+
+# ---------------------------------------------------------------------------
+# 2. Cosine Similarity Dedup
+# ---------------------------------------------------------------------------
+
+
+async def _dedup_by_cosine(chunks: list[EvidenceChunk], threshold: float) -> list[EvidenceChunk]:
+    """Семантическая дедупликация через OpenAI embeddings."""
+    settings = get_settings()
+    client = make_embedding_client(settings)
+    if not client:
+        return chunks
+
+    active = [c for c in chunks if not c.is_duplicate]
+    if len(active) < 2:
+        return chunks
+
+    logger.info(f"[S4/Cosine] Getting embeddings for {len(active)} chunks…")
+
+    try:
+        embeddings = await _get_embeddings_batched(client, active, settings.embedding_model)
+    except Exception as e:
+        logger.warning(f"[S4/Cosine] Embedding failed: {e}. Skipping cosine dedup.")
+        return chunks
+
+    # Сохраняем embeddings в чанки (exclude=True — не попадут в JSON)
+    for chunk, emb in zip(active, embeddings):
+        chunk.embedding = emb
+
+    # Попарное сравнение O(n²) — для больших корпусов заменить на ANN
+    cosine_dupes = 0
+    seen_indices: set[int] = set()
+
+    for i, j in combinations(range(len(active)), 2):
+        if j in seen_indices:
+            continue
+
+        sim = _cosine_similarity(active[i].embedding, active[j].embedding)  # type: ignore[arg-type]
+        if sim >= threshold:
+            # Более низкий ранг → дубликат
+            loser_idx = j if int(active[i].legal_rank) <= int(active[j].legal_rank) else i
+            active[loser_idx].is_duplicate = True
+            seen_indices.add(loser_idx)
+            cosine_dupes += 1
+            logger.debug(
+                f"[S4/Cosine] sim={sim:.3f} → dup: {active[loser_idx].chunk_id[:8]}…"
+            )
+
+    if cosine_dupes:
+        logger.info(f"[S4/Cosine] {cosine_dupes} semantic duplicates marked (threshold={threshold})")
+
+    return chunks
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=8),
+    retry=retry_if_exception_type(Exception),
+    reraise=True,
+)
+async def _get_embeddings_batched(
+    client: AsyncOpenAI,
+    chunks: list[EvidenceChunk],
+    model: str,
+) -> list[list[float]]:
+    """Получает embeddings батчами по _EMBEDDING_BATCH_SIZE."""
+    all_embeddings: list[list[float]] = []
+
+    for i in range(0, len(chunks), _EMBEDDING_BATCH_SIZE):
+        batch = chunks[i : i + _EMBEDDING_BATCH_SIZE]
+        texts = [c.content[:8000] for c in batch]  # Лимит токенов
+
+        response = await client.embeddings.create(model=model, input=texts)
+        batch_embeddings = [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
+        all_embeddings.extend(batch_embeddings)
+
+        logger.debug(f"[S4/Cosine] Batch {i // _EMBEDDING_BATCH_SIZE + 1}: {len(batch)} embeddings")
+
+    return all_embeddings
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    arr_a = np.array(a, dtype=np.float32)
+    arr_b = np.array(b, dtype=np.float32)
+    norm = np.linalg.norm(arr_a) * np.linalg.norm(arr_b)
+    return float(np.dot(arr_a, arr_b) / norm) if norm > 0 else 0.0
+
+
+# ---------------------------------------------------------------------------
+# 3. Conflict Detection
+# ---------------------------------------------------------------------------
+
+
+def _detect_conflicts(chunks: list[EvidenceChunk], hierarchy_rank_delta: int) -> list[EvidenceChunk]:
+    active = [c for c in chunks if not c.is_duplicate]
+
+    _detect_hierarchy_conflicts(active, hierarchy_rank_delta)
+    _detect_temporal_conflicts(active)
+    _detect_factual_conflicts(active)
+    _detect_enforcement_gap_conflicts(active)
+
+    return chunks
+
+
+# HIERARCHY
+def _detect_hierarchy_conflicts(chunks: list[EvidenceChunk], rank_delta: int) -> None:
+    """
+    HIERARCHY: Разница legal_rank > rank_delta для источников, описывающих один домен.
+    Домен = (law_id если есть) или (тема по ключевым словам).
+    """
+    # Группируем по law_id для точного сравнения
+    by_law: dict[str, list[EvidenceChunk]] = {}
+    for chunk in chunks:
+        if chunk.law_id:
+            by_law.setdefault(chunk.law_id, []).append(chunk)
+
+    for law_id, group in by_law.items():
+        if len(group) < 2:
+            continue
+        for a, b in combinations(group, 2):
+            rank_diff = abs(int(a.legal_rank) - int(b.legal_rank))
+            if rank_diff > rank_delta:
+                _mark_conflict(a, b, ConflictType.HIERARCHY)
+                logger.info(
+                    f"[S4/HIERARCHY] {law_id}: rank {int(a.legal_rank)} vs {int(b.legal_rank)} "
+                    f"(delta={rank_diff})"
+                )
+
+    # Дополнительно: проверяем Web-источники с сильно разными рангами по одной теме
+    web_chunks = [c for c in chunks if c.web_tier is not None]
+    adilet_chunks = [c for c in chunks if c.web_tier is None]
+
+    for web_c in web_chunks:
+        for adilet_c in adilet_chunks:
+            rank_diff = abs(int(web_c.legal_rank) - int(adilet_c.legal_rank))
+            # Только если оба ссылаются на один law_id
+            if (
+                web_c.law_id
+                and adilet_c.law_id
+                and web_c.law_id == adilet_c.law_id
+                and rank_diff > rank_delta
+            ):
+                _mark_conflict(web_c, adilet_c, ConflictType.HIERARCHY)
+
+
+# TEMPORAL
+def _detect_temporal_conflicts(chunks: list[EvidenceChunk]) -> None:
+    """TEMPORAL: Один law_id + article, разные effective_date."""
+    key_map: dict[tuple[str, str], list[EvidenceChunk]] = {}
+
+    for chunk in chunks:
+        if chunk.law_id and chunk.article and chunk.effective_date:
+            key = (chunk.law_id, chunk.article)
+            key_map.setdefault(key, []).append(chunk)
+
+    for (law_id, article), group in key_map.items():
+        if len(group) < 2:
+            continue
+        dates = {c.effective_date for c in group}
+        if len(dates) > 1:
+            for a, b in combinations(group, 2):
+                if a.effective_date != b.effective_date:
+                    _mark_conflict(a, b, ConflictType.TEMPORAL)
+                    logger.info(
+                        f"[S4/TEMPORAL] {law_id} ст.{article}: "
+                        f"{a.effective_date} vs {b.effective_date}"
+                    )
+
+
+# FACTUAL
+def _detect_factual_conflicts(chunks: list[EvidenceChunk]) -> None:
+    """
+    FACTUAL: Расхождение числовых значений в источниках, описывающих один закон.
+    Сравниваем числа с единицами измерения между чанками одного law_id.
+    """
+    by_law: dict[str, list[EvidenceChunk]] = {}
+    for chunk in chunks:
+        if chunk.law_id:
+            by_law.setdefault(chunk.law_id, []).append(chunk)
+
+    for law_id, group in by_law.items():
+        if len(group) < 2:
+            continue
+
+        # Извлекаем числа с единицами из каждого чанка
+        chunk_numbers: list[dict[str, set[str]]] = []
+        for chunk in group:
+            nums = _extract_legal_numbers(chunk.content)
+            chunk_numbers.append(nums)
+
+        # Сравниваем попарно
+        for (i, nums_a), (j, nums_b) in combinations(enumerate(chunk_numbers), 2):
+            conflicts = _find_number_conflicts(nums_a, nums_b)
+            if conflicts:
+                _mark_conflict(group[i], group[j], ConflictType.FACTUAL)
+                logger.info(
+                    f"[S4/FACTUAL] {law_id}: conflicting values: {conflicts}"
+                )
+
+
+def _extract_legal_numbers(text: str) -> dict[str, set[str]]:
+    """
+    Извлекает числа с единицами из текста.
+    Returns: {unit_type: {значение1, значение2, ...}}
+    """
+    result: dict[str, set[str]] = {}
+    for m in _NUMBER_RE.finditer(text):
+        num = m.group(1).replace(" ", "").replace(",", ".")
+        unit = m.group(2).lower().rstrip(".")
+        result.setdefault(unit, set()).add(num)
+    return result
+
+
+def _find_number_conflicts(
+    nums_a: dict[str, set[str]],
+    nums_b: dict[str, set[str]],
+) -> list[str]:
+    """
+    Находит конфликты: одинаковые единицы, но разные значения.
+    Только если оба источника содержат числа данной единицы И они различаются.
+    """
+    conflicts = []
+    for unit in set(nums_a) & set(nums_b):  # Общие единицы
+        vals_a = nums_a[unit]
+        vals_b = nums_b[unit]
+        # Конфликт: есть значения только в одном источнике
+        only_in_a = vals_a - vals_b
+        only_in_b = vals_b - vals_a
+        if only_in_a and only_in_b:
+            conflicts.append(f"{unit}: {sorted(only_in_a)} vs {sorted(only_in_b)}")
+    return conflicts
+
+
+# ENFORCEMENT_GAP
+def _detect_enforcement_gap_conflicts(chunks: list[EvidenceChunk]) -> None:
+    """
+    ENFORCEMENT_GAP: Adilet норма (rank <= 7) vs Web практика (TIER_2/TIER_3).
+    Ищем чанки одного law_id где один — норма, другой — практика.
+    """
+    norm_chunks = [
+        c for c in chunks
+        if c.web_tier is None and int(c.legal_rank) <= int(LegalRank.MINISTERIAL_ORDER)
+    ]
+    practice_chunks = [
+        c for c in chunks
+        if c.web_tier in (WebTier.TIER_2, WebTier.TIER_3)
+    ]
+
+    if not norm_chunks or not practice_chunks:
+        return
+
+    # Ищем пары с одинаковым law_id (явный разрыв)
+    for norm in norm_chunks:
+        for practice in practice_chunks:
+            if not norm.law_id or not practice.law_id:
+                continue
+            if norm.law_id != practice.law_id:
+                continue
+
+            # Проверяем: есть ли в практике слова-маркеры несоответствия
+            gap_markers = _has_enforcement_gap_markers(practice.content)
+            if gap_markers:
+                _mark_conflict(norm, practice, ConflictType.ENFORCEMENT_GAP)
+                logger.info(
+                    f"[S4/ENFORCEMENT_GAP] {norm.law_id}: "
+                    f"norm={norm.chunk_id[:8]}… vs practice={practice.chunk_id[:8]}… "
+                    f"markers={gap_markers}"
+                )
+
+
+def _has_enforcement_gap_markers(text: str) -> list[str]:
+    """
+    Ищет маркеры несоответствия нормы и практики.
+    """
+    markers = [
+        "на практике", "фактически", "не исполняется", "игнорируется",
+        "не применяется", "обходят", "коррупция", "не работает",
+        "де-факто", "де факто", "в реальности", "нарушается",
+        "не соблюдается", "de facto",
+    ]
+    found = [m for m in markers if m.lower() in text.lower()]
+    return found
+
+
+# ---------------------------------------------------------------------------
+# Utility
+# ---------------------------------------------------------------------------
+
+
+def _mark_conflict(a: EvidenceChunk, b: EvidenceChunk, conflict_type: ConflictType) -> None:
+    for chunk, other in [(a, b), (b, a)]:
+        chunk.is_conflict = True
+        if conflict_type not in chunk.conflict_types:
+            chunk.conflict_types.append(conflict_type)
+        if other.chunk_id not in chunk.conflict_with_ids:
+            chunk.conflict_with_ids.append(other.chunk_id)

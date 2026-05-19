@@ -36,7 +36,6 @@ from zerde.reference_data import (
     KOAP_MAX_FINES,
     LAW_REGISTRY,
     MRP_BY_YEAR,
-    NOTIFICATION_DEADLINES,
     UK_ARTICLES,
     check_law_id,
     get_koap_article,
@@ -188,14 +187,8 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
     if tag == "uk_article":
         art = get_uk_article(entity_normalized)
         if art:
-            notes_lower = art["notes"].lower()
-            has_negation = "не связана" in notes_lower or "не относится" in notes_lower
-            is_related = not has_negation and (
-                "персональных данных" in notes_lower or "частной жизни" in notes_lower
-            )
-            if not is_related:
-                return (VerdictStatus.CONTRADICTED, f"УК РК ст.{entity_normalized} = «{art['title']}» — {art['notes']}")
-            return (VerdictStatus.CONFIRMED, f"УК ст.{entity_normalized}: «{art['title']}»")
+            # Возвращаем информацию о статье — LLM решит, соответствует ли контексту
+            return (VerdictStatus.UNVERIFIED, f"УК РК ст.{entity_normalized} = «{art['title']}». {art['notes']}")
         return None
 
     if tag == "pprkz_num":
@@ -224,13 +217,8 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
         return None
 
     if tag == "hours_deadline":
-        hours = int(entity_normalized) if entity_normalized.isdigit() else None
-        if hours == 24:
-            source = NOTIFICATION_DEADLINES.get("breach_notification_source", "")
-            return (VerdictStatus.CONTRADICTED,
-                    f"Закон РК 94-V не устанавливает 24-часовой срок уведомления об утечке. {source}")
-        if hours == 72:
-            return (VerdictStatus.CONFIRMED, "72 часа — стандарт GDPR и международная практика")
+        # Не делаем детерминированный вердикт — LLM проверит по корпусу
+        # (24ч, 72ч и другие сроки зависят от конкретного закона)
         return None
 
     if tag == "fine_mrp":
@@ -242,7 +230,7 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
         absolute_max = KOAP_MAX_FINES["absolute_max"]
         if val > absolute_max:
             return (VerdictStatus.CONTRADICTED,
-                    f"Штраф {val} МРП превышает максимум КоАП ст.79 ({absolute_max} МРП для юрлиц). Фиктивная норма.")
+                    f"Штраф {val} МРП превышает абсолютный максимум КоАП ({absolute_max} МРП). Требует проверки.")
         # Если штраф в пределах максимума — нужен контекст LLM
         return None
 
@@ -328,9 +316,11 @@ async def _llm_extract(
             ttl_seconds=None,
             max_tokens=3000,
         )
-        # Поддерживаем как массив напрямую так и {"claims": [...]}
+        # Поддерживаем как массив напрямую так и {"claims": [...]} и {"_raw": [...]}
         if isinstance(parsed, list):
             raw_claims = parsed
+        elif "_raw" in parsed and isinstance(parsed["_raw"], list):
+            raw_claims = parsed["_raw"]
         else:
             raw_claims = parsed.get("claims", [])
     except Exception as e:
@@ -341,6 +331,9 @@ async def _llm_extract(
     result: list[DocumentClaim] = []
     start_idx = len(already_found)
     for i, raw in enumerate(raw_claims):
+        # LLM может вернуть строки вместо объектов — конвертируем
+        if isinstance(raw, str) and len(raw) > 10:
+            raw = {"claim_text": raw, "claim_type": "factual", "severity": "medium"}
         if not isinstance(raw, dict):
             continue
         try:

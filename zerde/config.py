@@ -57,8 +57,8 @@ class Settings(BaseSettings):
         description="ID модели для Этапа 2 (Planner). Kimi K2.6 — стабильный JSON, не обрезает вывод.",
     )
     llm_model_extractor: str = Field(
-        default="tencent/hy3-preview",
-        description="ID модели для Этапа 2.5 (Claim Extractor). Быстрая модель — простое извлечение фактов.",
+        default="moonshotai/kimi-k2.6",
+        description="ID модели для Этапа 2.5 (Claim Extractor). Kimi K2.6 — стабильный JSON mode.",
     )
     llm_model_analyst: str = Field(
         default="deepseek/deepseek-v4-pro",

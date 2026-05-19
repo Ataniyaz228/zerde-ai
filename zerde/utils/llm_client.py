@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from openai import AsyncOpenAI
 
@@ -160,32 +161,68 @@ async def cached_llm_call(
         return cached
 
     # Делаем реальный LLM-вызов
-    response = await client.chat.completions.create(
-        model=model,
-        temperature=temperature,
-        response_format={"type": "json_object"},
-        max_tokens=max_tokens,
-        messages=messages,
-    )
+    # Пробуем с json_object, при ошибке — без него (fallback)
+    content = None
+    for use_json_mode in (True, False):
+        try:
+            kwargs: dict = dict(
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                messages=messages,
+            )
+            if use_json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
 
-    content = response.choices[0].message.content or "{}"
+            response = await client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content or "{}"
+            break  # Успех — выходим
+        except Exception as e:
+            err_str = str(e)
+            if "json" in err_str.lower() or "400" in err_str:
+                if use_json_mode:
+                    logger.info(f"[LLMCall] json_object not supported, retrying without it...")
+                    continue  # Попробуем без json_mode
+            raise  # Другая ошибка — пробрасываем
+
+    if content is None:
+        content = "{}"
+
+    # Если ответ не JSON — пробуем извлечь JSON из текста
     parse_failed = False
     try:
         parsed = json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error(f"[LLMCall] JSON parse error: {e}. Raw: {content[:200]}")
-        # Попытка восстановить обрезанный JSON
-        parsed = _repair_truncated_json(content)
-        if parsed:
-            logger.info(f"[LLMCall] Repaired truncated JSON. Keys: {list(parsed.keys())}")
+    except json.JSONDecodeError:
+        # Ищем JSON-блок в тексте (```json ... ``` или первый {/[ ... }/])
+        json_match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+        if not json_match:
+            json_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', content)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+                logger.info(f"[LLMCall] Extracted JSON from text response.")
+            except json.JSONDecodeError:
+                parsed = _repair_truncated_json(content)
+                if parsed:
+                    logger.info(f"[LLMCall] Repaired truncated JSON. Keys: {list(parsed.keys())}")
+                else:
+                    parsed = {}
+                    parse_failed = True
         else:
-            parsed = {}
-            parse_failed = True
+            parsed = _repair_truncated_json(content)
+            if parsed:
+                logger.info(f"[LLMCall] Repaired truncated JSON. Keys: {list(parsed.keys())}")
+            else:
+                parsed = {}
+                parse_failed = True
 
 
     if not isinstance(parsed, dict):
-        logger.warning(f"[LLMCall] LLM returned non-dict JSON, wrapping.")
-        parsed = {"_raw": parsed}
+        if isinstance(parsed, list):
+            parsed = {"_raw": parsed}
+        else:
+            logger.warning(f"[LLMCall] LLM returned non-dict JSON, wrapping.")
+            parsed = {"_raw": parsed}
 
     # НЕ кэшируем сломанные ответы: пустой dict или parse_failed
     if parse_failed or not parsed:

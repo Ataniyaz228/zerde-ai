@@ -98,17 +98,13 @@ _LAW_ID_PREFIX_MAP: dict[str, str] = {
 
 def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
     """
-    Преобразует краткий ID (напр. '94-V') в список URL-вариантов для Adilet.
+    Преобразует ID (любого формата) в список URL-вариантов для Adilet.
 
-    Формат Adilet ID:
-      {Prefix}{YY}{Padding}{NUM}{Suffix}
-      - Prefix: Z (закон), K (кодекс), P (постановление)
-      - YY: 2-значный год
-      - Padding: нули для заполнения до 10 символов общей длины
-      - NUM: номер НПА
-      - Suffix: '_' для старых (до ~2012), пусто для новых
-
-    Пример: Z010000148_ = Z + 01 + 0000 + 148 + _
+    Поддерживаемые форматы:
+      - '148-II' — краткий с римским суффиксом
+      - 'Z010000148' — полу-нормализованный (от LLM planner)
+      - '940001000' — голый числовой код (от LLM planner)
+      - 'K940001000_' — полный Adilet-код
     """
     urls: list[str] = []
 
@@ -118,13 +114,35 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
         urls.append(f"{base}/rus/docs/{adilet_code}")
         return urls
 
-    # 2. Генерик: "{num}-{suffix}" → перебор годов + оба формата (с _ и без)
+    # 2. Уже полный Adilet-код? (K940001000_, Z1300000094, P090000447_)
+    if re.match(r"^[A-Z]\d{9}", law_id):
+        urls.append(f"{base}/rus/docs/{law_id}")
+        # Пробуем с/без '_' суффикса
+        if law_id.endswith("_"):
+            urls.append(f"{base}/rus/docs/{law_id[:-1]}")
+        else:
+            urls.append(f"{base}/rus/docs/{law_id}_")
+        return urls
+
+    # 3. Полу-Adilet код от planner: "Z010000148" (без _), "Z110000413"
+    if re.match(r"^[ZKP]\d{8,9}$", law_id):
+        urls.append(f"{base}/rus/docs/{law_id}")
+        urls.append(f"{base}/rus/docs/{law_id}_")
+        return urls
+
+    # 4. Голый числовой код от planner: "940001000"
+    if re.match(r"^\d{9,10}$", law_id):
+        for prefix in ("K", "Z"):
+            urls.append(f"{base}/rus/docs/{prefix}{law_id}")
+            urls.append(f"{base}/rus/docs/{prefix}{law_id}_")
+        return urls
+
+    # 5. Генерик: "{num}-{suffix}" → перебор годов + оба формата (с _ и без)
     m = re.match(r"^(\d+)-([A-Z]+)$", law_id)
     if m:
         num_str = m.group(1)
         suffix = m.group(2)
 
-        # Расширенный маппинг суффикс → годы
         year_map = {
             "I": ["90", "91", "92", "93", "94", "95", "96", "97", "98", "99"],
             "II": ["00", "01", "02", "03", "04", "05"],
@@ -136,21 +154,15 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
             "VIII": ["21", "22", "23", "24"],
         }
         years = year_map.get(suffix, ["13", "14", "15"])
-
-        # Определяем префикс: K для кодексов (>200 и суффикс IV-VI), Z для остальных
         prefix = "K" if int(num_str) > 200 and suffix in ("IV", "V", "VI") else "Z"
 
         for yr in years:
-            # Adilet использует 10-символьный код: Prefix(1) + Year(2) + Padding + Num
-            # Итого после Prefix+Year нужно 7 символов: нули + номер
-            padded = num_str.zfill(7)  # "148" → "0000148"
+            padded = num_str.zfill(7)
             code_base = f"{prefix}{yr}{padded}"
 
-            # Генерируем оба варианта: с _ (старые) и без (новые)
             url_underscore = f"{base}/rus/docs/{code_base}_"
             url_plain = f"{base}/rus/docs/{code_base}"
 
-            # Старые годы (до 12) — сначала с подчёркиванием
             if int(yr) < 12 or (int(yr) >= 90):
                 if url_underscore not in urls:
                     urls.append(url_underscore)
@@ -162,7 +174,7 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
                 if url_underscore not in urls:
                     urls.append(url_underscore)
 
-    # 3. As-is fallback
+    # 6. As-is fallback
     as_is = f"{base}/rus/docs/{law_id}"
     if as_is not in urls:
         urls.append(as_is)

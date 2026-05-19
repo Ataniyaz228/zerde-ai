@@ -64,11 +64,22 @@ _LAW_ID_KNOWN: dict[str, str] = {
     "73-V": "Z1300000073",
     "223-VIII": "Z1700000223",
     "240-IV": "Z1100000240",
+    # Законы из проекта 2009 года
+    "148-II": "Z010000148_",    # О местном госуправлении (2001)
+    "368-II": "Z030000368_",    # Об оценочной деятельности (2003)
+    "95-IV": "Z080000095_",     # Бюджетный кодекс (2008)
+    "138-IV": "Z060000138_",    # О государственном регулировании (2006)
+    "413-IV": "Z1100000413",    # О государственном имуществе (2011)
+    "414-IV": "Z1100000414",    # О внесении изменений (2011)
     # Кодексы РК
-    "235-V": "K1400000235",
-    "226-V": "K1400000226",
+    "235-V": "K1400000235",     # КоАП
+    "226-V": "K1400000226",     # УК
     "350-VI": "K2000000350",
     "212-IV": "K070000212_",
+    "1000-XIII": "K940001000_", # ГК (Общая часть)
+    "409-I": "K990000409_",     # ГК (Особенная часть)
+    "442-II": "K030000442_",    # Земельный кодекс
+    "414-I": "K150000414_",     # Трудовой кодекс
     # Уголовный кодекс
     "226-V-UK": "K1400000226",
 }
@@ -88,41 +99,70 @@ _LAW_ID_PREFIX_MAP: dict[str, str] = {
 def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
     """
     Преобразует краткий ID (напр. '94-V') в список URL-вариантов для Adilet.
-    Приоритет: known map → минимальные эвристики.
+
+    Формат Adilet ID:
+      {Prefix}{YY}{Padding}{NUM}{Suffix}
+      - Prefix: Z (закон), K (кодекс), P (постановление)
+      - YY: 2-значный год
+      - Padding: нули для заполнения до 10 символов общей длины
+      - NUM: номер НПА
+      - Suffix: '_' для старых (до ~2012), пусто для новых
+
+    Пример: Z010000148_ = Z + 01 + 0000 + 148 + _
     """
     urls: list[str] = []
 
-    # 1. Known exact mapping — если есть, возвращаем ONLY this
+    # 1. Known exact mapping
     if law_id in _LAW_ID_KNOWN:
         adilet_code = _LAW_ID_KNOWN[law_id]
         urls.append(f"{base}/rus/docs/{adilet_code}")
-        return urls  # Точный маппинг — не нужны переборы
+        return urls
 
-    # 2. Генерик преобразование для неизвестных ID (3-4 варианта вместо 14)
+    # 2. Генерик: "{num}-{suffix}" → перебор годов + оба формата (с _ и без)
     m = re.match(r"^(\d+)-([A-Z]+)$", law_id)
     if m:
-        num_str = m.group(1).zfill(4)
+        num_str = m.group(1)
         suffix = m.group(2)
-        # Ограниченный набор годов: поколению суффикса
+
+        # Расширенный маппинг суффикс → годы
         year_map = {
-            "I": ["90", "95"],
-            "II": ["03", "04", "05"],
+            "I": ["90", "91", "92", "93", "94", "95", "96", "97", "98", "99"],
+            "II": ["00", "01", "02", "03", "04", "05"],
             "III": ["06", "07"],
-            "IV": ["09", "10", "11", "12"],
+            "IV": ["08", "09", "10", "11", "12"],
             "V": ["13", "14", "15"],
             "VI": ["16", "17", "18"],
             "VII": ["19", "20"],
-            "VIII": ["21", "22", "23"],
+            "VIII": ["21", "22", "23", "24"],
         }
         years = year_map.get(suffix, ["13", "14", "15"])
-        prefix = "K" if int(m.group(1)) > 200 and suffix in ("IV", "V", "VI") else "Z"
-        for yr in years:
-            candidate = f"{prefix}{yr}0000{num_str}"
-            url = f"{base}/rus/docs/{candidate}"
-            if url not in urls:
-                urls.append(url)
 
-    # 3. As-is
+        # Определяем префикс: K для кодексов (>200 и суффикс IV-VI), Z для остальных
+        prefix = "K" if int(num_str) > 200 and suffix in ("IV", "V", "VI") else "Z"
+
+        for yr in years:
+            # Adilet использует 10-символьный код: Prefix(1) + Year(2) + Padding + Num
+            # Итого после Prefix+Year нужно 7 символов: нули + номер
+            padded = num_str.zfill(7)  # "148" → "0000148"
+            code_base = f"{prefix}{yr}{padded}"
+
+            # Генерируем оба варианта: с _ (старые) и без (новые)
+            url_underscore = f"{base}/rus/docs/{code_base}_"
+            url_plain = f"{base}/rus/docs/{code_base}"
+
+            # Старые годы (до 12) — сначала с подчёркиванием
+            if int(yr) < 12 or (int(yr) >= 90):
+                if url_underscore not in urls:
+                    urls.append(url_underscore)
+                if url_plain not in urls:
+                    urls.append(url_plain)
+            else:
+                if url_plain not in urls:
+                    urls.append(url_plain)
+                if url_underscore not in urls:
+                    urls.append(url_underscore)
+
+    # 3. As-is fallback
     as_is = f"{base}/rus/docs/{law_id}"
     if as_is not in urls:
         urls.append(as_is)

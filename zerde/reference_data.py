@@ -171,3 +171,50 @@ def get_koap_article(article: str) -> dict | None:
 def get_uk_article(article: str) -> dict | None:
     """Возвращает информацию о статье УК."""
     return UK_ARTICLES.get(article)
+
+
+def build_reference_corpus_text() -> str:
+    """
+    Генерирует текстовый блок со всеми справочными данными
+    для инъекции в промпт S5 Auditor как виртуальный корпус.
+    LLM видит факты и может использовать их для вердиктов.
+    """
+    parts: list[str] = []
+
+    # МРП
+    parts.append("### СПРАВОЧНИК: МРП по годам (Месячный Расчётный Показатель)")
+    for year, val in sorted(MRP_BY_YEAR.items()):
+        source = MRP_SOURCES.get(year, "")
+        src_str = f" ({source})" if source else ""
+        parts.append(f"  {year}: {val} тг{src_str}")
+
+    # КоАП штрафы
+    parts.append("\n### СПРАВОЧНИК: Штрафы КоАП РК по теме персональных данных")
+    for art_num, art in KOAP_ARTICLES.items():
+        parts.append(
+            f"  Ст. {art_num} КоАП: «{art['title']}». "
+            f"Макс штраф: {art['max_fine_mrp']} МРП (физлица), "
+            f"{art['max_fine_mrp_entity']} МРП (юрлица). {art['notes']}"
+        )
+    parts.append(
+        f"  АБСОЛЮТНЫЙ МАКСИМУМ штрафов по КоАП за нарушения ПД: "
+        f"{KOAP_MAX_FINES['absolute_max']} МРП (юрлица). "
+        f"Физлица: {KOAP_MAX_FINES['физлица']} МРП. "
+        f"Должностные: {KOAP_MAX_FINES['должностные']} МРП. "
+        f"МСБ: {KOAP_MAX_FINES['юрлица_мсб']} МРП."
+    )
+
+    # УК статьи
+    parts.append("\n### СПРАВОЧНИК: Статьи УК РК")
+    for art_num, art in UK_ARTICLES.items():
+        parts.append(f"  Ст. {art_num} УК: «{art['title']}». {art['notes']}")
+
+    # Сроки уведомлений
+    parts.append("\n### СПРАВОЧНИК: Известные сроки уведомлений")
+    parts.append(f"  {NOTIFICATION_DEADLINES['breach_notification_source']}")
+    parts.append(
+        f"  Срок уведомления третьих лиц: "
+        f"{NOTIFICATION_DEADLINES['third_party_notification_days']} рабочих дней (ст.27 Закона о ПД)"
+    )
+
+    return "\n".join(parts)

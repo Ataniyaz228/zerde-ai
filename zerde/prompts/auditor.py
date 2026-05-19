@@ -7,6 +7,7 @@ LLM Auditor Prompt Builder (Этап 5 v2)
 from __future__ import annotations
 
 from zerde.models import ClaimExtractionResult, DocumentClaim, EvidenceChunk, QueryPlan
+from zerde.reference_data import build_reference_corpus_text
 
 _AUDITOR_VERDICT_SCHEMA = """
 Верни JSON строго следующей структуры:
@@ -59,6 +60,9 @@ __CLAIMS_CHECKLIST__
 
 ## ⚠️ ДЕТЕРМИНИРОВАННЫЕ ВЕРДИКТЫ (уже проверено без LLM, включи их в verdicts):
 __DETERMINISTIC_VERDICTS__
+
+## Справочные данные (детерминированные, верифицированные):
+__REFERENCE_DATA__
 
 ## Корпус доказательств (__CHUNK_COUNT__ источников):
 
@@ -126,10 +130,21 @@ def build_auditor_prompt(
     Returns:
         Готовый промпт-строка.
     """
-    # 1. Корпус — приоритет конфликтным чанкам
+    # 1. Корпус — приоритет: конфликтные → совпадение языка → rank
+    # Определяем язык документа (ru/kz) для приоритизации
+    doc_lang_is_ru = not doc_text or any(c in doc_text[:500] for c in "абвгдежзиклмнопрстуфхцчшщ")
+
+    def _lang_penalty(c: EvidenceChunk) -> int:
+        """0 = язык совпадает с документом, 1 = не совпадает."""
+        url = (c.source_url or "").lower()
+        is_kaz = "/kaz/" in url or "/kk/" in url
+        if doc_lang_is_ru:
+            return 1 if is_kaz else 0
+        return 0 if is_kaz else 1
+
     corpus_parts = []
     total_chars = 0
-    sorted_chunks = sorted(chunks, key=lambda c: (not c.is_conflict, int(c.legal_rank)))
+    sorted_chunks = sorted(chunks, key=lambda c: (not c.is_conflict, _lang_penalty(c), int(c.legal_rank)))
 
     for chunk in sorted_chunks:
         chunk_text = _format_chunk(chunk)
@@ -169,6 +184,9 @@ def build_auditor_prompt(
     else:
         doc_excerpt = "(текст документа не предоставлен)"
 
+    # Reference data — детерминированные факты для LLM
+    ref_text = build_reference_corpus_text()
+
     # .replace() вместо str.format(): JSON-схема и юр.тексты содержат {} скобки
     return (
         _AUDITOR_USER_TEMPLATE
@@ -176,6 +194,7 @@ def build_auditor_prompt(
         .replace("__CLAIM_COUNT__", str(claims.total_count))
         .replace("__CLAIMS_CHECKLIST__", claims_str)
         .replace("__DETERMINISTIC_VERDICTS__", det_str)
+        .replace("__REFERENCE_DATA__", ref_text)
         .replace("__CHUNK_COUNT__", str(len(chunks)))
         .replace("__CORPUS_TEXT__", corpus_str)
         .replace("__SCHEMA__", _AUDITOR_VERDICT_SCHEMA)

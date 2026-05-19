@@ -121,8 +121,41 @@ def audit_analysis(
     # Audit выводов
     _audit_conclusions(analysis, corpus_index, prefix_index)
 
-    # Overall reliability
-    if scores:
+    # Overall reliability — учитывает долю CONTRADICTED/UNVERIFIED
+    if analysis.facts:
+        total = len(analysis.facts)
+        # Считаем вердикты
+        n_contradicted = sum(
+            1 for f in analysis.facts
+            if any(v.status.value == "CONTRADICTED" for v in analysis.verdicts if v.claim_id == f.fact_id.replace("fact_", "claim_"))
+        )
+        # Fallback: считаем по тексту описания
+        if n_contradicted == 0:
+            n_contradicted = sum(
+                1 for f in analysis.facts
+                if f.description and "ОШИБКА" in f.description.upper()
+            )
+        n_confirmed = sum(
+            1 for f in analysis.facts
+            if f.description and "ПОДТВЕРЖДЕНО" in (f.description or "").upper()
+        )
+        n_unverified = total - n_contradicted - n_confirmed
+
+        # Формула: confirmed повышает, contradicted сильно снижает
+        if total > 0:
+            base_score = n_confirmed / total
+            contradiction_penalty = (n_contradicted / total) * 0.7
+            unverified_penalty = (n_unverified / total) * 0.2
+            reliability = max(0.0, min(1.0, base_score - contradiction_penalty - unverified_penalty))
+        else:
+            reliability = 0.0
+
+        analysis.overall_reliability = reliability
+        logger.info(
+            f"[S6/Score] confirmed={n_confirmed} contradicted={n_contradicted} "
+            f"unverified={n_unverified} → reliability={reliability:.3f}"
+        )
+    elif scores:
         analysis.overall_reliability = float(np.mean(scores))
 
     # Статистика

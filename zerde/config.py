@@ -61,8 +61,8 @@ class Settings(BaseSettings):
         description="ID модели для Этапа 2.5 (Claim Extractor). Kimi K2.6 — стабильный JSON mode.",
     )
     llm_model_analyst: str = Field(
-        default="deepseek/deepseek-v4-pro",
-        description="ID модели для Этапа 5 (Auditor). Рекомендуется мощная Reasoning модель.",
+        default="moonshotai/kimi-k2.6",
+        description="ID модели для Этапа 5 (Auditor). Kimi K2.6 — стабильный JSON, reasoning.",
     )
     llm_model_renderer: str = Field(
         default="deepseek/deepseek-chat",

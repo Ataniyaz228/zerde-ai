@@ -3,28 +3,489 @@
     {
       "claim_id": "claim_0000",
       "status": "UNVERIFIED",
-      "source_ids": [
-        "704a73f0e26b5b09"
-      ],
-      "found_value": "Корпус содержит текст итогового закона 'О внесении изменений и дополнений...', но не подтверждает реквизиты Постановления № 447.",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст Постановления Правительства РК № 447 от 31 марта 2009 года.",
       "document_value": "Постановление Правительства Республики Казахстан от 31 марта 2009 года № 447",
       "contradiction_detail": null,
-      "confidence": "LOW"
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0001",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий Статью 1.",
+      "document_value": "Статья 1. Внести изменения и дополнения в следующие законодательные акты",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0002",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 41 ГК РК.",
+      "document_value": "1) в части первой пункта 5 статьи 41 слова \"прекращения его деятельности\"",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0003",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 44 ГК РК.",
+      "document_value": "2) пункт 1 статьи 44 изложить в следующей редакции:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0004",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 111 ГК РК.",
+      "document_value": "5) в части первой пункта 2 статьи 111 слова \"органы государственной власти и",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0005",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 167 ГК РК.",
+      "document_value": "6) в пункте 4 статьи 167 слова \"аппаратом акима района в городе, города районного",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0006",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 197 ГК РК.",
+      "document_value": "10) в статье 197 слово \"законодательством\" заменить словами \"законодательными",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0007",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 200 ГК РК.",
+      "document_value": "11) в части первой пункта 2 статьи 200 слово \"законодательством\" заменить",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0008",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 203 ГК РК.",
+      "document_value": "13) в статье 203 слово \"законодательством\" заменить словами \"законодательными",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0009",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 204 ГК РК.",
+      "document_value": "14) в пунктах 1, 2 статьи 204, в статье 205 слова \", государственного учреждения\",\",",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0010",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 205 ГК РК.",
+      "document_value": "14) в пунктах 1, 2 статьи 204, в статье 205 слова \", государственного учреждения\",\",",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0011",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 206 ГК РК.",
+      "document_value": "15) статьи 206, 207 изложить в следующей редакции:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0012",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 207 ГК РК.",
+      "document_value": "Статья 207. Ответственность учредителя по долгам казенного",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0013",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 235 ГК РК.",
+      "document_value": "16) статью 235 дополнить пунктом 3-1 следующего содержания:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0014",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 245 ГК РК.",
+      "document_value": "19) в статьях 245 и 246 слова \"аппарат акима района в городе, города районного",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0015",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 253 ГК РК.",
+      "document_value": "22) пункт 1 статьи 253 после слова \"эпизоотии\" дополнить словами \", в период",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0016",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 509 ГК РК.",
+      "document_value": "1) подпункт 3) статьи 509 изложить в следующей редакции:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0017",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 1071 ГК РК.",
+      "document_value": "2) в пункте 3 статьи 1071 слова \"аппарат акима района в городе, города районного",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0018",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 12.",
+      "document_value": "1) подпункт 1) статьи 12 дополнить словами \"и законодательными актами",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0019",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 90.",
+      "document_value": "в подпункте 9) слова \", предусмотренных статьей 90 настоящего Кодекса, за",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0020",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 64.",
+      "document_value": "5) в подпункте 4) пункта 1 статьи 64 слова \"принудительном отчуждении, в том",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0021",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 66.",
+      "document_value": "6) статью 66 дополнить пунктами 3 и 4 следующего содержания:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0022",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 84.",
+      "document_value": "\"Статья 84. Изъятие земельного участка для государственных нужд",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0023",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 85.",
+      "document_value": "10) в пункте 1 статьи 85 слова \"Принудительное отчуждение\" заменить слоном \"",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0024",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 86.",
+      "document_value": "11) статьи 86, 87, 88 и 90 изложить в следующей редакции:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0025",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 86.",
+      "document_value": "\"Статья 86. Права собственника или негосударственного",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0026",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 87.",
+      "document_value": "Статья 87. Размер возмещения стоимости имущества при его",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0027",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 9.",
+      "document_value": "статьи 9",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0028",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 88.",
+      "document_value": "Статья 88. Формы платежа и сроки выплаты возмещения при",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0029",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 90.",
+      "document_value": "Статья 90. Ограничение принудительного возмездного отчуждения",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0030",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 123.",
+      "document_value": "12) в пункте 3 статьи 123 слова \"принудительно отчуждены для Государственных",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0031",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 125.",
+      "document_value": "13) в пункте 3 статьи 125 слова \"принудительно отчуждаются, в том числе путем",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0032",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 148.",
+      "document_value": "14) в подпункте 4) пункта 1 статьи 148 слова \"принудительным отчуждением\"",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0033",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 165.",
+      "document_value": "15) В подпункте 1) статьи 165 слова \"принудительного отчуждения, в том числе",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0034",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 9.",
+      "document_value": "1) часть вторую статьи 9 после слова \"осуществляет\" дополнить словами \"от имени",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0035",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 20.",
+      "document_value": "2) в части третьей статьи 20 слова \"и прекращении деятельности\" заменить словами",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0036",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 24-2.",
+      "document_value": "\"Статья 24-2. Реквизиция имущества при чрезвычайных ситуациях",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0037",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 84.",
+      "document_value": "статью 84 дополнить пунктом 1-1 следующего содержания:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0038",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 3.",
+      "document_value": "1) в пункте 3 статьи 3 слова \"Принудительное изъятие\" заменить словом \"Изъятие\";",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0039",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 30.",
+      "document_value": "3) в пункте 1 статьи 30 слова подпунктами \"2) и 4)\" заменить словами подпунктами",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0040",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 116.",
+      "document_value": "5) в части первой пункта 1 статьи 116 слово \"отводом\" заменить словом \"изъятием\";",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0041",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 2-1.",
+      "document_value": "\"Статья 2-1. Особенности изъятия земельных участков для",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0042",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 4.",
+      "document_value": "2) в подпункте 4 статьи 4 слово \"законодательством\" заменить словами \"главой 6",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0043",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 16-1.",
+      "document_value": "\"Статья 16-1. Учет имущества, составляющего государственный",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0044",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 1.",
+      "document_value": "1) статью 1 дополнить пунктом 1-1 следующего содержания:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0045",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 16.",
+      "document_value": "статью 16 дополнить пунктом 3 следующего содержания:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0046",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 4.",
+      "document_value": "предусмотренных в подпункте 2) пункта 2 статьи 4 настоящего Закона, в местности,",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0047",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 16.",
+      "document_value": "статью 16 дополнить пунктом 3-1 следующего содержания:",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0048",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 14.",
+      "document_value": "\"Статья 14. Особенности изъятия земельных участков для",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0049",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий изменения в статью 54.",
+      "document_value": "подпункт 1) пункта 2 статьи 54 дополнить словами \", при условии, если в заявлении",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0050",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий Статью 2.",
+      "document_value": "Статья 2. Настоящий Закон вводится в действие по истечении шести месяцев со дня",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
+    },
+    {
+      "claim_id": "claim_0051",
+      "status": "UNVERIFIED",
+      "source_ids": [],
+      "found_value": "В корпусе отсутствует текст проекта Закона, содержащий Статью 2.",
+      "document_value": "Статья 2. Настоящий Закон вводится в действие по истечении шести месяцев со дня",
+      "contradiction_detail": null,
+      "confidence": "HIGH"
     }
   ],
-  "additional_findings": [],
+  "additional_findings": [
+    {
+      "description": "Корпус доказательств не содержит текста анализируемого проекта Закона или связанных с ним нормативных правовых актов. Предоставленные источники (ГК РК, Земельный кодекс, Закон о госимуществе и др.) не позволяют верифицировать ни одно из утверждений документа. Аудит невозможен без предоставления текста самого проекта Закона и/или законов, в которые вносятся изменения.",
+      "gap_type": "error",
+      "affected_domain": "Верификация законодательных изменений"
+    }
+  ],
   "summary": {
-    "total_claims": 1,
+    "total_claims": 52,
     "confirmed": 0,
     "contradicted": 0,
-    "unverified": 1,
+    "unverified": 52,
     "critical_errors_found": 0
   },
-  "recommendation": "Необходимо проверить реквизиты постановления Правительства по официальным источникам.",
-  "pros": [
-    "Проект закона соответствует тематике действующего законодательства о государственном имуществе."
-  ],
+  "recommendation": "Проведение аудита невозможно. Предоставленный корпус доказательств не содержит текста анализируемого проекта Закона. Для верификации утверждений необходимо предоставить полный текст проекта Закона РК «О внесении изменений и дополнений в некоторые законодательные акты Республики Казахстан по вопросам государственного имущества», а также действующие редакции изменяемых законодательных актов.",
+  "pros": [],
   "cons": [
-    "Номер и дата постановления не подтверждены в корпусе документов."
+    "Корпус доказательств не релевантен анализируемому документу. Ни одно из 52 утверждений не может быть проверено."
   ]
 }

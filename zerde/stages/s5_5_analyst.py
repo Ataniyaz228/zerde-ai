@@ -111,7 +111,7 @@ async def run_policy_analyst(
             detail = v.contradiction_detail or v.found_value or ""
             verdict_lines.append(f"  ❌ {v.claim_id}: {detail[:150]}")
     for ns in analysis.negative_space:
-        verdict_lines.append(f"  🕳️ {ns.neg_id}: {ns.description[:150]}")
+        verdict_lines.append(f"  🕳️ {ns.item_id}: {ns.description[:150]}")
 
     verdict_summary = "\n".join(verdict_lines) if verdict_lines else "(нет критических находок)"
 

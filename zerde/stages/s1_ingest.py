@@ -137,7 +137,70 @@ def _extract_pdf(path: Path) -> str:
         logger.warning(f"[S1/PDF] Text layer too sparse ({len(full_text.strip())} chars). Trying textpage fallback.")
         full_text = _extract_pdf_ocr_fallback(path)
 
+    # Пост-процессинг: склеиваем разнесённые буквы (Adilet PDF артефакт)
+    full_text = _fix_spaced_pdf_text(full_text)
+
     return full_text
+
+
+def _fix_spaced_pdf_text(text: str) -> str:
+    """
+    Исправляет разнесённые буквы в PDF из Adilet/госорганов.
+    'с т а т ь е  1 9 6' → 'статье 196'
+    'З А К О Н' → 'ЗАКОН'
+
+    Эвристика: обрабатывает построчно. Если строка содержит
+    одиночные символы разделённые пробелами — склеивает их.
+    """
+    import re
+
+    lines = text.split("\n")
+    fixed_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            fixed_lines.append(line)
+            continue
+
+        # Паттерн: последовательность одиночных символов через пробел(ы)
+        # "с т а т ь е" → 6 одиночных кириллических букв
+        # "1 9 6" → 3 одиночных цифры
+        # Проверяем: если >40% слов — одиночные символы, строка "разнесена"
+        words = stripped.split()
+        single_chars = sum(1 for w in words if len(w) == 1)
+
+        if len(words) > 2 and single_chars / len(words) > 0.4:
+            # PDF из Adilet: одинарный пробел между буквами слова,
+            # двойной+ пробел между словами.
+            # "2 )  в  с т а т ь е  1 9 7" → ["2 )", "в", "с т а т ь е", "1 9 7"]
+            # Разбиваем по 2+ пробелам → склеиваем внутри каждой группы
+            word_groups = re.split(r'  +', stripped)
+            result_parts: list[str] = []
+            for group in word_groups:
+                group = group.strip()
+                if not group:
+                    continue
+                g_words = group.split()
+                g_singles = sum(1 for w in g_words if len(w) == 1)
+                if len(g_words) > 1 and g_singles / len(g_words) > 0.5:
+                    # Группа разнесённых символов → склеиваем
+                    result_parts.append("".join(g_words))
+                else:
+                    result_parts.append(group)
+            result = " ".join(result_parts)
+            fixed_lines.append(result)
+            logger.debug(f"[S1/PDF Fix] '{stripped[:50]}' → '{result[:50]}'")
+        else:
+            fixed_lines.append(line)
+
+    result = "\n".join(fixed_lines)
+    if result != text:
+        original_len = len(text)
+        new_len = len(result)
+        logger.info(f"[S1/PDF] Fixed spaced text: {original_len} → {new_len} chars ({original_len - new_len} removed)")
+
+    return result
 
 
 def _extract_pdf_ocr_fallback(path: Path) -> str:

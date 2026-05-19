@@ -301,7 +301,7 @@ async def _llm_extract(
 
     already_str = "\n".join(f"- {c.claim_text[:100]}" for c in already_found[:20])
     prompt = _LLM_CLAIM_PROMPT.format(
-        document_text=text[:8000],
+        document_text=text[:32000],  # deepseek-v4-flash поддерживает большой контекст
         already_found=already_str or "(ничего)",
         schema=_LLM_CLAIM_SCHEMA,
     )

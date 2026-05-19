@@ -76,7 +76,7 @@ async def run_policy_analyst(
     doc_text: str,
     analysis: AnalysisJSON,
     chunks: list[EvidenceChunk],
-    max_doc_chars: int = 6_000,
+    max_doc_chars: int = 24_000,
 ) -> dict | None:
     """
     Запускает аналитический агент.

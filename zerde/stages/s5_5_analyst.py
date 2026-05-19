@@ -130,7 +130,7 @@ async def run_policy_analyst(
     try:
         raw_json = await cached_llm_call(
             prompt=prompt,
-            model=settings.llm_model_renderer,  # gpt-5-nano — дешёвый
+            model=settings.llm_model_policy_analyst,
             temperature=0.2,  # Чуть больше свободы для аналитики
             max_tokens=4096,
             system_prompt="Ты — эксперт правовой политики Республики Казахстан. Отвечай строго в JSON.",

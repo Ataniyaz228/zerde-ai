@@ -64,6 +64,10 @@ class Settings(BaseSettings):
         default="moonshotai/kimi-k2.6",
         description="ID модели для Этапа 5 (Auditor). Kimi K2.6 — стабильный JSON, reasoning.",
     )
+    llm_model_policy_analyst: str = Field(
+        default="openai/gpt-5-nano",
+        description="ID модели для Этапа 5.5 (Policy Analyst). Лёгкая модель для аналитики.",
+    )
     llm_model_renderer: str = Field(
         default="deepseek/deepseek-chat",
         description="ID модели для Этапа 7 (Renderer) и форматирования. Лёгкая быстрая модель.",

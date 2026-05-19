@@ -57,9 +57,11 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
     (re.compile(r"(?:Закон\w*|Кодекс\w*|ЗРК)\s+[^№]*?№\s*(\d{2,4}[-‐–]\w{1,5}(?:\s*ЗРК)?)", re.I | re.U), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
     (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx]{1,5}(?:\s*ЗРК)?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
     # Ссылки на статьи КоАП: ст. 79 КоАП, статье 640 КоАП
-    (re.compile(r"стать[яиею]\s*(\d+(?:[-.]\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
+    (re.compile(r"стать[яиею]\s*(\d+(?:[-.]?\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     # Ссылки на статьи УК: "статьей 207 Уголовного кодекса", "ст. 207 УК"
-    (re.compile(r"стать[яиеюй]\w?\s+(\d+(?:[-.]\d+)?)\s+(?:Уголовн\w+\s+[Кк]одекс\w*|УК)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
+    (re.compile(r"стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\s+(?:Уголовн\w+\s+[Кк]одекс\w*|УК)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
+    # Ссылки на статьи любого Кодекса: "в статье 196", "статью 105 изложить"
+    (re.compile(r"(?:в\s+)?стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\b(?!\s*КоАП|\s*УК|\s*,\s*ст)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
     # Ссылки на ППРК: Постановление Правительства №142, ППРК №909
     (re.compile(r"(?:ППРК|Постановлени[яею]\s+Правительства)[^№]*№?\s*(\d+)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "pprkz_num"),
     # Штрафы в МРП: 500 МРП, "10 000 (десяти тысяч) МРП"
@@ -72,6 +74,8 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
     (re.compile(r"в\s*течени[ие]\s*(\d+)\s*рабочих\s*дн", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "workdays_deadline"),
     # Даты вступления в силу: с 1 января 2025 года, с 1 июля 2026
     (re.compile(r"с\s+(\d{1,2}\s+\w+\s+\d{4})\s*года", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "effective_date"),
+    # Вводится в действие: "по истечении шести месяцев со дня", "по истечении десяти дней"
+    (re.compile(r"вводится\s+в\s+действие\s+(.*?(?:дня|после))", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "enforcement_date"),
 ]
 
 # Паттерн для извлечения года в контексте

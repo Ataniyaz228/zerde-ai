@@ -122,23 +122,11 @@ def audit_analysis(
     _audit_conclusions(analysis, corpus_index, prefix_index)
 
     # Overall reliability — учитывает долю CONTRADICTED/UNVERIFIED
-    if analysis.facts:
-        total = len(analysis.facts)
-        # Считаем вердикты
-        n_contradicted = sum(
-            1 for f in analysis.facts
-            if any(v.status.value == "CONTRADICTED" for v in analysis.verdicts if v.claim_id == f.fact_id.replace("fact_", "claim_"))
-        )
-        # Fallback: считаем по тексту описания
-        if n_contradicted == 0:
-            n_contradicted = sum(
-                1 for f in analysis.facts
-                if f.description and "ОШИБКА" in f.description.upper()
-            )
-        n_confirmed = sum(
-            1 for f in analysis.facts
-            if f.description and "ПОДТВЕРЖДЕНО" in (f.description or "").upper()
-        )
+    if analysis.verdicts:
+        total = len(analysis.verdicts)
+        # Считаем по статусу вердиктов напрямую
+        n_contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
+        n_confirmed = sum(1 for v in analysis.verdicts if v.status.value == "CONFIRMED")
         n_unverified = total - n_contradicted - n_confirmed
 
         # Формула: confirmed повышает, contradicted сильно снижает

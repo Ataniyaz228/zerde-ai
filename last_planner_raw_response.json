@@ -1,57 +1,44 @@
 {
   "adilet_queries": [
     {
-      "query_text": "Закон РК 87-IV персональные данные защита",
+      "query_text": "ГК РК 87-IV: ст. 41,44,50,105,111,167,192,193-1,196,200,202-207,235,242",
       "law_ids": [
         "87-IV"
       ],
-      "articles": [],
-      "date_from": null,
-      "date_to": null
+      "articles": [
+        "41",
+        "44",
+        "50",
+        "105",
+        "111",
+        "167",
+        "192",
+        "193-1",
+        "196",
+        "200",
+        "202-207",
+        "235",
+        "242"
+      ]
     },
     {
-      "query_text": "Закон РК 94-V персональные данные статья 1-11",
+      "query_text": "Закон РК 94-V персональные данные",
       "law_ids": [
         "94-V"
       ],
-      "articles": [
-        "1",
-        "2",
-        "3",
-        "4",
-        "5",
-        "6",
-        "7",
-        "8",
-        "9",
-        "11"
-      ],
-      "date_from": null,
-      "date_to": null
+      "articles": []
     },
     {
-      "query_text": "Закон РК 235-V Кодекс об административных правонарушениях персональные данные",
+      "query_text": "КоАП РК 235-V обзор статей",
       "law_ids": [
         "235-V"
       ],
-      "articles": [],
-      "date_from": null,
-      "date_to": null
+      "articles": []
     }
   ],
   "web_queries_ru": [
     {
-      "query_text": "МРП 2025 размер тенге республиканский бюджет",
-      "include_domains": [
-        "gov.kz",
-        "adilet.zan.kz",
-        "supreme.kz",
-        "primeminister.kz"
-      ],
-      "max_results": 3
-    },
-    {
-      "query_text": "Закон РК 94-V персональные данные статья 9 уведомление 24 часа",
+      "query_text": "МРП 2025 размер месячного расчетного показателя",
       "include_domains": [
         "gov.kz",
         "adilet.zan.kz"
@@ -59,33 +46,76 @@
       "max_results": 3
     },
     {
-      "query_text": "Закон РК 94-V локализация персональных данных статья 8",
+      "query_text": "Закон РК государственное имущество",
       "include_domains": [
         "gov.kz",
         "adilet.zan.kz"
       ],
-      "max_results": 3
+      "max_results": 5
+    },
+    {
+      "query_text": "приоритетное право Казахстан стратегические объекты закон",
+      "include_domains": [
+        "gov.kz",
+        "adilet.zan.kz"
+      ],
+      "max_results": 5
+    },
+    {
+      "query_text": "оценочная деятельность закон Казахстан",
+      "include_domains": [
+        "gov.kz",
+        "adilet.zan.kz"
+      ],
+      "max_results": 5
+    },
+    {
+      "query_text": "ответственность учредителя казенные предприятия",
+      "include_domains": [
+        "gov.kz",
+        "adilet.zan.kz"
+      ],
+      "max_results": 5
     }
   ],
   "web_queries_kk": [
     {
-      "query_text": "94-V Заңы дербес деректер 9-бап хабарлау уақыты 24 сағат",
+      "query_text": "МРП 2025 жылдық республикалык бюджет өлшемі",
       "include_domains": [
         "gov.kz",
         "adilet.zan.kz"
       ],
-      "max_results": 3
+      "max_results": 5
     },
     {
-      "query_text": "94-V Заңы дербес деректер 8-бап деректерді локализациялау талаптары",
+      "query_text": "мемлекеттик мүлiк қағидалары заң",
       "include_domains": [
         "gov.kz",
         "adilet.zan.kz"
       ],
+      "max_results": 5
+    },
+    {
+      "query_text": "стратегиялық объектілерге құқықтық басымдық сатып алу",
+      "include_domains": [
+        "gov.kz",
+        "adilet.zan.kz"
+      ],
+      "max_results": 5
+    }
+  ],
+  "web_queries_en": [
+    {
+      "query_text": "Law RK state property act priority right to acquire strategic object",
+      "include_domains": [
+        "gov.kz",
+        "adilet.zan.kz",
+        "supreme.kz"
+      ],
       "max_results": 3
     },
     {
-      "query_text": "94-V Заңы дербес деректер 5-2-бап трансшекаралық беру",
+      "query_text": "Kazakhstan assessment activity law",
       "include_domains": [
         "gov.kz",
         "adilet.zan.kz"
@@ -93,22 +123,21 @@
       "max_results": 3
     }
   ],
-  "web_queries_en": [
-    {
-      "query_text": "RK 94-V personal data article 9 notification 24 hours",
-      "include_domains": [
-        "gov.kz",
-        "adilet.zan.kz"
-      ],
-      "max_results": 3
-    },
-    {
-      "query_text": "RK 94-V cross-border data transfer article 5-2 adequacy",
-      "include_domains": [
-        "gov.kz",
-        "adilet.zan.kz"
-      ],
-      "max_results": 3
-    }
+  "expected_elements": [
+    "Все НПА для проверки: 87-IV (ГК РК), 94-V (ПДн), 235-V (КоАП)",
+    "Извлеченные упомянутые в документе статьи и их текущий статус",
+    "Кросс-ссылка с другими НПА: Закон о государственном имуществе, Бюджетный кодекс, Закон об оценочной деятельности",
+    "Правовые определения: государственное имущество, учреждения, казенные предприятия, органы исполнительной власти",
+    "Потенциальные последствия и санкции по режиму госимущества",
+    "Пробелы и противоречия между старыми и новыми нормами",
+    "Воздействие на госучреждения и государственные предприятия"
+  ],
+  "bylaw_triggers": [
+    "Закон о государственном имуществе",
+    "Закон об оценочной деятельности",
+    "Бюджетный кодекс",
+    "Закон об органах государственного управления и учреждениях",
+    "Кодекс об административных правонарушениях (235-V)",
+    "Закон о регистрации прав на недвижимое имущество"
   ]
 }

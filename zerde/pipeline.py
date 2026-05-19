@@ -2,7 +2,7 @@
 Pipeline Orchestrator
 Связывает все этапы в единый асинхронный пайплайн.
 
-v7.0 изменения:
+Этапы:
   - Stage 2.5: Claim Extractor (гибридный regex + LLM)
   - Stage 5: run_auditor() вместо run_analyst() — claim-by-claim верификация
   - reference_data.py: детерминированные вердикты без LLM
@@ -26,6 +26,7 @@ from zerde.models import (
 from zerde.stages.s1_ingest import ingest_document
 from zerde.stages.s2_planner import build_query_plan
 from zerde.stages.s2_5_claim_extractor import extract_claims
+from zerde.stages.s2_7_self_check import run_self_check
 from zerde.stages.s3_gather import gather_evidence
 from zerde.stages.s4_fusion import fuse_and_validate
 from zerde.stages.s5_analyst import run_auditor
@@ -59,8 +60,8 @@ async def run_pipeline(
     """
     Запускает полный пайплайн от файла до Markdown-отчёта.
 
-    Архитектура v7.0 (Auditor mode):
-      S1 → S2 → S2.5 → S3 → S4 → S5(Auditor) → S6 → S7
+    Архитектура:
+      S1 → S2 → S2.5 → S3 → S4 → S5 → S6 → S7
 
     Args:
         file_path: Путь к входному документу (PDF/DOCX/TXT).
@@ -73,7 +74,7 @@ async def run_pipeline(
     start_time = time.perf_counter()
 
     logger.info("=" * 60)
-    logger.info("Pipeline Start (Auditor Mode)")
+    logger.info("Pipeline Start")
     logger.info(f"Input: {file_path}")
     logger.info("=" * 60)
 
@@ -96,6 +97,12 @@ async def run_pipeline(
         f"Stage 2.5 done — {claims.total_count} claims ({len(claims.critical_claims)} critical) "
         f"| время: {elapsed_2:.2f}s"
     )
+
+    # ─── ЭТАП 2.7: Document Self-Check (внутридокументные противоречия) ───
+    selfcheck_claims = run_self_check(doc_state.normalized_text)
+    if selfcheck_claims:
+        claims.claims.extend(selfcheck_claims)
+        logger.info(f"[Pipeline] ✓ Stage 2.7 — {len(selfcheck_claims)} internal contradictions added")
 
     # ─── ЭТАП 3: Data Gathering ───────────────────────────────────────────
     t3 = time.perf_counter()

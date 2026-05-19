@@ -33,6 +33,7 @@ from zerde.models import (
     DocumentState,
 )
 from zerde.reference_data import (
+    KOAP_MAX_FINES,
     LAW_REGISTRY,
     MRP_BY_YEAR,
     NOTIFICATION_DEADLINES,
@@ -56,16 +57,16 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
     (re.compile(r"№?\s*(\d{2,4}[-‐–]\w{1,4}(?:\s*ЗРК)?)", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
     # Ссылки на статьи КоАП: ст. 79 КоАП, статье 640 КоАП
     (re.compile(r"стать[яиею]\s*(\d+(?:[-.]\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
-    # Ссылки на статьи УК: ст. 207 УК, статье 147 УК РК
-    (re.compile(r"стать[яиею]\s*(\d+(?:[-.]\d+)?)\s*УК", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
+    # Ссылки на статьи УК: "статьей 207 Уголовного кодекса", "ст. 207 УК"
+    (re.compile(r"стать[яиеюй]\w?\s+(\d+(?:[-.]\d+)?)\s+(?:Уголовн\w+\s+[Кк]одекс\w*|УК)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
     # Ссылки на ППРК: Постановление Правительства №142, ППРК №909
     (re.compile(r"(?:ППРК|Постановлени[яею]\s+Правительства)[^№]*№?\s*(\d+)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "pprkz_num"),
-    # Штрафы в МРП: 500 МРП, до 2000 МРП
-    (re.compile(r"(\d[\d\s]*)\s*МРП", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.CRITICAL, "fine_mrp"),
+    # Штрафы в МРП: 500 МРП, "10 000 (десяти тысяч) МРП"
+    (re.compile(r"(\d[\d\s]*)\s*(?:\([^)]*\)\s*)?МРП", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.CRITICAL, "fine_mrp"),
     # Размер МРП в тенге: МРП составляет 3 450 тенге
     (re.compile(r"МРП[^.]*?(\d[\d\s]+)\s*тенге", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.HIGH, "mrp_value"),
-    # Сроки уведомлений в часах: в течение 24 часов, в течение 72 часов
-    (re.compile(r"в\s*течени[ие]\s*(\d+)\s*час", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "hours_deadline"),
+    # Сроки уведомлений в часах: "не позднее 24 (двадцати четырех) часов", "в течение 72 часов"
+    (re.compile(r"(?:в\s*течени[ие]|не\s*позднее)\s*(\d+)\s*(?:\([^)]*\)\s*)?час", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "hours_deadline"),
     # Сроки в рабочих днях: в течение 10 рабочих дней
     (re.compile(r"в\s*течени[ие]\s*(\d+)\s*рабочих\s*дн", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "workdays_deadline"),
     # Даты вступления в силу: с 1 января 2025 года, с 1 июля 2026
@@ -123,6 +124,44 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
                     )
                 )
 
+    # --- Табличные штрафы: "МСБ | 500 | 3 450 | ..." ---
+    # Ищем строки с pipe-разделителями, где одна из колонок — число (штраф)
+    table_mrp_re = re.compile(r"МРП", re.I)
+    if table_mrp_re.search(text):
+        for line in lines:
+            if "|" not in line:
+                continue
+            cells = [c.strip() for c in line.split("|")]
+            if len(cells) < 3:
+                continue
+            # Первая ячейка — название категории (не число)
+            if cells[0] and not cells[0][0].isdigit():
+                # Вторая ячейка — размер штрафа в МРП
+                val_raw = re.sub(r"\s+", "", cells[1])
+                if val_raw.isdigit():
+                    val = int(val_raw)
+                    entity_str = str(val)
+                    claim_text = f"Документ утверждает: fine_mrp={val} (таблица: «{line.strip()[:120]}»)"
+                    if claim_text in seen_texts:
+                        continue
+                    seen_texts.add(claim_text)
+                    deterministic = _check_entity("fine_mrp", entity_str, text)
+                    status, msg = (deterministic if deterministic else (None, None))
+                    cid = f"claim_{counter:04d}"
+                    counter += 1
+                    claims.append(
+                        DocumentClaim(
+                            claim_id=cid,
+                            claim_text=claim_text,
+                            quote=line.strip()[:200],
+                            claim_type=ClaimType.FINANCIAL,
+                            severity=ClaimSeverity.CRITICAL,
+                            entities=[entity_str],
+                            deterministic_verdict=msg,
+                            deterministic_status=status,
+                        )
+                    )
+
     return claims
 
 
@@ -149,7 +188,11 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
     if tag == "uk_article":
         art = get_uk_article(entity_normalized)
         if art:
-            is_related = "персональных данных" in art["notes"].lower() or "частной жизни" in art["notes"].lower()
+            notes_lower = art["notes"].lower()
+            has_negation = "не связана" in notes_lower or "не относится" in notes_lower
+            is_related = not has_negation and (
+                "персональных данных" in notes_lower or "частной жизни" in notes_lower
+            )
             if not is_related:
                 return (VerdictStatus.CONTRADICTED, f"УК РК ст.{entity_normalized} = «{art['title']}» — {art['notes']}")
             return (VerdictStatus.CONFIRMED, f"УК ст.{entity_normalized}: «{art['title']}»")
@@ -181,10 +224,26 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
         return None
 
     if tag == "hours_deadline":
-        hours_val = entity_normalized
-        if hours_val == "24":
-            note = NOTIFICATION_DEADLINES.get("breach_notification_source", "")
-            return (VerdictStatus.UNVERIFIED, f"Срок 24 часа: {note}")
+        hours = int(entity_normalized) if entity_normalized.isdigit() else None
+        if hours == 24:
+            source = NOTIFICATION_DEADLINES.get("breach_notification_source", "")
+            return (VerdictStatus.CONTRADICTED,
+                    f"Закон РК 94-V не устанавливает 24-часовой срок уведомления об утечке. {source}")
+        if hours == 72:
+            return (VerdictStatus.CONFIRMED, "72 часа — стандарт GDPR и международная практика")
+        return None
+
+    if tag == "fine_mrp":
+        val_clean = re.sub(r"\s+", "", entity_normalized)
+        try:
+            val = int(val_clean)
+        except ValueError:
+            return None
+        absolute_max = KOAP_MAX_FINES["absolute_max"]
+        if val > absolute_max:
+            return (VerdictStatus.CONTRADICTED,
+                    f"Штраф {val} МРП превышает максимум КоАП ст.79 ({absolute_max} МРП для юрлиц). Фиктивная норма.")
+        # Если штраф в пределах максимума — нужен контекст LLM
         return None
 
     return None

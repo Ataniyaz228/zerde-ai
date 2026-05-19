@@ -4,314 +4,314 @@
       "claim_id": "claim_0000",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "В корпусе отсутствует постановление Правительства РК № 447 от 31 марта 2009 года.",
+      "found_value": null,
       "document_value": "Постановление Правительства Республики Казахстан от 31 марта 2009 года № 447",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0001",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Ведомости Верховного Совета РК в корпусе отсутствуют.",
-      "document_value": "Верховного Совета Республики Казахстан, 1994 г., № 23-24 (приложение)",
+      "found_value": null,
+      "document_value": "Верховного Совета Республики Казахстан, 1994 г., № 23-24 (приложение); 1995 г., №",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0002",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию Гражданского кодекса в указанном источнике за 1995 год по корпусу.",
+      "found_value": null,
       "document_value": "15-16, ст. 109; № 20, ст. 121; Ведомости Парламента Республики Казахстан, 1996 г., №",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0003",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию Гражданского кодекса в указанном источнике за 1997 год по корпусу.",
+      "found_value": null,
       "document_value": "184; № 13-14, ст. 195, 205; 1998 г., № 2-3, ст. 23; № 5-6, ст. 50; № 11-12, ст. 178; № 17-",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0004",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию Гражданского кодекса в указанном источнике за 1997 год по корпусу.",
+      "found_value": null,
       "document_value": "184; № 13-14, ст. 195, 205; 1998 г., № 2-3, ст. 23; № 5-6, ст. 50; № 11-12, ст. 178; № 17-",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0005",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию Гражданского кодекса в указанном источнике за 2001 год по корпусу.",
+      "found_value": null,
       "document_value": ". 336; № 22, ст. 408; 2001 г., № 1, ст. 7; № 8, ст. 52; № 17-18, ст. 240; № 24, ст. 338; 2002",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0006",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию Гражданского кодекса в указанном источнике за 2003 год по корпусу.",
+      "found_value": null,
       "document_value": "19-20, ст. 146; 2004 г., № 6, ст. 42; № 10, ст. 56; № 16, ст. 91; № 23, ст. 142; 2005 г., №",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0007",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию Гражданского кодекса в указанном источнике за 2008 год по корпусу.",
+      "found_value": null,
       "document_value": "28; № 16, ст. 131; № 18, ст. 143; № 20, ст. 153; 2008 г., № 12, ст. 52; № 13-14, ст. 58; №",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0008",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию Налогового кодекса в указанном источнике по корпусу.",
+      "found_value": null,
       "document_value": "года (Ведомости Парламента Республики Казахстан, 1999 г., № 16-17, ст. 642; № 23, ст.",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0009",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию указанного закона в источнике за 2005 год по корпусу.",
+      "found_value": null,
       "document_value": "142; 2005 г., № 21-22, ст. 87; № 23, ст. 104; 2006 г., № 4, ст. 24, 25; № 8, ст. 45; № 11, ст.",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0010",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2008 год по корпусу.",
+      "found_value": null,
       "document_value": "20, ст. 152; № 24, ст. 180; 2008 г., № 6-7, ст. 25, 27; № 15-16, ст. 64; № 21, ст. 95; № 23,",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0011",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2004 год по корпусу.",
+      "found_value": null,
       "document_value": "№ 3-4, ст. 23; № 12, ст. 88; № 15-16, ст. 100; № 23, ст. 141; Ведомости Парламента",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0012",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1996 год по корпусу.",
+      "found_value": null,
       "document_value": "Республики Казахстан, 1996 г., № 2, ст. 184; № 11-12, ст. 262; № 19, ст. 370; 1997 г, №",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0013",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1997 год по корпусу.",
+      "found_value": null,
       "document_value": "13-14, ст. 205; № 22, ст. 333; 1998 г., № 11-12, ст. 176; 1999 г., № 20, ст. 727; 2000 г., №",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0014",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1998 год по корпусу.",
+      "found_value": null,
       "document_value": "13-14, ст. 205; № 22, ст. 333; 1998 г., № 11-12, ст. 176; 1999 г., № 20, ст. 727; 2000 г., №",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0015",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2004 год по корпусу.",
+      "found_value": null,
       "document_value": "2004 г., № 11-12, ст. 66; № 16, ст. 91; № 23, ст. 142; 2005 г., № 14, ст. 55; № 23, ст. 104;",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0016",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике «17-18» по корпусу.",
+      "found_value": null,
       "document_value": "17-18,",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0017",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1995 год по корпусу.",
+      "found_value": null,
       "document_value": "49; № 15-16, ст. 109; Ведомости Парламента Республики Казахстан, 1996 г., № 14, ст.",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0018",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1997 год по корпусу.",
+      "found_value": null,
       "document_value": "274; № 19, ст. 370; 1997 г., № 12, ст. 183, 184; № 13-14, ст. 205, 210; 1998 г., № 5-6, ст.",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0019",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1998 год по корпусу.",
+      "found_value": null,
       "document_value": "50; № 17-18, ст. 224; 2003 г., № 11, ст. 56; № 24, ст. 78; 2007 г., № 4, ст. 28; 2008 г., №",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0020",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1996 год по корпусу.",
+      "found_value": null,
       "document_value": "1996 г., № 11-12, ст. 263; 1998 г., № 23, ст. 416; 1999 г., № 4, ст. 101; 2000 г, № 6, ст. 145",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0021",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2004 год по корпусу.",
+      "found_value": null,
       "document_value": "; 2003 г., № 14, ст. 112; 2004 г., № 11-12, ст. 67; № 23, ст. 142; 2006 г., № 1, ст. 5; № 24,",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0022",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Номер статьи 24-2 упоминается, но без полного текста в корпусе, что недостаточно для проверки содержания.",
+      "found_value": null,
       "document_value": "24-2",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0023",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Статья 24-2 упоминается, но её содержание не раскрыто в корпусе для верификации.",
+      "found_value": null,
       "document_value": "\"Статья 24-2. Реквизиция имущества при чрезвычайных ситуациях",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0024",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1997 год по корпусу.",
+      "found_value": null,
       "document_value": "Ведомости Парламента Республики Казахстан, 1997 г., № 1-2, ст. 7; № 13-14, ст. 205;",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0025",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 1998 год по корпусу.",
+      "found_value": null,
       "document_value": "1998 г., № 14, ст. 198; № 17-18, ст. 225; 2000 г., № 22, ст. 408; 2001 г., № 8, ст. 52; № 17-",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0026",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2008 год по корпусу.",
+      "found_value": null,
       "document_value": "13-14, ст. 58; № 23, ст. 114; № 24, ст. 129;",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0027",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2001 год по корпусу.",
+      "found_value": null,
       "document_value": "431; № 23, ст. 921; 2001 г., № 15-16, ст. 228; 2002 г, № 6, ст. 71; 2003 г., № 11, ст. 67;",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0028",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2001 год по корпусу.",
+      "found_value": null,
       "document_value": ".308 № 24 ст.443; 2001 г., № 13-14, ст.173, 176; № 24, ст.338; 2003 г., № 24, ст.178; 2004",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0029",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Номер статьи 16-1 упоминается, но без полного текста в корпусе, что недостаточно для проверки содержания.",
+      "found_value": null,
       "document_value": "16-1",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0030",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Статья 16-1 упоминается, но её содержание не раскрыто в корпусе для верификации.",
+      "found_value": null,
       "document_value": "\"Статья 16-1. Учет имущества, составляющего государственный",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0031",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2003 год по корпусу.",
+      "found_value": null,
       "document_value": "\" (Ведомости Парламента Республики Казахстан, 2003 г., № 10, ст. 55; № 21-22, ст. 160;",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0032",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2008 год по корпусу.",
+      "found_value": null,
       "document_value": "4, ст. 28, 33; № 9, ст. 67; № 20, ст. 153; 2008 г., № 13-14, ст. 56; № 17-18, ст. 72; № 21, ст",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     },
     {
       "claim_id": "claim_0033",
       "status": "UNVERIFIED",
       "source_ids": [],
-      "found_value": "Невозможно подтвердить публикацию закона в источнике за 2008 год по корпусу.",
+      "found_value": null,
       "document_value": "4, ст. 28, 33; № 9, ст. 67; № 20, ст. 153; 2008 г., № 13-14, ст. 56; № 17-18, ст. 72; № 21, ст",
       "contradiction_detail": null,
-      "confidence": "HIGH"
+      "confidence": "LOW"
     }
   ],
   "additional_findings": [
     {
-      "description": "Корпус доказательств полностью не соответствует тематике аудируемого документа. Документ касается изменений в законодательство о государственном имуществе (Гражданский кодекс, Закон о госимуществе), в то время как корпус содержит законы о персональных данных, административных правонарушениях, правилах перевозок, торговли и т.д. Аутентичные тексты Гражданского кодекса, Закона 'О государственном имуществе' и сопутствующих НПА в корпусе отсутствуют.",
-      "gap_type": "error",
-      "affected_domain": "Весь документ"
+      "description": "Корпус доказательств не содержит официальных источников публикации (Ведомости Верховного Совета, Ведомости Парламента) или текстов законов, на которые ссылается проект. Невозможно проверить корректность указанных номеров и статей.",
+      "gap_type": "regulatory_hole",
+      "affected_domain": "Верификация ссылок на официальные публикации и статьи законов"
     }
   ],
   "summary": {
@@ -321,11 +321,9 @@
     "unverified": 34,
     "critical_errors_found": 0
   },
-  "recommendation": "Провести полный аудит документа с использованием релевантных НПА (Гражданский кодекс РК, Закон 'О государственном имуществе', Земельный кодекс, Водный кодекс, Закон 'О недрах и недропользовании' и др.). Предоставленный корпус доказательств не позволяет верифицировать ни одно из утверждений, представленных в чеклисте. Без доступа к первоисточникам провести сопоставительный анализ и выдать вердикты CONFIRMED или CONTRADICTED невозможно.",
+  "recommendation": "Для проверки корректности ссылок на официальные публикации и номера статей необходимо обратиться к эталонной базе данных законодательства (например, ИПС «Әділет») за соответствующие годы. Предоставленный корпус не содержит необходимых источников.",
   "pros": [],
   "cons": [
-    "Полное несоответствие корпуса доказательств тематике аудируемого документа.",
-    "34 из 34 утверждений (legal_id) оставлены без проверки по существу из-за отсутствия текстов законов в корпусе.",
-    "Нулевая практическая ценность аудита с использованием данного корпуса."
+    "Все 34 утверждения о номерах и идентификаторах законов не могут быть подтверждены из-за отсутствия релевантных источников в корпусе."
   ]
 }

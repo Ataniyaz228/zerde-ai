@@ -52,8 +52,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
-    # Номера законов: 94-V, 87-IV, 235-VII ЗРК
-    (re.compile(r"№?\s*(\d{2,4}[-‐–]\w{1,4}(?:\s*ЗРК)?)", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
+    # Номера законов: "Закон № 94-V", "№ 87-IV ЗРК", "Закона РК от ... № 235-VII"
+    # НЕ ловим номера выпусков: "№ 13-14, ст. 205" (Ведомости Парламента)
+    (re.compile(r"(?:Закон\w*|Кодекс\w*|ЗРК)\s+[^№]*?№\s*(\d{2,4}[-‐–]\w{1,5}(?:\s*ЗРК)?)", re.I | re.U), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
+    (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx]{1,5}(?:\s*ЗРК)?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
     # Ссылки на статьи КоАП: ст. 79 КоАП, статье 640 КоАП
     (re.compile(r"стать[яиею]\s*(\d+(?:[-.]\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     # Ссылки на статьи УК: "статьей 207 Уголовного кодекса", "ст. 207 УК"

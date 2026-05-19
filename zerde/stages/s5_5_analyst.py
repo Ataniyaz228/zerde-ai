@@ -128,13 +128,25 @@ async def run_policy_analyst(
     )
 
     try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+        )
+
+        messages = [
+            {"role": "system", "content": "Ты — эксперт правовой политики Республики Казахстан. Отвечай строго в JSON."},
+            {"role": "user", "content": prompt},
+        ]
+
         raw_json = await cached_llm_call(
-            prompt=prompt,
+            client=client,
             model=settings.llm_model_policy_analyst,
-            temperature=0.2,  # Чуть больше свободы для аналитики
+            messages=messages,
+            settings=settings,
+            ttl_seconds=86400,
             max_tokens=4096,
-            system_prompt="Ты — эксперт правовой политики Республики Казахстан. Отвечай строго в JSON.",
-            cache_ttl=86400,
+            temperature=0.2,
         )
 
         if not raw_json or raw_json == "{}":

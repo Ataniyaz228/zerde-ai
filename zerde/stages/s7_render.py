@@ -57,6 +57,7 @@ async def render_report(
     analysis: AnalysisJSON,
     chunks: list[EvidenceChunk],
     output_path: str | Path | None = None,
+    policy_analysis: dict | None = None,
 ) -> str:
     """
     Этап 7: Рендерит Markdown-отчёт формата "Lawyer".
@@ -90,6 +91,7 @@ async def render_report(
     sections = [
         _render_header(analysis),
         _render_executive_summary(analysis),
+        _render_policy_analysis(policy_analysis),
         _render_normative_base(active_chunks),
         _render_conflicts(conflict_chunks),
         _render_facts_and_conclusions(analysis, corpus_index, prefix_index),
@@ -147,6 +149,77 @@ def _render_executive_summary(analysis: AnalysisJSON) -> str:
         f"- **Выводов:** {len(analysis.conclusions)}\n"
         f"- **Пробелов регулирования:** {len(analysis.negative_space)}\n"
     )
+
+
+def _render_policy_analysis(policy: dict | None) -> str:
+    """Аналитическая оценка от S5.5 Policy Analyst."""
+    if not policy:
+        return ""
+
+    lines = ["## 📊 Аналитическая Оценка\n"]
+    lines.append("> [!NOTE]")
+    lines.append("> Данная секция сгенерирована AI-аналитиком и носит рекомендательный характер.\n")
+
+    # Предмет и цель
+    if policy.get("subject"):
+        lines.append(f"### 📋 Предмет и цель\n{policy['subject']}\n")
+
+    # Регуляторный контекст
+    if policy.get("regulatory_context"):
+        lines.append(f"### 🏛️ Место в системе НПА\n{policy['regulatory_context']}\n")
+
+    # Затронутые стороны
+    if policy.get("affected_parties"):
+        lines.append("### 👥 Круг затронутых лиц\n")
+        lines.append("| Группа | Влияние | Детали |")
+        lines.append("|--------|---------|--------|")
+        for p in policy["affected_parties"]:
+            lines.append(f"| {p.get('party', '')} | {p.get('impact', '')} | {p.get('details', '')} |")
+        lines.append("")
+
+    # Ключевые изменения
+    if policy.get("key_changes"):
+        lines.append("### 🔄 Ключевые изменения\n")
+        sig_icons = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}
+        for ch in policy["key_changes"]:
+            icon = sig_icons.get(ch.get("significance", ""), "⚪")
+            lines.append(f"- {icon} **[{ch.get('significance', 'N/A')}]** {ch.get('change', '')}")
+        lines.append("")
+
+    # Риски
+    if policy.get("risks"):
+        lines.append("### ⚠️ Риски\n")
+        for r in policy["risks"]:
+            sev_icons = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}
+            icon = sev_icons.get(r.get("severity", ""), "⚪")
+            mitigation = f" → *{r['mitigation']}*" if r.get("mitigation") else ""
+            lines.append(f"- {icon} **[{r.get('severity', 'N/A')}]** {r.get('risk', '')}{mitigation}")
+        lines.append("")
+
+    # Сильные/слабые стороны
+    if policy.get("strengths"):
+        lines.append("### ✅ Сильные стороны\n")
+        for s in policy["strengths"]:
+            lines.append(f"- {s}")
+        lines.append("")
+    if policy.get("weaknesses"):
+        lines.append("### ❌ Слабые стороны\n")
+        for w in policy["weaknesses"]:
+            lines.append(f"- {w}")
+        lines.append("")
+
+    # Рекомендация аналитика
+    if policy.get("recommendation"):
+        rec_icons = {
+            "ПРИНЯТЬ": "🟢", "ПРИНЯТЬ С ЗАМЕЧАНИЯМИ": "🟡",
+            "ОТПРАВИТЬ НА ДОРАБОТКУ": "🟠", "ОТКЛОНИТЬ": "🔴",
+        }
+        icon = rec_icons.get(policy["recommendation"], "⚫")
+        lines.append(f"### {icon} Рекомендация аналитика: **{policy['recommendation']}**\n")
+        if policy.get("recommendation_reasoning"):
+            lines.append(f"{policy['recommendation_reasoning']}\n")
+
+    return "\n".join(lines)
 
 
 def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:

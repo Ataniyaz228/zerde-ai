@@ -30,6 +30,7 @@ from zerde.stages.s2_7_self_check import run_self_check
 from zerde.stages.s3_gather import gather_evidence
 from zerde.stages.s4_fusion import fuse_and_validate
 from zerde.stages.s5_analyst import run_auditor
+from zerde.stages.s5_5_analyst import run_policy_analyst
 from zerde.stages.s6_auditor import audit_analysis
 from zerde.stages.s7_render import render_report
 
@@ -132,16 +133,30 @@ async def run_pipeline(
         f"verdicts={len(analysis.verdicts)} contradicted={contradicted}"
     )
 
-    # ─── ЭТАП 6: Auditor ─────────────────────────────────────────────────
-    t6 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 6: Auditor Validation")
-    audited_analysis = audit_analysis(analysis, active_chunks)
-    logger.info(f"[Pipeline] ✓ Stage 6 done ({time.perf_counter() - t6:.2f}s)")
+    # ─── ЭТАП 5.5 + 6: Policy Analyst и BM25 Audit (ПАРАЛЛЕЛЬНО) ──────
+    t56 = time.perf_counter()
+    logger.info("[Pipeline] ► Stage 5.5 + 6: Policy Analyst ∥ BM25 Audit (параллельно)")
+
+    async def _run_s6():
+        return audit_analysis(analysis, active_chunks)
+
+    policy_analysis, audited_analysis = await asyncio.gather(
+        run_policy_analyst(
+            doc_text=doc_state.normalized_text,
+            analysis=analysis,
+            chunks=active_chunks,
+        ),
+        _run_s6(),
+    )
+    logger.info(
+        f"[Pipeline] ✓ Stage 5.5+6 done ({time.perf_counter() - t56:.2f}s) — "
+        f"policy={'✓' if policy_analysis else '✗'}"
+    )
 
     # ─── ЭТАП 7: Render ──────────────────────────────────────────────────
     t7 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 7: Report Rendering")
-    report_md = await render_report(audited_analysis, active_chunks, output_path)
+    report_md = await render_report(audited_analysis, active_chunks, output_path, policy_analysis)
     report_path = str(output_path) if output_path else "output/zerde_report_*.md"
     logger.info(f"[Pipeline] ✓ Stage 7 done ({time.perf_counter() - t7:.2f}s)")
 

@@ -252,7 +252,7 @@ async def _dedup_by_cosine(chunks: list[EvidenceChunk], threshold: float) -> lis
     seen_indices: set[int] = set()
 
     for i, j in combinations(range(len(active)), 2):
-        if j in seen_indices:
+        if i in seen_indices or j in seen_indices:
             continue
 
         sim = _cosine_similarity(active[i].embedding, active[j].embedding)  # type: ignore[arg-type]
@@ -418,15 +418,15 @@ def _detect_temporal_conflicts(chunks: list[EvidenceChunk]) -> None:
 # FACTUAL
 def _detect_factual_conflicts(chunks: list[EvidenceChunk]) -> None:
     """
-    FACTUAL: Расхождение числовых значений в источниках, описывающих один закон.
-    Сравниваем числа с единицами измерения между чанками одного law_id.
+    FACTUAL: Расхождение числовых значений в источниках, описывающих один закон и статью.
+    Сравниваем числа с единицами измерения между чанками одного law_id + article.
     """
-    by_law: dict[str, list[EvidenceChunk]] = {}
+    by_law_and_art: dict[tuple[str, str], list[EvidenceChunk]] = {}
     for chunk in chunks:
-        if chunk.law_id:
-            by_law.setdefault(chunk.law_id, []).append(chunk)
+        if chunk.law_id and chunk.article:
+            by_law_and_art.setdefault((chunk.law_id, chunk.article), []).append(chunk)
 
-    for law_id, group in by_law.items():
+    for (law_id, article), group in by_law_and_art.items():
         if len(group) < 2:
             continue
 
@@ -442,7 +442,7 @@ def _detect_factual_conflicts(chunks: list[EvidenceChunk]) -> None:
             if conflicts:
                 _mark_conflict(group[i], group[j], ConflictType.FACTUAL)
                 logger.info(
-                    f"[S4/FACTUAL] {law_id}: conflicting values: {conflicts}"
+                    f"[S4/FACTUAL] {law_id} ст.{article}: conflicting values: {conflicts}"
                 )
 
 

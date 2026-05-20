@@ -515,12 +515,17 @@ class TestStageFixes:
     def test_global_chrono_anomalies(self):
         from zerde.stages.s2_7_self_check import _detect_chronological_anomalies
 
-        # Дата принятия в начале, а дата вступления в силу — в самом конце (>1000 символов разницы)
-        padding = " " * 1200
-        doc_text = f"Закон принят 21 мая 2026 года.{padding}Настоящий Закон вступает в силу с 1 мая 2025 года."
+        # Тест проверяет, что если расстояние больше 500 символов, аномалия НЕ детектируется (C1 Fix)
+        # А если расстояние меньше 500 символов — аномалия детектируется.
+        padding_far = " " * 1200
+        doc_text_far = f"Закон принят 21 мая 2026 года.{padding_far}Настоящий Закон вступает в силу с 1 мая 2025 года."
+        anomalies_far = _detect_chronological_anomalies(doc_text_far)
+        assert len(anomalies_far) == 0  # Слишком далеко, проигнорировано
 
-        anomalies = _detect_chronological_anomalies(doc_text)
-        assert len(anomalies) == 1
-        assert "21.05.2026" in anomalies[0].claim_text
-        assert "01.05.2025" in anomalies[0].claim_text
+        padding_near = " " * 100
+        doc_text_near = f"Закон принят 21 мая 2026 года.{padding_near}Настоящий Закон вступает в силу с 1 мая 2025 года."
+        anomalies_near = _detect_chronological_anomalies(doc_text_near)
+        assert len(anomalies_near) == 1
+        assert "21.05.2026" in anomalies_near[0].claim_text
+        assert "01.05.2025" in anomalies_near[0].claim_text
 

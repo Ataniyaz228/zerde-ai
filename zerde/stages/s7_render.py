@@ -277,12 +277,20 @@ def _render_facts_and_conclusions(
     prefix_index: dict[str, str],
 ) -> str:
     """Факты и выводы с источниками и статусами."""
-    virtual_ids = {"UNLINKED", "reference_data", "reference_da"}
+    virtual_ids = {"UNLINKED", "reference_data"}
     lines = ["## 🔍 Факты и Выводы\n"]
+
+    # H3 & H4 Fix: Матчим Fact и Verdict строго по claim_id, а не по индексам (zip)
+    verdict_map = {v.claim_id: v for v in analysis.verdicts}
 
     if analysis.facts:
         lines.append("### Установленные факты\n")
-        for fact, verdict in zip(analysis.facts, analysis.verdicts):
+        for fact in analysis.facts:
+            verdict = verdict_map.get(fact.claim_id) if fact.claim_id else None
+            if not verdict:
+                # Fallback на дефолтный пустой вердикт, если связь не найдена
+                verdict = ClaimVerdict(claim_id=fact.claim_id or "", status=VerdictStatus.UNVERIFIED, source_ids=fact.source_ids)
+
             icon = _STATUS_ICONS.get(fact.validation_status, "⚫")
             score_str = f" (BM25: {fact.bm25_score:.2f})" if fact.bm25_score is not None else ""
             lines.append(f"#### {icon} `{fact.fact_id}`{score_str}")
@@ -299,7 +307,7 @@ def _render_facts_and_conclusions(
             # Рендерим только реальные источники (не виртуальные)
             real_source_lines = []
             for sid in fact.source_ids:
-                if sid in virtual_ids:
+                if sid in virtual_ids or sid.startswith("reference_"):
                     continue  # reference_data / UNLINKED — не показываем
                 # Резолвим prefix → full ID
                 full_id = prefix_index.get(sid, sid)

@@ -106,6 +106,7 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
       - '940001000' — голый числовой код (от LLM planner)
       - 'K940001000_' — полный Adilet-код
     """
+    law_id = law_id.replace("\u0406", "I").replace("\u0456", "i")
     urls: list[str] = []
 
     # 1. Known exact mapping
@@ -240,6 +241,19 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
                 continue
             except Exception as e:
                 logger.warning(f"[S3/Adilet] {strategy_fn.__name__} failed: {e}")
+
+        # Local DB fallback if CSS/PDF/API failed
+        logger.warning(f"[S3/Adilet] All strategies failed for: '{query.query_text[:50]}'. Fallback to search_local.")
+        try:
+            chunks = cache.search_local(query.query_text, law_ids=query.law_ids)
+            if chunks:
+                logger.info(f"[S3/Adilet] search_local found {len(chunks)} chunks for query: '{query.query_text[:50]}'")
+                # Mark strategy
+                for c in chunks:
+                    c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
+                return chunks
+        except Exception as e:
+            logger.error(f"[S3/Adilet] search_local fallback failed: {e}")
 
         logger.error(f"[S3/Adilet] All fallbacks failed for: '{query.query_text[:50]}'")
         return []
@@ -666,7 +680,14 @@ async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[Evidenc
         settings = get_settings()
 
         if not settings.tavily_api_key:
-            logger.warning("[S3/Web] Tavily API key not set. Skipping web search.")
+            logger.warning("[S3/Web] Tavily API key not set. Skipping web search, falling back to local search.")
+            try:
+                chunks = cache.search_local(query.query_text)
+                if chunks:
+                    logger.info(f"[S3/Web] local search found {len(chunks)} chunks for query: '{query.query_text[:50]}'")
+                    return chunks
+            except Exception as e:
+                logger.error(f"[S3/Web] local search fallback failed: {e}")
             return []
 
         try:
@@ -717,7 +738,14 @@ async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[Evidenc
             logger.error("[S3/Web] tavily-python not installed")
             return []
         except Exception as e:
-            logger.warning(f"[S3/Web] Tavily error: {e}")
+            logger.warning(f"[S3/Web] Tavily error: {e}. Falling back to local search.")
+            try:
+                chunks = cache.search_local(query.query_text)
+                if chunks:
+                    logger.info(f"[S3/Web] local search found {len(chunks)} chunks after Tavily error")
+                    return chunks
+            except Exception as le:
+                logger.error(f"[S3/Web] local search fallback failed: {le}")
             return []
 
 

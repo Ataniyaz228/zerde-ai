@@ -55,7 +55,7 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
     # Номера законов: "Закон № 94-V", "№ 87-IV ЗРК", "Закона РК от ... № 235-VII"
     # НЕ ловим номера выпусков: "№ 13-14, ст. 205" (Ведомости Парламента)
     (re.compile(r"(?:Закон\w*|Кодекс\w*|ЗРК)\s+[^№]*?№\s*(\d{2,4}[-‐–]\w{1,5}(?:\s*ЗРК)?)", re.I | re.U), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
-    (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx]{1,5}(?:\s*ЗРК)?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
+    (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx\u0406\u0456]{1,5}(?:\s*ЗРК)?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
     # Ссылки на статьи КоАП: ст. 79 КоАП, статье 640 КоАП
     (re.compile(r"стать[яиею]\s*(\d+(?:[-.]?\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     # Ссылки на статьи УК: "статьей 207 Уголовного кодекса", "ст. 207 УК"
@@ -99,6 +99,7 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
         for pattern, ctype, severity, tag in _PATTERNS:
             for m in pattern.finditer(line):
                 entity = m.group(1).strip().replace("\u2011", "-").replace("\u2010", "-")
+                entity = entity.replace("\u0406", "I").replace("\u0456", "i")
                 # Нормализуем пробелы в числах
                 entity_clean = re.sub(r"\s+", "", entity)
 
@@ -172,7 +173,7 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
 
 def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus, str] | None:
     """Детерминированная проверка entity по reference_data. Возвращает вердикт или None."""
-    entity_normalized = entity.strip().upper().replace(" ", "")
+    entity_normalized = entity.strip().upper().replace(" ", "").replace("\u0406", "I").replace("\u0456", "i")
 
     if tag == "law_id":
         # Убираем "ЗРК" и пробелы

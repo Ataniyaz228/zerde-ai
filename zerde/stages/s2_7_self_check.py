@@ -214,6 +214,10 @@ def _detect_chronological_anomalies(text: str) -> list[DocumentClaim]:
             adop_tuple = (adop_year, adop_month, adop_day)
 
             if eff_tuple < adop_tuple:
+                # C1 Fix: Сравниваем только пары дат, находящиеся рядом в тексте (в пределах 500 символов)
+                if abs(eff_pos - adop_pos) > 500:
+                    continue
+
                 pair_key = (adop_text, eff_text)
                 if pair_key in seen_pairs:
                     continue

@@ -128,11 +128,9 @@ async def run_policy_analyst(
     )
 
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
-        )
+        # H8 Fix: Используем make_llm_client(settings) для корректной передачи OpenRouter заголовков
+        from zerde.utils.llm_client import make_llm_client
+        client = make_llm_client(settings)
 
         messages = [
             {"role": "system", "content": "Ты — эксперт правовой политики Республики Казахстан. Отвечай строго в JSON."},

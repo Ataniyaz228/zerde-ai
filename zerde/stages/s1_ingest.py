@@ -266,11 +266,11 @@ def _detect_language(text: str) -> str:
         sample = text[:3000]  # Достаточно для детектирования
         lang = detect(sample)
 
-        # Нормализуем к нашим значениям
-        if lang in ("ru", "kk", "en"):
-            return lang
-        elif lang in ("kk", "kaz"):
+        # H6 Fix: Проверяем kaz/kk первыми, чтобы kaz не уходило в дефолтный ru
+        if lang in ("kk", "kaz"):
             return "kk"
+        elif lang in ("ru", "en"):
+            return lang
         else:
             return "ru"  # Для КЗ юридических документов — дефолт ru
     except Exception as e:

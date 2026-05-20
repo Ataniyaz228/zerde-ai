@@ -71,6 +71,7 @@ class AdiletFallbackStrategy(StrEnum):
     XHR = "XHR"
     CSS_SELECTOR = "CSS_SELECTOR"
     PDF_OCR = "PDF_OCR"
+    LOCAL_CACHE = "LOCAL_CACHE"
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +320,7 @@ class Fact(BaseModel):
     """§1.4 — Утверждение с привязкой к источникам."""
 
     fact_id: str
+    claim_id: str | None = Field(default=None, description="Связанный ID утверждения (claim_id)")
     claim: str = Field(description="Формулировка утверждения")
     source_ids: list[str] = Field(
         min_length=1,

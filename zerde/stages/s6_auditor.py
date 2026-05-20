@@ -72,8 +72,9 @@ def audit_analysis(
             if pfx not in prefix_index:
                 prefix_index[pfx] = cid
 
-    # Виртуальные source_ids которые не нужно резолвить в corpus
-    VIRTUAL_SOURCES = {"UNLINKED", "reference_data", "reference_da"}
+    # H2 Fix: Стандартизируем виртуальные source_ids
+    # LLM может обрезать ID, поэтому проверяем по началу строки ("reference_")
+    VIRTUAL_SOURCES = {"UNLINKED", "reference_data"}
 
     logger.info(f"[S6] Audit start. facts={len(analysis.facts)} corpus={len(corpus_index)}")
 
@@ -94,7 +95,7 @@ def audit_analysis(
             # были проверены детерминированно — оцениваем по confidence
             real_sources = [
                 sid for sid in fact.source_ids
-                if sid not in VIRTUAL_SOURCES
+                if sid not in VIRTUAL_SOURCES and not sid.startswith("reference_")
             ]
             if not real_sources:
                 # Детерминированный факт: score прямо из confidence
@@ -128,6 +129,8 @@ def audit_analysis(
     _audit_conclusions(analysis, corpus_index, prefix_index)
 
     # Overall reliability — учитывает долю CONTRADICTED/UNVERIFIED
+    # H1 Fix: Наказываем unverified гораздо меньше, считаем взвешенную оценку
+    # по реально проверенным вердиктам (confirmed vs contradicted), а unverified даёт лишь небольшой штраф.
     if analysis.verdicts:
         total = len(analysis.verdicts)
         # Считаем по статусу вердиктов напрямую
@@ -135,12 +138,20 @@ def audit_analysis(
         n_confirmed = sum(1 for v in analysis.verdicts if v.status.value == "CONFIRMED")
         n_unverified = total - n_contradicted - n_confirmed
 
-        # Формула: confirmed повышает, contradicted сильно снижает
+        # Формула: confirmed повышает, contradicted сильно снижает. Unverified даёт небольшой штраф (не рушит в 0).
         if total > 0:
-            base_score = n_confirmed / total
-            contradiction_penalty = (n_contradicted / total) * 0.7
-            unverified_penalty = (n_unverified / total) * 0.2
-            reliability = max(0.0, min(1.0, base_score - contradiction_penalty - unverified_penalty))
+            verified_total = n_confirmed + n_contradicted
+            if verified_total > 0:
+                # Базовый скор по реально верифицированной части
+                verified_ratio = n_confirmed / verified_total
+                # Штраф за противоречия
+                contradiction_penalty = (n_contradicted / total) * 0.5
+                # Небольшой штраф за отсутствие данных (unverified)
+                unverified_penalty = (n_unverified / total) * 0.05
+                reliability = max(0.0, min(1.0, verified_ratio - contradiction_penalty - unverified_penalty))
+            else:
+                # Если вообще ничего не верифицировано
+                reliability = max(0.0, 0.5 - (n_unverified / total) * 0.1)
         else:
             reliability = 0.0
 
@@ -157,13 +168,14 @@ def audit_analysis(
     for fact in analysis.facts:
         status_counts[fact.validation_status] += 1
 
+    # C6 Fix: reliability может быть 0.0, проверяем на is not None
     logger.info(
         f"[S6] Done. HIGH={status_counts[ValidationStatus.HIGH]} "
         f"MEDIUM={status_counts[ValidationStatus.MEDIUM]} "
         f"LOW={status_counts[ValidationStatus.LOW]} "
         f"UNVERIFIED={status_counts[ValidationStatus.UNVERIFIED]} "
         f"reliability={analysis.overall_reliability:.3f}"
-        if analysis.overall_reliability else f"[S6] Done. No scores."
+        if analysis.overall_reliability is not None else f"[S6] Done. No scores."
     )
     return analysis
 
@@ -338,10 +350,10 @@ def _resolve_source_ids(
     Резолвит короткие (prefix) source_ids в полные chunk_ids.
     LLM возвращает '12-символьные' ID — ищем в prefix_index.
     """
-    virtual = {"UNLINKED", "reference_data", "reference_da"}
+    virtual = {"UNLINKED", "reference_data"}
     resolved = []
     for sid in source_ids:
-        if sid in virtual:
+        if sid in virtual or sid.startswith("reference_"):
             resolved.append(sid)
         elif sid in corpus_index:
             resolved.append(sid)  # Уже полный ID
@@ -358,8 +370,8 @@ def _check_topology(
     corpus_index: dict[str, EvidenceChunk],
 ) -> bool:
     """True если хотя бы один source_id (кроме виртуальных) существует в корпусе."""
-    virtual = {"UNLINKED", "reference_data", "reference_da"}
-    valid_ids = [sid for sid in resolved_ids if sid not in virtual]
+    virtual = {"UNLINKED", "reference_data"}
+    valid_ids = [sid for sid in resolved_ids if sid not in virtual and not sid.startswith("reference_")]
     if not valid_ids:
         return False
 
@@ -392,11 +404,11 @@ def _arithmetic_check(
     if not claim_numbers:
         return True
 
-    skipped = {"UNLINKED", "reference_da"}
+    skipped = {"UNLINKED"}
     source_texts = " ".join(
         corpus_index[sid].content
         for sid in resolved_ids
-        if sid in corpus_index and sid not in skipped
+        if sid in corpus_index and sid not in skipped and not sid.startswith("reference_")
     )
     if not source_texts:
         return True
@@ -470,7 +482,7 @@ def _audit_conclusions(
         resolved = _resolve_source_ids(conclusion.source_ids, corpus_index, prefix_index)
         valid_sources = [
             sid for sid in resolved
-            if sid not in ("UNLINKED", "reference_da") and sid in corpus_index
+            if sid not in ("UNLINKED", "reference_data") and not sid.startswith("reference_") and sid in corpus_index
         ]
         missing_facts = [
             fid for fid in conclusion.supporting_fact_ids

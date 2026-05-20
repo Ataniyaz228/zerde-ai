@@ -306,6 +306,7 @@ def _parse_auditor_response(
             confidence = 0.4
         facts.append(Fact(
             fact_id=f"fact_{len(facts):04d}",
+            claim_id=v.claim_id,
             claim=claim_text,
             source_ids=v.source_ids if v.source_ids else ["UNLINKED"],
             confidence=confidence,
@@ -389,6 +390,7 @@ def _validate_claim_coverage(analysis: AnalysisJSON, claims: ClaimExtractionResu
             ))
             analysis.facts.append(Fact(
                 fact_id=f"fact_{len(analysis.facts):04d}",
+                claim_id=claim.claim_id,
                 claim=f"[{claim.claim_id}]: {claim.claim_text[:150]}",
                 source_ids=["UNLINKED"],
                 confidence=0.3,

@@ -84,7 +84,13 @@ def audit_analysis(
 
     for fact in analysis.facts:
         try:
-            # Факты с только виртуальными source_ids (reference_data, UNLINKED)
+            # UNLINKED или пустые источники не могут быть проверены по корпусу
+            if not fact.source_ids or "UNLINKED" in fact.source_ids:
+                fact.validation_status = ValidationStatus.UNVERIFIED
+                fact.bm25_score = 0.0
+                continue
+
+            # Факты с только виртуальными source_ids (reference_data)
             # были проверены детерминированно — оцениваем по confidence
             real_sources = [
                 sid for sid in fact.source_ids

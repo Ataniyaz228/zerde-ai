@@ -449,3 +449,78 @@ class TestModels:
     def test_chunk_id_computed(self):
         chunk = _make_chunk(content="Test content for hash")
         assert len(chunk.chunk_id) == 64  # SHA256 hex
+
+
+# ===========================================================================
+# Stage 2.7 & Stage 6 Specific Fixes
+# ===========================================================================
+
+class TestStageFixes:
+    """Тесты для исправленных логических багов в Stage 2.7 и Stage 6."""
+
+    def test_unlinked_fact_auditor(self):
+        from zerde.models import AnalysisJSON, Fact, ValidationStatus
+        from zerde.stages.s6_auditor import audit_analysis
+
+        fact = Fact(
+            fact_id="fact_unlinked",
+            claim="Какое-то неподтвержденное утверждение",
+            source_ids=["UNLINKED"],
+            confidence=0.95
+        )
+        analysis = AnalysisJSON(
+            analysis_id="test_analysis",
+            source_doc_id="test_doc",
+            plan_id="test_plan",
+            facts=[fact]
+        )
+
+        # Вызов аудитора без чанков в корпусе
+        result = audit_analysis(analysis, [])
+        assert result.facts[0].validation_status == ValidationStatus.UNVERIFIED
+        assert result.facts[0].bm25_score == 0.0
+
+    def test_sub_article_splitting(self):
+        from zerde.stages.s2_7_self_check import _detect_deadline_collisions
+
+        # Статья с дефисом, без точки в конце заголовка, содержащая противоречие по срокам
+        doc_text = """
+Статья 79-1
+Внутренний регламент устанавливает, что ответ на запрос предоставляется в течение 10 рабочих дней.
+
+Статья 79-1
+Несмотря на предыдущие положения, срок ответа составляет 20 рабочих дней.
+"""
+        collisions = _detect_deadline_collisions(doc_text)
+        assert len(collisions) == 1
+        assert "79-1" in collisions[0].claim_text
+        assert "10 vs 20" in collisions[0].claim_text
+
+    def test_sub_article_splitting_dot_and_newline(self):
+        from zerde.stages.s2_7_self_check import _detect_deadline_collisions
+
+        # Статьи с десятичной точкой в номере
+        doc_text = """
+Статья 10.1.
+Срок рассмотрения составляет 5 дней.
+
+Статья 10.1
+Внезапно срок рассмотрения составляет 15 дней.
+"""
+        collisions = _detect_deadline_collisions(doc_text)
+        assert len(collisions) == 1
+        assert "10.1" in collisions[0].claim_text
+        assert "5 vs 15" in collisions[0].claim_text
+
+    def test_global_chrono_anomalies(self):
+        from zerde.stages.s2_7_self_check import _detect_chronological_anomalies
+
+        # Дата принятия в начале, а дата вступления в силу — в самом конце (>1000 символов разницы)
+        padding = " " * 1200
+        doc_text = f"Закон принят 21 мая 2026 года.{padding}Настоящий Закон вступает в силу с 1 мая 2025 года."
+
+        anomalies = _detect_chronological_anomalies(doc_text)
+        assert len(anomalies) == 1
+        assert "21.05.2026" in anomalies[0].claim_text
+        assert "01.05.2025" in anomalies[0].claim_text
+

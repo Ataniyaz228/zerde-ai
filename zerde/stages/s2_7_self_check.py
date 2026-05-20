@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 # Regex паттерны
 # ---------------------------------------------------------------------------
 
-# Номер статьи: "Статья 5", "Статья 15", "статьи 8"
+# Номер статьи: "Статья 5", "Статья 79-1", "Статья 10.1"
 _ARTICLE_RE = re.compile(
-    r"[Сс]тать[яиею]\s+(\d+)", re.UNICODE
+    r"[Сс]тать[яиею]\s+(\d+(?:[-.]\d+)?)", re.UNICODE
 )
 
 # Сроки: "в течение 24 часов", "180 (ста восьмидесяти) календарных дней", "60 дней"
@@ -131,20 +131,21 @@ def _detect_deadline_collisions(text: str) -> list[DocumentClaim]:
     """
     results: list[DocumentClaim] = []
 
-    # Разбиваем по заголовкам статей: "Статья N." (с точкой — заголовки)
-    # Не путать со ссылками типа "Статья 8 настоящего Закона"
-    parts = re.split(r"(?=\n[Сс]тать[яиею]\s+\d+\.)", text)
+    # Разбиваем по заголовкам статей: "Статья N.", "Статья N-1", "Статья N.1"
+    # Поддерживает точки и новые строки после номера статьи
+    parts = re.split(r"(?=\n[Сс]тать[яиею]\s+\d+(?:[-.]\d+)?\b\s*(?:\.|\n|\r))", text)
 
-    article_blocks: dict[str, str] = {}
+    article_blocks: dict[str, list[str]] = defaultdict(list)
     for part in parts:
         m = _ARTICLE_RE.search(part[:50])  # Ищем в первых 50 символах блока
         if m:
             art_num = m.group(1)
-            article_blocks[art_num] = part
+            article_blocks[art_num].append(part)
 
     # В каждой статье ищем сроки
     counter = 0
-    for art_num, block in article_blocks.items():
+    for art_num, blocks in article_blocks.items():
+        block = "\n".join(blocks)
         # Группируем сроки по единицам
         deadlines_by_unit: dict[str, list[int]] = defaultdict(list)
 
@@ -205,14 +206,10 @@ def _detect_chronological_anomalies(text: str) -> list[DocumentClaim]:
         if month:
             effective_dates.append((year, month, day, m.group(0), m.start()))
 
-    # Сравниваем только близкие пары (в пределах 500 символов)
-    _PROXIMITY = 500
+    # Сравниваем все найденные даты вступления в силу и принятия
     counter = 0
     for eff_year, eff_month, eff_day, eff_text, eff_pos in effective_dates:
         for adop_year, adop_month, adop_day, adop_text, adop_pos in adoption_dates:
-            if abs(eff_pos - adop_pos) > _PROXIMITY:
-                continue
-
             eff_tuple = (eff_year, eff_month, eff_day)
             adop_tuple = (adop_year, adop_month, adop_day)
 

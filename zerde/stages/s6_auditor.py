@@ -21,7 +21,17 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 from zerde.config import get_settings
-from zerde.models import AnalysisJSON, EvidenceChunk, Fact, ValidationStatus
+from zerde.models import (
+    AnalysisJSON,
+    ClaimSeverity,
+    ClaimVerdict,
+    ConflictRecord,
+    ConflictType,
+    EvidenceChunk,
+    Fact,
+    ValidationStatus,
+    VerdictStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,40 +135,54 @@ def audit_analysis(
             logger.warning(f"[S6] Fact '{fact.fact_id}' audit exception: {e}")
             fact.validation_status = ValidationStatus.UNVERIFIED
 
+    # V7.0: Override validation_status для CONTRADICTED verdicts
+    # Если вердикт CONTRADICTED — цвет всегда LOW (красный), независимо от BM25
+    verdict_map = {v.claim_id: v for v in analysis.verdicts if v.claim_id}
+    for fact in analysis.facts:
+        if fact.claim_id and fact.claim_id in verdict_map:
+            v = verdict_map[fact.claim_id]
+            if v.status == VerdictStatus.CONTRADICTED:
+                fact.validation_status = ValidationStatus.LOW
+                fact.bm25_score = 0.0
+
     # Audit выводов
     _audit_conclusions(analysis, corpus_index, prefix_index)
 
-    # Overall reliability — учитывает долю CONTRADICTED/UNVERIFIED
-    # H1 Fix: Наказываем unverified гораздо меньше, считаем взвешенную оценку
-    # по реально проверенным вердиктам (confirmed vs contradicted), а unverified даёт лишь небольшой штраф.
+    # V7.0: Штрафная модель надёжности (пессимистичная)
+    # penalty = 0.15*N_critical_contradicted + 0.05*N_high_contradicted + 0.02*N_unverified_risks
+    # reliability = max(0.05, 1.0 - penalty)
     if analysis.verdicts:
-        total = len(analysis.verdicts)
-        # Считаем по статусу вердиктов напрямую
-        n_contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
-        n_confirmed = sum(1 for v in analysis.verdicts if v.status.value == "CONFIRMED")
-        n_unverified = total - n_contradicted - n_confirmed
+        # Считаем только аналитические вердикты (structural не участвуют)
+        analytical_verdicts = [
+            v for v in analysis.verdicts
+            if not (v.claim_id and v.claim_id.startswith("structural_"))
+        ]
 
-        # Формула: confirmed повышает, contradicted сильно снижает. Unverified даёт небольшой штраф (не рушит в 0).
-        if total > 0:
-            verified_total = n_confirmed + n_contradicted
-            if verified_total > 0:
-                # Базовый скор по реально верифицированной части
-                verified_ratio = n_confirmed / verified_total
-                # Штраф за противоречия
-                contradiction_penalty = (n_contradicted / total) * 0.5
-                # Небольшой штраф за отсутствие данных (unverified)
-                unverified_penalty = (n_unverified / total) * 0.05
-                reliability = max(0.0, min(1.0, verified_ratio - contradiction_penalty - unverified_penalty))
-            else:
-                # Если вообще ничего не верифицировано
-                reliability = max(0.0, 0.5 - (n_unverified / total) * 0.1)
-        else:
-            reliability = 0.0
+        n_contradicted_critical = sum(
+            1 for v in analytical_verdicts
+            if v.status == VerdictStatus.CONTRADICTED and v.confidence == "HIGH"
+        )
+        n_contradicted_high = sum(
+            1 for v in analytical_verdicts
+            if v.status == VerdictStatus.CONTRADICTED and v.confidence == "MEDIUM"
+        )
+        n_unverified_risks = sum(
+            1 for v in analytical_verdicts
+            if v.status == VerdictStatus.UNVERIFIED and v.confidence in ("HIGH", "MEDIUM")
+        )
 
+        penalty = (
+            0.15 * n_contradicted_critical +
+            0.05 * n_contradicted_high +
+            0.02 * n_unverified_risks
+        )
+        reliability = max(0.05, min(1.0, 1.0 - penalty))
         analysis.overall_reliability = reliability
+
         logger.info(
-            f"[S6/Score] confirmed={n_confirmed} contradicted={n_contradicted} "
-            f"unverified={n_unverified} → reliability={reliability:.3f}"
+            f"[S6/Score] crit_contrad={n_contradicted_critical} "
+            f"high_contrad={n_contradicted_high} unverified_risks={n_unverified_risks} "
+            f"penalty={penalty:.2f} → reliability={reliability:.3f}"
         )
     elif scores:
         analysis.overall_reliability = float(np.mean(scores))
@@ -167,6 +191,11 @@ def audit_analysis(
     status_counts = {s: 0 for s in ValidationStatus}
     for fact in analysis.facts:
         status_counts[fact.validation_status] += 1
+
+    # V7.0: Conflicts Bridge — превращаем CONTRADICTED вердикты в ConflictRecord
+    # для единой секции "Выявленные конфликты и коллизии" в отчёте
+    analysis.conflicts = _build_conflicts_from_verdicts(analysis.verdicts)
+    logger.info(f"[S6/Conflicts] Bridge created {len(analysis.conflicts)} conflict records")
 
     # C6 Fix: reliability может быть 0.0, проверяем на is not None
     logger.info(
@@ -495,3 +524,46 @@ def _audit_conclusions(
             conclusion.validation_status = ValidationStatus.LOW
         else:
             conclusion.validation_status = ValidationStatus.MEDIUM
+
+
+# ---------------------------------------------------------------------------
+# V7.0: Conflicts Bridge
+# ---------------------------------------------------------------------------
+
+
+def _build_conflicts_from_verdicts(verdicts: list[ClaimVerdict]) -> list[ConflictRecord]:
+    """Превращает CONTRADICTED вердикты в ConflictRecord для единой секции конфликтов."""
+    conflicts: list[ConflictRecord] = []
+    seen: set[str] = set()
+
+    for v in verdicts:
+        if v.status != VerdictStatus.CONTRADICTED:
+            continue
+        if not v.claim_id or v.claim_id in seen:
+            continue
+        seen.add(v.claim_id)
+
+        # Определяем тип конфликта по тексту
+        detail_lower = (v.contradiction_detail or "").lower()
+        if any(w in detail_lower for w in ("коап", "превышает", "иерарх", "подзакон")):
+            ctype = ConflictType.HIERARCHY
+        elif any(w in detail_lower for w in ("срок", "дата", "дней", "часов", "месяц", "вступает", "действие", "времен")):
+            ctype = ConflictType.TEMPORAL
+        else:
+            ctype = ConflictType.FACTUAL
+
+        severity = ClaimSeverity.HIGH if v.confidence == "HIGH" else ClaimSeverity.MEDIUM
+        conflicts.append(
+            ConflictRecord(
+                record_id=f"conflict_{len(conflicts):04d}",
+                conflict_type=ctype,
+                claim_id=v.claim_id,
+                claim_text=v.contradiction_detail or "Противоречие найдено",
+                document_value=v.document_value,
+                found_value=v.found_value,
+                detail=v.contradiction_detail or "",
+                severity=severity,
+            )
+        )
+
+    return conflicts

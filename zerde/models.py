@@ -207,6 +207,17 @@ class DocumentClaim(BaseModel):
         description="Точный статус (CONFIRMED/CONTRADICTED) для детерминированных проверок",
     )
 
+    # V7.0: Структурные claims ("Статья N присутствует") — не идут в Auditor
+    is_structural: bool = Field(
+        default=False,
+        description="True если claim не несёт аналитической ценности (только структура)",
+    )
+    # V7.0: Дедупликация — храним альтернативные цитаты одного и того же claim
+    quote_variants: list[str] = Field(
+        default_factory=list,
+        description="Альтернативные цитаты из документа (при дедупликации)",
+    )
+
 
 class VerdictStatus(StrEnum):
     CONFIRMED = "CONFIRMED"         # Утверждение подтверждено источниками
@@ -240,10 +251,17 @@ class ClaimVerdict(BaseModel):
 
 
 class ClaimExtractionResult(BaseModel):
-    """Выход Stage 2.5: список извлечённых утверждений."""
+    """Выход Stage 2.5/2.6: список извлечённых утверждений + структурный чеклист."""
 
     doc_id: str
-    claims: list[DocumentClaim] = Field(default_factory=list)
+    claims: list[DocumentClaim] = Field(
+        default_factory=list,
+        description="Аналитические claims (идут в Auditor)",
+    )
+    structural_claims: list[DocumentClaim] = Field(
+        default_factory=list,
+        description="Структурные claims (не идут в Auditor, рендерятся отдельно)",
+    )
     extracted_at: datetime = Field(default_factory=datetime.utcnow)
 
     @computed_field  # type: ignore[misc]
@@ -254,7 +272,7 @@ class ClaimExtractionResult(BaseModel):
     @computed_field  # type: ignore[misc]
     @property
     def total_count(self) -> int:
-        return len(self.claims)
+        return len(self.claims) + len(self.structural_claims)
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +389,23 @@ class AffectedParty(BaseModel):
     description: str
 
 
+class ConflictRecord(BaseModel):
+    """V7.0: Bridge-конфликт из Auditor (S5/S6) → Renderer (S7).
+
+    Любой вердикт CONTRADICTED порождает ConflictRecord для единой
+    секции 'Выявленные конфликты и коллизии' в отчёте.
+    """
+
+    record_id: str
+    conflict_type: ConflictType
+    claim_id: str
+    claim_text: str
+    document_value: str | None = None
+    found_value: str | None = None
+    detail: str
+    severity: ClaimSeverity
+
+
 class AnalysisJSON(BaseModel):
     """Выход Этапа 5: полная аналитическая структура."""
 
@@ -403,13 +438,22 @@ class AnalysisJSON(BaseModel):
         default=None,
         ge=0.0,
         le=1.0,
-        description="Средний BM25 score всех фактов",
+        description="Штрафная модель надёжности (V7.0)",
     )
 
     # Заполняется Claim Verifier (Stage 2.5 + Auditor v2)
     verdicts: list[ClaimVerdict] = Field(
         default_factory=list,
         description="Вердикты по каждому утверждению документа",
+    )
+
+    # V7.0: Структурные claims (из Stage 2.6) — для рендеринга чеклиста
+    structural_claims: list[DocumentClaim] = Field(default_factory=list)
+
+    # V7.0: Bridge-конфликты из S6 — для единой секции конфликтов
+    conflicts: list[ConflictRecord] = Field(
+        default_factory=list,
+        description="Конфликты, выявленные Auditor (S5/S6), для рендеринга",
     )
 
 

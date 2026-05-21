@@ -127,10 +127,13 @@ async def run_pipeline(
         claims=claims,
         doc_text=doc_state.normalized_text,
     )
+    # V7.0: Переносим структурные claims в analysis для рендеринга
+    analysis.structural_claims = claims.structural_claims
     contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
     logger.info(
         f"[Pipeline] ✓ Stage 5 done ({time.perf_counter() - t5:.2f}s) — "
-        f"verdicts={len(analysis.verdicts)} contradicted={contradicted}"
+        f"verdicts={len(analysis.verdicts)} contradicted={contradicted} "
+        f"structural={len(claims.structural_claims)}"
     )
 
     # ─── ЭТАП 5.5 + 6: Policy Analyst и BM25 Audit (ПАРАЛЛЕЛЬНО) ──────

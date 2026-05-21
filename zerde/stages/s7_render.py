@@ -21,17 +21,48 @@ from datetime import datetime
 from pathlib import Path
 
 from zerde.config import get_settings
-from zerde.models import AnalysisJSON, EvidenceChunk, LegalRank, ValidationStatus, VerdictStatus
+from zerde.models import (
+    AnalysisJSON,
+    ClaimSeverity,
+    ConflictRecord,
+    DocumentClaim,
+    EvidenceChunk,
+    LegalRank,
+    ValidationStatus,
+    VerdictStatus,
+)
 
 logger = logging.getLogger(__name__)
 
-# Иконки статусов для Markdown
+# Иконки статусов для Markdown (V7.0)
 _STATUS_ICONS = {
     ValidationStatus.HIGH: "🟢",
     ValidationStatus.MEDIUM: "🟡",
     ValidationStatus.LOW: "🔴",
     ValidationStatus.UNVERIFIED: "⚫",
 }
+
+# V7.0: Умный выбор иконки факта с учётом вердикта
+_RISK_ICONS = {
+    "CONTRADICTED": "🔴",
+    "UNVERIFIED_RISK": "🟠",
+    "CONFIRMED": "🟢",
+    "UNVERIFIED_NEUTRAL": "⚫",
+}
+
+
+def _fact_icon(fact: "Fact", verdict_map: dict[str, "ClaimVerdict"]) -> str:
+    """V7.0: Определяет иконку факта с учётом вердикта (override BM25-цвета)."""
+    if fact.claim_id and fact.claim_id in verdict_map:
+        v = verdict_map[fact.claim_id]
+        if v.status == VerdictStatus.CONTRADICTED:
+            return _RISK_ICONS["CONTRADICTED"]
+        if v.status == VerdictStatus.UNVERIFIED and v.confidence in ("HIGH", "MEDIUM"):
+            return _RISK_ICONS["UNVERIFIED_RISK"]
+        if v.status == VerdictStatus.CONFIRMED:
+            return _RISK_ICONS["CONFIRMED"]
+    # Fallback на validation_status
+    return _STATUS_ICONS.get(fact.validation_status, "⚫")
 
 _RANK_LABELS = {
     LegalRank.INTERNATIONAL_TREATY: "Международный договор",
@@ -92,8 +123,9 @@ async def render_report(
         _render_header(analysis),
         _render_executive_summary(analysis),
         _render_policy_analysis(policy_analysis),
+        _render_structural_checklist(analysis),
         _render_normative_base(active_chunks),
-        _render_conflicts(conflict_chunks),
+        _render_conflicts(conflict_chunks, analysis.conflicts),
         _render_facts_and_conclusions(analysis, corpus_index, prefix_index),
         _render_negative_space(analysis),
         _render_normative_assessments(analysis),
@@ -139,16 +171,42 @@ def _render_executive_summary(analysis: AnalysisJSON) -> str:
     confirmed = sum(1 for v in analysis.verdicts if v.status.value == "CONFIRMED")
     contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
     unverified = sum(1 for v in analysis.verdicts if v.status.value == "UNVERIFIED")
+    structural_cnt = len(analysis.structural_claims)
 
-    return (
-        f"## 📋 Executive Summary\n\n"
-        f"{reliability_bar}\n\n"
-        f"- **Подтверждено (✅):** {confirmed}\n"
-        f"- **Опровергнуто (❌):** {contradicted}\n"
-        f"- **Не проверено (⚠️):** {unverified}\n"
-        f"- **Выводов:** {len(analysis.conclusions)}\n"
-        f"- **Пробелов регулирования:** {len(analysis.negative_space)}\n"
-    )
+    lines = [
+        "## 📋 Executive Summary\n",
+        f"{reliability_bar}\n",
+        f"- **Подтверждено (✅):** {confirmed}",
+        f"- **Опровергнуто (❌):** {contradicted}",
+        f"- **Не проверено (⚠️):** {unverified}",
+    ]
+    if structural_cnt:
+        lines.append(f"- **Структурных элементов:** {structural_cnt}")
+    lines.extend([
+        f"- **Выводов:** {len(analysis.conclusions)}",
+        f"- **Пробелов регулирования:** {len(analysis.negative_space)}",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _render_structural_checklist(analysis: AnalysisJSON) -> str:
+    """V7.0: Компактный чеклист структурных claims (не идут в Auditor)."""
+    if not analysis.structural_claims:
+        return ""
+
+    lines = ["## 📑 Состав Документа\n"]
+    # Группируем по claim_type для компактности
+    by_type: dict[str, list[str]] = {}
+    for c in analysis.structural_claims:
+        key = c.claim_type.value
+        by_type.setdefault(key, []).append(c.claim_text)
+
+    for ctype, texts in by_type.items():
+        lines.append(f"- **{ctype.upper()}:** {len(texts)} упоминаний")
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _render_policy_analysis(policy: dict | None) -> str:
@@ -223,50 +281,72 @@ def _render_policy_analysis(policy: dict | None) -> str:
 
 
 def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
-    """Таблица источников, сгруппированная по LegalRank."""
+    """V7.0: Таблица источников, агрегированная по law_id внутри ранга."""
     if not active_chunks:
         return "## 📚 Нормативная База\n\n*Источники не найдены.*"
 
-    # Группируем по рангу
-    by_rank: dict[LegalRank, list[EvidenceChunk]] = {}
+    # Группируем по рангу → law_id → chunks
+    by_rank: dict[LegalRank, dict[str, list[EvidenceChunk]]] = {}
     for chunk in sorted(active_chunks, key=lambda c: int(c.legal_rank)):
-        by_rank.setdefault(chunk.legal_rank, []).append(chunk)
+        rank = chunk.legal_rank
+        law_key = chunk.law_id or chunk.source_title
+        by_rank.setdefault(rank, {}).setdefault(law_key, []).append(chunk)
 
     lines = ["## 📚 Нормативная База\n"]
-    for rank, rank_chunks in by_rank.items():
+    for rank, law_groups in by_rank.items():
         rank_label = _RANK_LABELS.get(rank, str(rank))
         lines.append(f"\n### Ранг {int(rank)}: {rank_label}")
-        for c in rank_chunks:
-            conflict_flag = " ⚠️ КОНФЛИКТ" if c.is_conflict else ""
-            law_ref = f" | {c.law_title} ст. {c.article}" if c.law_id else ""
-            lines.append(
-                f"- [{c.source_title}]({c.source_url}){law_ref}{conflict_flag}  \n"
-                f"  `{c.chunk_id[:12]}…`"
-            )
+        for law_key, law_chunks in law_groups.items():
+            # Берём заголовок из первого chunk'а группы
+            representative = law_chunks[0]
+            law_title = representative.law_title or representative.source_title
+            lines.append(f"- **{law_title}**")
+            # Подпункты — статьи/ссылки
+            for c in law_chunks:
+                conflict_flag = " ⚠️ КОНФЛИКТ" if c.is_conflict else ""
+                art_ref = f" (ст. {c.article})" if c.article else ""
+                lines.append(
+                    f"  - [{c.source_title}]({c.source_url}){art_ref}{conflict_flag}"
+                )
 
     return "\n".join(lines)
 
 
-def _render_conflicts(conflict_chunks: list[EvidenceChunk]) -> str:
-    """Секция юридических конфликтов."""
-    if not conflict_chunks:
-        return "## ⚖️ Конфликты\n\n*Конфликтов не выявлено.*"
+def _render_conflicts(
+    conflict_chunks: list[EvidenceChunk],
+    bridge_conflicts: list[ConflictRecord],
+) -> str:
+    """V7.0: Единая секция конфликтов: S4 (chunks) + S6 (bridge)."""
+    total = len(conflict_chunks) + len(bridge_conflicts)
+    if not total:
+        return "## ⚖️ Конфликты и Коллизии\n\n*Конфликтов не выявлено.*"
 
     lines = [
-        f"## ⚖️ Выявленные Конфликты ({len(conflict_chunks)} источников)\n",
+        f"## ⚖️ Выявленные Конфликты и Коллизии ({total})\n",
         "> [!WARNING]",
-        "> Следующие источники содержат юридические коллизии. Требуют правовой оценки.\n",
+        "> Ниже перечислены юридические коллизии, требующие правовой оценки.\n",
     ]
 
-    for chunk in conflict_chunks:
-        conflict_str = ", ".join(ct.value for ct in chunk.conflict_types)
-        lines.append(f"### `{chunk.chunk_id[:12]}…` — {chunk.source_title}")
-        lines.append(f"- **Тип конфликта:** {conflict_str}")
-        lines.append(f"- **URL:** {chunk.source_url}")
-        lines.append(f"- **Ранг:** {_RANK_LABELS.get(chunk.legal_rank, str(chunk.legal_rank))}")
-        if chunk.conflict_with_ids:
-            lines.append(f"- **Конфликтует с:** {', '.join(c[:12] for c in chunk.conflict_with_ids)}")
-        lines.append("")
+    if conflict_chunks:
+        lines.append("### Конфликты источников (S4)\n")
+        for chunk in conflict_chunks:
+            conflict_str = ", ".join(ct.value for ct in chunk.conflict_types)
+            lines.append(f"**{chunk.source_title}** — `{chunk.chunk_id[:12]}…`")
+            lines.append(f"- Тип: {conflict_str} | Ранг: {_RANK_LABELS.get(chunk.legal_rank, str(chunk.legal_rank))}")
+            if chunk.conflict_with_ids:
+                lines.append(f"- Конфликтует с: {', '.join(c[:12] for c in chunk.conflict_with_ids)}")
+            lines.append("")
+
+    if bridge_conflicts:
+        lines.append("### Конфликты с нормами документа (S5/S6)\n")
+        for rec in bridge_conflicts:
+            sev_icon = "🔴" if rec.severity == ClaimSeverity.HIGH else "🟡"
+            lines.append(f"#### {sev_icon} `{rec.record_id}` — {rec.conflict_type.value}")
+            lines.append(f"- **Claim:** {rec.claim_text}")
+            if rec.document_value and rec.found_value:
+                lines.append(f"- **Документ:** {rec.document_value} → **Норма:** {rec.found_value}")
+            lines.append(f"- **Детали:** {rec.detail}")
+            lines.append("")
 
     return "\n".join(lines)
 
@@ -291,16 +371,22 @@ def _render_facts_and_conclusions(
                 # Fallback на дефолтный пустой вердикт, если связь не найдена
                 verdict = ClaimVerdict(claim_id=fact.claim_id or "", status=VerdictStatus.UNVERIFIED, source_ids=fact.source_ids)
 
-            icon = _STATUS_ICONS.get(fact.validation_status, "⚫")
+            # V7.0: Умная иконка с учётом вердикта (override BM25-цвета)
+            icon = _fact_icon(fact, verdict_map)
             score_str = f" (BM25: {fact.bm25_score:.2f})" if fact.bm25_score is not None else ""
             lines.append(f"#### {icon} `{fact.fact_id}`{score_str}")
-            
+
             if verdict.status == VerdictStatus.CONTRADICTED:
                 lines.append(f"> [!WARNING]")
                 lines.append(f"> **[ОШИБКА]** {fact.claim}\n")
             elif verdict.status == VerdictStatus.CONFIRMED:
                 lines.append(f"> [!NOTE]")
                 lines.append(f"> **[ПОДТВЕРЖДЕНО]** {fact.claim}\n")
+            elif verdict.status == VerdictStatus.UNVERIFIED and verdict.confidence in ("HIGH", "MEDIUM"):
+                # V7.0: Risk flag для важных непроверенных claims
+                lines.append(f"> [!CAUTION]")
+                lines.append(f"> **[⚠️ РИСК РЕТРИВАЛА]** {fact.claim}\n")
+                lines.append(f"> *Система не смогла найти подтверждающие источники. Требуется ручная верификация.*\n")
             else:
                 lines.append(f"> **[НЕ ПРОВЕРЕНО]** {fact.claim}\n")
 

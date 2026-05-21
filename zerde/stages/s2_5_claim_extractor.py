@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import string
 import uuid
 
 
@@ -80,6 +81,85 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
 
 # Паттерн для извлечения года в контексте
 _YEAR_RE = re.compile(r"\b(202[0-9])\b")
+
+# V7.0: Стоп-слова для нормализации claims (дедупликация)
+_STOP_WORDS_CLAIM = frozenset([
+    "и", "в", "на", "с", "по", "от", "до", "за", "при", "о", "об", "из",
+    "или", "а", "но", "что", "как", "это", "не", "к", "для", "то",
+    "документ", "утверждает", "строка", "таблица", "закон", "кодекс", "статья",
+    "ст", "стат", "номер", "присутствует", "существует",
+])
+
+# V7.0: Модальные глаголы — если есть, claim НЕ структурный
+_MODAL_VERBS = frozenset([
+    "обязан", "должен", "запрещается", "влечет", "устанавливается",
+    "предусмотрено", "установлено", "нарушение", "ответственность", "штраф",
+    "вводится", "приостанавливается", "прекращается", "возобновляется",
+    "подлежит", "является", "несет", "вправе", "может", "должны",
+])
+
+
+# ---------------------------------------------------------------------------
+# V7.0: Structural Filter & Claim Deduplication
+# ---------------------------------------------------------------------------
+
+
+def _normalize_claim_text(text: str) -> str:
+    """Нормализация для детерминированной дедупликации claims."""
+    text = text.lower()
+    text = text.translate(str.maketrans("", "", string.punctuation + "«»—–\xa0"))
+    tokens = [t for t in text.split() if t not in _STOP_WORDS_CLAIM and len(t) > 2]
+    return " ".join(tokens)
+
+
+def _is_structural_claim(claim: DocumentClaim) -> bool:
+    """V7.0: Определяет, является ли claim чисто структурным (не идёт в Auditor)."""
+    # 1. Только LOW severity может быть структурным
+    if claim.severity != ClaimSeverity.LOW:
+        return False
+
+    text_lower = claim.claim_text.lower()
+
+    # 2. Если есть модальные глаголы — это нормативное утверждение, не структурное
+    if any(v in text_lower for v in _MODAL_VERBS):
+        return False
+
+    # 3. Ссылки на статьи/законы без модальных глаголов — структурные
+    if claim.claim_type in (ClaimType.LEGAL_REF, ClaimType.LEGAL_ID):
+        return True
+
+    # 4. Простые констатации присутствия/упоминания
+    structural_phrases = ("присутствует", "существует", "указано в документе",
+                          "содержится в", "в документе упоминается", "статья изложена")
+    if any(p in text_lower for p in structural_phrases):
+        return True
+
+    return False
+
+
+def _dedup_claims(claims: list[DocumentClaim]) -> list[DocumentClaim]:
+    """V7.0: Детерминированная дедупликация по нормализованному тексту."""
+    groups: dict[str, list[DocumentClaim]] = {}
+    for c in claims:
+        key = _normalize_claim_text(c.claim_text)
+        if not key:
+            key = c.claim_text.lower()[:40]
+        groups.setdefault(key, []).append(c)
+
+    result: list[DocumentClaim] = []
+    for group in groups.values():
+        # Выбираем "лучший": с deterministic_verdict > с entities > длиннее текст
+        best = max(group, key=lambda c: (
+            bool(c.deterministic_verdict),
+            len(c.entities),
+            len(c.claim_text),
+        ))
+        # Собираем альтернативные цитаты
+        variants = [c.quote for c in group if c.quote and c.quote != best.quote]
+        best.quote_variants = variants
+        result.append(best)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -391,18 +471,31 @@ async def extract_claims(doc_state: DocumentState) -> ClaimExtractionResult:
 
     all_claims = regex_claims + llm_claims
 
-    # Дедупликация по тексту
-    seen: set[str] = set()
-    unique_claims: list[DocumentClaim] = []
-    for c in all_claims:
-        key = c.claim_text[:80].lower()
-        if key not in seen:
-            seen.add(key)
-            unique_claims.append(c)
+    # V7.0: Детерминированная дедупликация по нормализованному тексту
+    deduped = _dedup_claims(all_claims)
+    logger.info(f"[S2.5] Dedup: {len(all_claims)} → {len(deduped)} unique claims")
 
-    result = ClaimExtractionResult(doc_id=doc_state.doc_id, claims=unique_claims)
+    # V7.0: Разделение на аналитические и структурные claims
+    analytical: list[DocumentClaim] = []
+    structural: list[DocumentClaim] = []
+    for c in deduped:
+        if _is_structural_claim(c):
+            c.is_structural = True
+            structural.append(c)
+        else:
+            analytical.append(c)
 
-    # Логируем критические
+    logger.info(
+        f"[S2.5] Split: analytical={len(analytical)} structural={len(structural)}"
+    )
+
+    result = ClaimExtractionResult(
+        doc_id=doc_state.doc_id,
+        claims=analytical,
+        structural_claims=structural,
+    )
+
+    # Логируем критические (только аналитические)
     critical = result.critical_claims
     logger.info(
         f"[S2.5] Done. total={result.total_count} critical={len(critical)}"

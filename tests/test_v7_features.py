@@ -23,12 +23,13 @@ from zerde.stages.s7_render import _fact_icon
 
 
 class TestStructuralFilter:
-    def test_structural_legal_ref_low(self):
+    def test_structural_legal_ref_no_modal(self):
+        # Regex claim: "внести изменения в статью 41" — structural даже при HIGH severity
         c = DocumentClaim(
             claim_id="c1",
-            claim_text="Документ утверждает: article_ref=5 (строка: ...)",
+            claim_text="Документ утверждает: article_ref=41 (строка: ...)",
             claim_type=ClaimType.LEGAL_REF,
-            severity=ClaimSeverity.LOW,
+            severity=ClaimSeverity.HIGH,
         )
         assert _is_structural_claim(c) is True
 
@@ -41,7 +42,8 @@ class TestStructuralFilter:
         )
         assert _is_structural_claim(c) is False
 
-    def test_not_structural_high_severity(self):
+    def test_not_structural_due_to_numeric_norm(self):
+        # Штраф 500 МРП — нормативное, не structural
         c = DocumentClaim(
             claim_id="c3",
             claim_text="Документ утверждает: fine_mrp=500",
@@ -59,6 +61,26 @@ class TestStructuralFilter:
         )
         assert _is_structural_claim(c) is True
 
+    def test_not_structural_modal_inside_low(self):
+        # Граничный случай: LOW severity но есть модальный глагол
+        c = DocumentClaim(
+            claim_id="c5",
+            claim_text="Оператор должен присутствовать на совещании",
+            claim_type=ClaimType.FACTUAL,
+            severity=ClaimSeverity.LOW,
+        )
+        assert _is_structural_claim(c) is False
+
+    def test_structural_law_id_high_severity(self):
+        # Regex claim с HIGH severity: "№ 94-V" — structural (просто номер закона)
+        c = DocumentClaim(
+            claim_id="c6",
+            claim_text="Документ утверждает: law_id=94-V (строка: ...)",
+            claim_type=ClaimType.LEGAL_ID,
+            severity=ClaimSeverity.HIGH,
+        )
+        assert _is_structural_claim(c) is True
+
 
 class TestClaimDedup:
     def test_dedup_identical_claims(self):
@@ -72,6 +94,9 @@ class TestClaimDedup:
         assert len(result) == 1
         # quote_variants собраны (quotes пустые по умолчанию, поэтому 0)
         assert len(result[0].quote_variants) == 0
+
+    def test_dedup_empty_list(self):
+        assert _dedup_claims([]) == []
 
     def test_dedup_keeps_best(self):
         c1 = DocumentClaim(
@@ -120,6 +145,17 @@ class TestConflictsBridge:
             claim_id="c3",
             status=VerdictStatus.CONTRADICTED,
             contradiction_detail="МРП 3450 вместо 3932",
+            confidence="HIGH",
+        )
+        result = _build_conflicts_from_verdicts([v])
+        assert result[0].conflict_type == ConflictType.FACTUAL
+
+    def test_exceeds_without_hierarchy_is_factual(self):
+        # "превышает" без КоАП/иерархии → FACTUAL, не HIERARCHY
+        v = ClaimVerdict(
+            claim_id="c3b",
+            status=VerdictStatus.CONTRADICTED,
+            contradiction_detail="Сумма превышает установленный лимит",
             confidence="HIGH",
         )
         result = _build_conflicts_from_verdicts([v])

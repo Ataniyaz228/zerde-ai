@@ -24,6 +24,7 @@ from zerde.config import get_settings
 from zerde.models import (
     AnalysisJSON,
     ClaimSeverity,
+    ClaimType,
     ConflictRecord,
     DocumentClaim,
     EvidenceChunk,
@@ -191,19 +192,33 @@ def _render_executive_summary(analysis: AnalysisJSON) -> str:
 
 
 def _render_structural_checklist(analysis: AnalysisJSON) -> str:
-    """V7.0: Компактный чеклист структурных claims (не идут в Auditor)."""
+    """V7.0: Компактный чеклист структурных claims с конкретными статьями."""
     if not analysis.structural_claims:
         return ""
 
     lines = ["## 📑 Состав Документа\n"]
-    # Группируем по claim_type для компактности
-    by_type: dict[str, list[str]] = {}
-    for c in analysis.structural_claims:
-        key = c.claim_type.value
-        by_type.setdefault(key, []).append(c.claim_text)
 
-    for ctype, texts in by_type.items():
-        lines.append(f"- **{ctype.upper()}:** {len(texts)} упоминаний")
+    # Извлекаем entities (номера статей/законов) для каждого типа
+    legal_ids: set[str] = set()
+    legal_refs: set[str] = set()
+    other_items: list[str] = []
+
+    for c in analysis.structural_claims:
+        if c.claim_type == ClaimType.LEGAL_ID and c.entities:
+            legal_ids.update(c.entities)
+        elif c.claim_type == ClaimType.LEGAL_REF and c.entities:
+            legal_refs.update(c.entities)
+        else:
+            other_items.append(c.claim_text[:80])
+
+    if legal_ids:
+        ids_str = ", ".join(sorted(legal_ids))
+        lines.append(f"- **Упомянутые законы:** {ids_str}")
+    if legal_refs:
+        refs_str = ", ".join(sorted(legal_refs))
+        lines.append(f"- **Упомянутые статьи:** {refs_str}")
+    if other_items:
+        lines.append(f"- **Прочие структурные элементы:** {len(other_items)}")
 
     lines.append("")
     return "\n".join(lines)

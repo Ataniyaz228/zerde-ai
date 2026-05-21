@@ -112,25 +112,40 @@ def _normalize_claim_text(text: str) -> str:
     return " ".join(tokens)
 
 
-def _is_structural_claim(claim: DocumentClaim) -> bool:
-    """V7.0: Определяет, является ли claim чисто структурным (не идёт в Auditor)."""
-    # 1. Только LOW severity может быть структурным
-    if claim.severity != ClaimSeverity.LOW:
-        return False
+# V7.0: Числовые показатели норм — если есть, claim НЕ структурный
+_NORMATIVE_UNITS_RE = re.compile(
+    r"\b\d+[\s\xa0]*(?:мрп|мзп|тенге|часов?|дней?|месяц|лет|процент|%)",
+    re.I,
+)
 
+
+def _is_structural_claim(claim: DocumentClaim) -> bool:
+    """V7.0: Определяет, является ли claim чисто структурным (не идёт в Auditor).
+
+    Structural = нет модальных глаголов И нет числовых норм (штрафов/сроков/МРП).
+    Severity не участвует в решении (regex-claims тоже могут быть structural).
+    """
     text_lower = claim.claim_text.lower()
 
-    # 2. Если есть модальные глаголы — это нормативное утверждение, не структурное
+    # 1. Если есть модальные глаголы — всегда нормативное, не структурное
     if any(v in text_lower for v in _MODAL_VERBS):
         return False
 
-    # 3. Ссылки на статьи/законы без модальных глаголов — структурные
+    # 2. Если есть числовые показатели штрафов/сроков/МРП — нормативное
+    #    (Исключение: просто номер закона/статьи без единиц измерения)
+    if _NORMATIVE_UNITS_RE.search(text_lower):
+        return False
+
+    # 3. Ссылки на статьи/законы без модальных глаголов и без числовых норм — структурные
     if claim.claim_type in (ClaimType.LEGAL_REF, ClaimType.LEGAL_ID):
         return True
 
-    # 4. Простые констатации присутствия/упоминания
-    structural_phrases = ("присутствует", "существует", "указано в документе",
-                          "содержится в", "в документе упоминается", "статья изложена")
+    # 4. Простые констатации присутствия/упоминания/изменения структуры
+    structural_phrases = (
+        "присутствует", "существует", "указано в документе",
+        "содержится в", "в документе упоминается", "статья изложена",
+        "внести изменения в", "изложить в редакции",
+    )
     if any(p in text_lower for p in structural_phrases):
         return True
 

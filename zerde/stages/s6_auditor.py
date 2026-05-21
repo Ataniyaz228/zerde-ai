@@ -543,13 +543,28 @@ def _build_conflicts_from_verdicts(verdicts: list[ClaimVerdict]) -> list[Conflic
             continue
         seen.add(v.claim_id)
 
-        # Определяем тип конфликта по тексту
+        # V7.0: Точная классификация ConflictType
         detail_lower = (v.contradiction_detail or "").lower()
-        if any(w in detail_lower for w in ("коап", "превышает", "иерарх", "подзакон")):
+        # HIERARCHY: только явные иерархические коллизии (КоАП > закон, подзаконный акт)
+        hierarchy_signals = ("коап", "иерарх", "подзакон", "ппрк", "постановление правительства")
+        has_hierarchy = any(w in detail_lower for w in hierarchy_signals)
+
+        # TEMPORAL: сроки, даты, вступление в силу
+        temporal_signals = ("срок", "дата", "дней", "часов", "месяц", "вступает", "действие", "времен", "срок уведомления")
+        has_temporal = any(w in detail_lower for w in temporal_signals)
+
+        # Числовое расхождение без иерархии/времени → FACTUAL
+        numeric_signals = ("мрп", "тенге", "сумма", "размер", "число", "количество")
+        has_numeric = any(w in detail_lower for w in numeric_signals)
+
+        if has_hierarchy:
             ctype = ConflictType.HIERARCHY
-        elif any(w in detail_lower for w in ("срок", "дата", "дней", "часов", "месяц", "вступает", "действие", "времен")):
+        elif has_temporal and not has_hierarchy:
             ctype = ConflictType.TEMPORAL
+        elif has_numeric and not has_hierarchy and not has_temporal:
+            ctype = ConflictType.FACTUAL
         else:
+            # По умолчанию — factual для любого противоречия
             ctype = ConflictType.FACTUAL
 
         severity = ClaimSeverity.HIGH if v.confidence == "HIGH" else ClaimSeverity.MEDIUM

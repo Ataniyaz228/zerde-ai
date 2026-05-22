@@ -193,3 +193,161 @@ class TestFactIconOverride:
         f = Fact(fact_id="f4", claim_id="c4", claim="test", source_ids=["s1"], validation_status=ValidationStatus.UNVERIFIED)
         v_map = {"c4": ClaimVerdict(claim_id="c4", status=VerdictStatus.UNVERIFIED, confidence="LOW")}
         assert _fact_icon(f, v_map) == "⚫"
+
+
+class TestClaimDedupEntityGrouping:
+    def test_regex_entity_grouping(self):
+        c1 = DocumentClaim(
+            claim_id="c1",
+            claim_text="Документ утверждает: law_id=235-VII (строка: «строка 10»)",
+            quote="Цитата 1",
+            claim_type=ClaimType.LEGAL_ID,
+            severity=ClaimSeverity.CRITICAL,
+            entities=["235-VII"],
+        )
+        c2 = DocumentClaim(
+            claim_id="c2",
+            claim_text="Документ утверждает: law_id=235-vii (строка: «строка 15»)",
+            quote="Цитата 2",
+            claim_type=ClaimType.LEGAL_ID,
+            severity=ClaimSeverity.CRITICAL,
+            entities=["235-VII"],
+        )
+        result = _dedup_claims([c1, c2])
+        assert len(result) == 1
+        assert result[0].entities == ["235-VII"]
+        assert "Цитата 2" in result[0].quote_variants or "Цитата 1" in result[0].quote_variants
+
+
+class TestPipelineResultAttributes:
+    def test_attribute_access_and_validation(self):
+        from zerde.pipeline import ZerdePipelineResult
+        from zerde.models import DocumentState, DocumentFormat
+
+        res = ZerdePipelineResult()
+        # Setting a valid annotated attribute
+        doc_state = DocumentState(
+            doc_id="d1",
+            original_path="f.txt",
+            format=DocumentFormat.TXT,
+            raw_text="hello",
+            normalized_text="hello",
+            char_count=5,
+        )
+        res.doc_state = doc_state
+        assert res.doc_state == doc_state
+        assert res["doc_state"] == doc_state
+
+        # Accessing an undeclared attribute raises AttributeError
+        with pytest.raises(AttributeError):
+            _ = res.some_undeclared_attribute
+
+        # Setting an undeclared attribute raises AttributeError
+        with pytest.raises(AttributeError):
+            res.some_undeclared_attribute = "value"
+
+        # Accessing / setting private variables bypasses validation (so it falls back to dict/object logic)
+        res._internal = "test"
+        assert res._internal == "test"
+
+
+class TestCacheConcurrency:
+    @pytest.mark.asyncio
+    async def test_cache_concurrency_stress(self):
+        import asyncio
+        import random
+        from pathlib import Path
+        from zerde.utils.cache import CacheManager, LLMCache
+        from zerde.models import EvidenceChunk, LegalRank, WebTier
+
+        # Setup test DB path
+        db_path = "test_concurrency_cache.db"
+        if Path(db_path).exists():
+            try:
+                Path(db_path).unlink()
+            except Exception:
+                pass
+
+        cm = CacheManager(db_path=db_path)
+        lc = LLMCache(db_path=db_path)
+
+        # Pre-populate some dummy chunks & LLM keys
+        chunks = [
+            EvidenceChunk(
+                chunk_id=f"chunk_{i}",
+                source_url=f"http://example.com/{i}",
+                source_title=f"Title {i}",
+                content=f"Content for chunk {i}",
+                content_summary=f"Summary {i}",
+                legal_rank=LegalRank.LAW_RK,
+                web_tier=WebTier.TIER_1,
+            )
+            for i in range(50)
+        ]
+        await cm.put_many(chunks)
+
+        for i in range(50):
+            await lc.put(model="test_model", prompt=f"prompt_{i}", response={"answer": f"response_{i}"})
+
+        async def concurrent_reader():
+            for _ in range(20):
+                idx = random.randint(0, 49)
+                # Concurrent read CacheManager
+                chk = await cm.get(f"chunk_{idx}")
+                assert chk is not None
+                assert chk.chunk_id == f"chunk_{idx}"
+
+                # Concurrent read LLMCache
+                res = await lc.get(model="test_model", prompt=f"prompt_{idx}")
+                assert res is not None
+                assert res["answer"] == f"response_{idx}"
+
+                # Non-existent keys
+                assert await cm.get("non_existent") is None
+                assert await lc.get("model", "non_existent_prompt") is None
+
+                # Read stats
+                await cm.stats()
+                await lc.stats()
+
+                await asyncio.sleep(0.001)
+
+        async def concurrent_writer():
+            for i in range(10):
+                # Concurrent write CacheManager
+                new_chunk = EvidenceChunk(
+                    chunk_id=f"chunk_new_{i}",
+                    source_url=f"http://example.com/new_{i}",
+                    source_title=f"Title new {i}",
+                    content=f"Content new {i}",
+                    content_summary=f"Summary new {i}",
+                    legal_rank=LegalRank.LAW_RK,
+                    web_tier=WebTier.TIER_1,
+                )
+                await cm.put(new_chunk)
+
+                # Concurrent write LLMCache
+                await lc.put(model="test_model", prompt=f"prompt_new_{i}", response={"answer": f"response_new_{i}"})
+
+                await asyncio.sleep(0.002)
+
+        # Launch 50 readers (doing 1000 reads total) and 10 writers (doing 100 writes total)
+        readers = [concurrent_reader() for _ in range(50)]
+        writers = [concurrent_writer() for _ in range(10)]
+
+        await asyncio.gather(*(readers + writers))
+
+        # Cleanup DB
+        if Path(db_path).exists():
+            try:
+                Path(db_path).unlink()
+            except Exception:
+                pass
+        # Check that temporary files like db_path + "-wal" or "-shm" are also removed
+        for suffix in ["-wal", "-shm"]:
+            p = Path(db_path + suffix)
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass

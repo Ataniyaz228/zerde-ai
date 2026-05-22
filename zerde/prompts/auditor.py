@@ -6,7 +6,7 @@ LLM Auditor Prompt Builder (Этап 5 v2)
 
 from __future__ import annotations
 
-from zerde.models import ClaimExtractionResult, DocumentClaim, EvidenceChunk, QueryPlan
+from zerde.models import ClaimExtractionResult, EvidenceChunk, QueryPlan
 from zerde.reference_data import build_reference_corpus_text
 
 _AUDITOR_VERDICT_SCHEMA = """
@@ -99,10 +99,23 @@ __CORPUS_TEXT__
 - ИЩИ коллизии сроков: если в одной статье п.1 = 180 дней и п.2 = 60 дней для одного требования → CONTRADICTED + добавь в additional_findings
 - ИЩИ нестыковки между разными частями документа
 
+### Критическое разграничение: UNVERIFIED vs CONTRADICTED
+
+⛔ **UNVERIFIED** — документа/статьи просто нет в корпусе:
+- Гражданский кодекс не был загружен → source_ids пусты → **UNVERIFIED** (не CONTRADICTED!)
+- Статья упоминается, но её текст отсутствует в корпусе → **UNVERIFIED**
+- Закон есть, но нужная статья не найдена ни в одном чанке → **UNVERIFIED**
+
+✅ **CONTRADICTED** — документ присутствует в корпусе, но текст явно опровергает claim:
+- Закон загружен в корпус, статья найдена, и её текст говорит ДРУГОЕ → **CONTRADICTED**
+- Числа в корпусе явно расходятся с claim → **CONTRADICTED**
+- Внутреннее противоречие документа (п.1 vs п.2) → **CONTRADICTED**
+
 ### Общие правила:
 - НЕ используй знания вне корпуса для вынесения вердикта CONFIRMED
 - Используй знания вне корпуса ТОЛЬКО для пометки CONTRADICTED (ты знаешь что 87-IV не существует, ст.207 УК — это лжепредпринимательство, МРП 2025 = 3932 тг)
 - Если детерминированный вердикт уже есть → используй его, дополни source_ids из корпуса
+- ЗАПРЕЩЕНО ставить CONTRADICTED только потому что нужный закон не был загружен в корпус
 
 __SCHEMA__
 """

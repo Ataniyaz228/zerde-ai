@@ -6,14 +6,17 @@ SQLite Cache Manager
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Generator
+
+_db_lock = asyncio.Lock()
 
 from zerde.models import EvidenceChunk
 
@@ -73,7 +76,7 @@ class CacheManager:
         finally:
             conn.close()
 
-    def get(self, chunk_id: str) -> EvidenceChunk | None:
+    async def get(self, chunk_id: str) -> EvidenceChunk | None:
         """
         Читает чанк из кэша по chunk_id.
 
@@ -101,7 +104,7 @@ class CacheManager:
             logger.warning(f"[Cache] Failed to deserialize chunk {chunk_id[:12]}…: {e}")
             return None
 
-    def put(self, chunk: EvidenceChunk) -> None:
+    async def put(self, chunk: EvidenceChunk) -> None:
         """
         Сохраняет чанк в кэш.
         Игнорирует дубликаты (INSERT OR IGNORE).
@@ -110,34 +113,9 @@ class CacheManager:
             chunk: EvidenceChunk для сохранения.
         """
         chunk_json = chunk.model_dump_json()
-        with self._conn() as conn:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO evidence_cache
-                    (chunk_id, source_url, content_hash, chunk_json, cached_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    chunk.chunk_id,
-                    chunk.source_url,
-                    chunk.chunk_id,  # chunk_id = SHA256 = content_hash
-                    chunk_json,
-                    datetime.utcnow().isoformat(),
-                ),
-            )
-        logger.debug(f"[Cache] STORED: {chunk.chunk_id[:12]}…")
-
-    def put_many(self, chunks: list[EvidenceChunk]) -> int:
-        """
-        Батчевое сохранение чанков.
-
-        Returns:
-            Количество реально сохранённых (не дубликатов).
-        """
-        stored = 0
-        with self._conn() as conn:
-            for chunk in chunks:
-                result = conn.execute(
+        async with _db_lock:
+            with self._conn() as conn:
+                conn.execute(
                     """
                     INSERT OR IGNORE INTO evidence_cache
                         (chunk_id, source_url, content_hash, chunk_json, cached_at)
@@ -146,17 +124,44 @@ class CacheManager:
                     (
                         chunk.chunk_id,
                         chunk.source_url,
-                        chunk.chunk_id,
-                        chunk.model_dump_json(),
-                        datetime.utcnow().isoformat(),
+                        chunk.chunk_id,  # chunk_id = SHA256 = content_hash
+                        chunk_json,
+                        datetime.now(UTC).isoformat(),
                     ),
                 )
-                stored += result.rowcount
+        logger.debug(f"[Cache] STORED: {chunk.chunk_id[:12]}…")
+
+    async def put_many(self, chunks: list[EvidenceChunk]) -> int:
+        """
+        Батчевое сохранение чанков.
+
+        Returns:
+            Количество реально сохранённых (не дубликатов).
+        """
+        stored = 0
+        async with _db_lock:
+            with self._conn() as conn:
+                for chunk in chunks:
+                    result = conn.execute(
+                        """
+                        INSERT OR IGNORE INTO evidence_cache
+                            (chunk_id, source_url, content_hash, chunk_json, cached_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            chunk.chunk_id,
+                            chunk.source_url,
+                            chunk.chunk_id,
+                            chunk.model_dump_json(),
+                            datetime.now(UTC).isoformat(),
+                        ),
+                    )
+                    stored += result.rowcount
 
         logger.info(f"[Cache] Batch stored {stored}/{len(chunks)} chunks")
         return stored
 
-    def has(self, chunk_id: str) -> bool:
+    async def has(self, chunk_id: str) -> bool:
         """Быстрая проверка наличия чанка в кэше."""
         with self._conn() as conn:
             row = conn.execute(
@@ -165,7 +170,7 @@ class CacheManager:
             ).fetchone()
         return row is not None
 
-    def stats(self) -> dict:
+    async def stats(self) -> dict:
         """Возвращает статистику кэша."""
         with self._conn() as conn:
             total = conn.execute("SELECT COUNT(*) FROM evidence_cache").fetchone()[0]
@@ -177,22 +182,23 @@ class CacheManager:
             "db_path": str(self.db_path),
         }
 
-    def clear(self) -> int:
+    async def clear(self) -> int:
         """Очищает весь кэш. Используй с осторожностью."""
-        with self._conn() as conn:
-            result = conn.execute("DELETE FROM evidence_cache")
-            deleted = result.rowcount
+        async with _db_lock:
+            with self._conn() as conn:
+                result = conn.execute("DELETE FROM evidence_cache")
+                deleted = result.rowcount
         logger.warning(f"[Cache] CLEARED: {deleted} chunks deleted")
         return deleted
 
-    def search_local(self, query_text: str, law_ids: list[str] | None = None, limit: int = 10) -> list[EvidenceChunk]:
+    async def search_local(self, query_text: str, law_ids: list[str] | None = None, limit: int = 10) -> list[EvidenceChunk]:
         """
         Ищет чанки в локальном кэше по ключевым словам в content и/или по law_ids.
         Полезно как оффлайн-fallback при ошибках сети/лимитах API.
         """
+        import json
         import re
         import sqlite3
-        import json
 
         # 1. Нормализация law_ids
         normalized_law_ids = []
@@ -231,8 +237,8 @@ class CacheManager:
         # 2. Выделение слов
         words = [w.strip().lower() for w in re.split(r'\s+', query_text) if len(w.strip()) > 2]
         LEGAL_STOP_WORDS = {
-            "закон", "кодекс", "статья", "статье", "статьи", "республики", "казахстан", 
-            "утратил", "силу", "вводится", "действие", "постановление", "правительства", 
+            "закон", "кодекс", "статья", "статье", "статьи", "республики", "казахстан",
+            "утратил", "силу", "вводится", "действие", "постановление", "правительства",
             "республика", "закона", "кодекса", "об", "о", "и", "в", "на", "для", "рк"
         }
         filtered_words = [w for w in words if w not in LEGAL_STOP_WORDS]
@@ -261,61 +267,87 @@ class CacheManager:
 
         with self._conn() as conn:
             # СТРАТЕГИЯ 1: Поиск по law_ids + ВСЕМ отфильтрованным словам (AND)
-            if normalized_law_ids and stemmed_words:
-                law_conds = " OR ".join(["chunk_json LIKE ?" for _ in normalized_law_ids])
-                word_conds = " AND ".join(["chunk_json LIKE ?" for _ in stemmed_words])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
-                params = [f"%{lid}%" for lid in normalized_law_ids] + [f"%{w}%" for w in stemmed_words] + [limit]
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+                if normalized_law_ids and stemmed_words:
+                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                    word_conds = " AND ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words])
+                    sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
+                    
+                    params = []
+                    for lid in normalized_law_ids:
+                        params.append(f"%{lid}%")
+                    for w in stemmed_words:
+                        params.extend([f"%{w}%", f"%{w}%"])
+                    params.append(limit)
+                    
+                    try:
+                        rows = conn.execute(sql, tuple(params)).fetchall()
+                        add_rows(rows)
+                    except sqlite3.OperationalError:
+                        pass
 
-            # СТРАТЕГИЯ 2: Поиск по law_ids + ХОТЯ БЫ ОДНОМУ слову (OR)
-            if len(chunks) < limit and normalized_law_ids and stemmed_words:
-                law_conds = " OR ".join(["chunk_json LIKE ?" for _ in normalized_law_ids])
-                word_conds = " OR ".join(["chunk_json LIKE ?" for _ in stemmed_words[:3]])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
-                params = [f"%{lid}%" for lid in normalized_law_ids] + [f"%{w}%" for w in stemmed_words[:3]] + [limit - len(chunks)]
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+                # СТРАТЕГИЯ 2: Поиск по law_ids + ХОТЯ БЫ ОДНОМУ слову (OR)
+                if len(chunks) < limit and normalized_law_ids and stemmed_words:
+                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                    word_conds = " OR ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words[:3]])
+                    sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
+                    
+                    params = []
+                    for lid in normalized_law_ids:
+                        params.append(f"%{lid}%")
+                    for w in stemmed_words[:3]:
+                        params.extend([f"%{w}%", f"%{w}%"])
+                    params.append(limit - len(chunks))
+                    
+                    try:
+                        rows = conn.execute(sql, tuple(params)).fetchall()
+                        add_rows(rows)
+                    except sqlite3.OperationalError:
+                        pass
 
-            # СТРАТЕГИЯ 3: Только по law_ids (если слова не совпали)
-            if len(chunks) < limit and normalized_law_ids:
-                law_conds = " OR ".join(["chunk_json LIKE ?" for _ in normalized_law_ids])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) LIMIT ?"
-                params = [f"%{lid}%" for lid in normalized_law_ids] + [limit - len(chunks)]
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+                # СТРАТЕГИЯ 3: Только по law_ids (если слова не совпали)
+                if len(chunks) < limit and normalized_law_ids:
+                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                    sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) LIMIT ?"
+                    params = [f"%{lid}%" for lid in normalized_law_ids] + [limit - len(chunks)]
+                    try:
+                        rows = conn.execute(sql, tuple(params)).fetchall()
+                        add_rows(rows)
+                    except sqlite3.OperationalError:
+                        pass
 
-            # СТРАТЕГИЯ 4: Поиск по всем отфильтрованным словам (AND) без привязки к law_ids
-            if len(chunks) < limit and stemmed_words:
-                word_conds = " AND ".join(["chunk_json LIKE ?" for _ in stemmed_words])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
-                params = [f"%{w}%" for w in stemmed_words] + [limit - len(chunks)]
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+                # СТРАТЕГИЯ 4: Поиск по всем отфильтрованным словам (AND) без привязки к law_ids
+                if len(chunks) < limit and stemmed_words:
+                    word_conds = " AND ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words])
+                    sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
+                    
+                    params = []
+                    for w in stemmed_words:
+                        params.extend([f"%{w}%", f"%{w}%"])
+                    params.append(limit - len(chunks))
+                    
+                    try:
+                        rows = conn.execute(sql, tuple(params)).fetchall()
+                        add_rows(rows)
+                    except sqlite3.OperationalError:
+                        pass
 
-            # СТРАТЕГИЯ 5: Поиск по любым словам (OR)
-            if len(chunks) < limit and stemmed_words:
-                word_conds = " OR ".join(["chunk_json LIKE ?" for _ in stemmed_words[:3]])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
-                params = [f"%{w}%" for w in stemmed_words[:3]] + [limit - len(chunks)]
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+                # СТРАТЕГИЯ 5: Поиск по любым словам (OR), исключая чисто числовые короткие запросы для исключения утечек
+                if len(chunks) < limit and stemmed_words:
+                    safe_words = [w for w in stemmed_words[:3] if not w.isdigit() or len(w) > 3]
+                    if safe_words:
+                        word_conds = " OR ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in safe_words])
+                        sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
+                        
+                        params = []
+                        for w in safe_words:
+                            params.extend([f"%{w}%", f"%{w}%"])
+                        params.append(limit - len(chunks))
+                        
+                        try:
+                            rows = conn.execute(sql, tuple(params)).fetchall()
+                            add_rows(rows)
+                        except sqlite3.OperationalError:
+                            pass
 
         logger.debug(f"[Cache] Local search query='{query_text}' law_ids={law_ids} found={len(chunks)} chunks")
         return chunks
@@ -364,13 +396,13 @@ class LLMCache:
         raw = f"{model}:{prompt}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def get(self, model: str, prompt: str) -> dict | None:
+    async def get(self, model: str, prompt: str) -> dict | None:
         """
         Возвращает кэшированный JSON-ответ или None.
-        Автоматически проверяет TTL.
+        Автоматически проверяет TTL (Lazy Deletion).
         """
         key = self._make_key(model, prompt)
-        now_iso = datetime.utcnow().isoformat()
+        now_iso = datetime.now(UTC).isoformat()
 
         with self._conn() as conn:
             row = conn.execute(
@@ -383,8 +415,8 @@ class LLMCache:
 
         # Проверяем истечение TTL
         if row["expires_at"] and row["expires_at"] < now_iso:
-            logger.debug(f"[LLMCache] EXPIRED: {key[:12]}…")
-            self._delete(key)
+            logger.debug(f"[LLMCache] EXPIRED (Lazy Deletion): {key[:12]}…")
+            # Lazy Deletion: не удаляем физически во время get, а просто отдаем None
             return None
 
         try:
@@ -395,7 +427,7 @@ class LLMCache:
             logger.warning(f"[LLMCache] Deserialize error {key[:12]}…: {e}")
             return None
 
-    def put(
+    async def put(
         self,
         model: str,
         prompt: str,
@@ -412,51 +444,60 @@ class LLMCache:
             ttl_seconds: None = постоянный, int = TTL в секундах.
         """
         key = self._make_key(model, prompt)
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         expires = (
             (now + timedelta(seconds=ttl_seconds)).isoformat()
             if ttl_seconds
             else None
         )
+        now_iso = datetime.now(UTC).isoformat()
 
-        with self._conn() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO llm_response_cache
-                    (cache_key, model, response_json, cached_at, expires_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    key,
-                    model,
-                    json.dumps(response, ensure_ascii=False),
-                    now.isoformat(),
-                    expires,
-                ),
-            )
+        async with _db_lock:
+            with self._conn() as conn:
+                # Purge expired entries under the write lock
+                conn.execute(
+                    "DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
+                    (now_iso,),
+                )
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO llm_response_cache
+                        (cache_key, model, response_json, cached_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        key,
+                        model,
+                        json.dumps(response, ensure_ascii=False),
+                        now.isoformat(),
+                        expires,
+                    ),
+                )
         logger.info(
             f"[LLMCache] STORED: {key[:12]}… "
             f"model={model.split('/')[-1]} ttl={ttl_seconds or 'permanent'}"
         )
 
-    def _delete(self, key: str) -> None:
-        with self._conn() as conn:
-            conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (key,))
+    async def _delete(self, key: str) -> None:
+        async with _db_lock:
+            with self._conn() as conn:
+                conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (key,))
 
-    def invalidate_expired(self) -> int:
+    async def invalidate_expired(self) -> int:
         """Удаляет все истёкшие записи. Вызывай при старте пайплайна."""
-        now_iso = datetime.utcnow().isoformat()
-        with self._conn() as conn:
-            result = conn.execute(
-                "DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
-                (now_iso,),
-            )
-        deleted = result.rowcount
+        now_iso = datetime.now(UTC).isoformat()
+        async with _db_lock:
+            with self._conn() as conn:
+                result = conn.execute(
+                    "DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
+                    (now_iso,),
+                )
+            deleted = result.rowcount
         if deleted:
             logger.info(f"[LLMCache] Purged {deleted} expired entries")
         return deleted
 
-    def stats(self) -> dict:
+    async def stats(self) -> dict:
         """Статистика LLM кэша."""
         with self._conn() as conn:
             total = conn.execute("SELECT COUNT(*) FROM llm_response_cache").fetchone()[0]
@@ -469,9 +510,10 @@ class LLMCache:
             "with_ttl": total - permanent,
         }
 
-    def clear_llm(self) -> int:
+    async def clear_llm(self) -> int:
         """Очищает только LLM кэш (не трогает evidence_cache)."""
-        with self._conn() as conn:
-            result = conn.execute("DELETE FROM llm_response_cache")
-        logger.warning(f"[LLMCache] LLM cache cleared: {result.rowcount} entries")
-        return result.rowcount
+        async with _db_lock:
+            with self._conn() as conn:
+                result = conn.execute("DELETE FROM llm_response_cache")
+            logger.warning(f"[LLMCache] LLM cache cleared: {result.rowcount} entries")
+            return result.rowcount

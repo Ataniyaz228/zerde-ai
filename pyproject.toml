@@ -24,6 +24,7 @@ dependencies = [
 
     # Search
     "tavily-python>=0.3.3",    # Tavily Search API
+    "ddgs>=1.0",  # DuckDuckGo Search (successor to duckduckgo-search)
 
     # Dedup / NLP
     "numpy>=1.26.0",           # Cosine similarity

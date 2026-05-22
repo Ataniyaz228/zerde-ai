@@ -16,16 +16,12 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
-from typing import Literal
-
-from openai import AsyncOpenAI
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from zerde.config import get_settings
 from zerde.models import (
     AnalysisJSON,
     ClaimExtractionResult,
+    ClaimSeverity,
     ClaimVerdict,
     EvidenceChunk,
     Fact,
@@ -242,6 +238,7 @@ def _parse_auditor_response(
 
     verdicts: list[ClaimVerdict] = []
     claimed_ids = {c.claim_id for c in claims.claims}
+    claim_map = {c.claim_id: c for c in claims.claims}
 
     # Сначала добавляем детерминированные вердикты (из reference_data — без LLM)
     for claim in claims.claims:
@@ -256,30 +253,40 @@ def _parse_auditor_response(
                 document_value=", ".join(claim.entities),
                 contradiction_detail=claim.deterministic_verdict if is_error else None,
                 confidence="HIGH",
+                severity=claim.severity,
                 is_deterministic=True,
             ))
 
     # Парсим LLM вердикты
     deterministic_ids = {v.claim_id for v in verdicts}
+    seen_verdict_ids = set(deterministic_ids)
     for item in raw.get("verdicts", []):
         if not isinstance(item, dict):
             continue
         claim_id = item.get("claim_id", "")
         if not claim_id or claim_id not in claimed_ids:
             continue
-        if claim_id in deterministic_ids:
+        if claim_id in seen_verdict_ids:
             # Детерминированный вердикт надёжнее — дополняем source_ids из LLM
-            llm_sources = _safe_str_list(item.get("source_ids", []))
-            for v in verdicts:
-                if v.claim_id == claim_id:
-                    v.source_ids = list(set(v.source_ids + llm_sources))
+            if claim_id in deterministic_ids:
+                llm_sources = _safe_str_list(item.get("source_ids", []))
+                for v in verdicts:
+                    if v.claim_id == claim_id:
+                        v.source_ids = list(set(v.source_ids + llm_sources))
             continue
 
-        raw_status = item.get("status", "UNVERIFIED")
-        try:
-            status = VerdictStatus(raw_status)
-        except ValueError:
+        seen_verdict_ids.add(claim_id)
+
+        raw_status = str(item.get("status", "UNVERIFIED")).upper().strip()
+        if any(syn in raw_status for syn in ["OPROVERG", "CONTRADIC", "FALSE"]):
+            status = VerdictStatus.CONTRADICTED
+        elif any(syn in raw_status for syn in ["PODTVERZH", "CONFIRM", "TRUE"]):
+            status = VerdictStatus.CONFIRMED
+        else:
             status = VerdictStatus.UNVERIFIED
+
+        orig_claim = claim_map.get(claim_id)
+        claim_severity = orig_claim.severity if orig_claim else ClaimSeverity.MEDIUM
 
         verdicts.append(ClaimVerdict(
             claim_id=claim_id,
@@ -289,6 +296,7 @@ def _parse_auditor_response(
             document_value=item.get("document_value"),
             contradiction_detail=item.get("contradiction_detail"),
             confidence=item.get("confidence", "MEDIUM"),
+            severity=claim_severity,
             is_deterministic=False,
         ))
 
@@ -386,6 +394,7 @@ def _validate_claim_coverage(analysis: AnalysisJSON, claims: ClaimExtractionResu
                 source_ids=[],
                 document_value=", ".join(claim.entities) or claim.claim_text[:100],
                 confidence="LOW",
+                severity=claim.severity,
                 is_deterministic=False,
             ))
             analysis.facts.append(Fact(

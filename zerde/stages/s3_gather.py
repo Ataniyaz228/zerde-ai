@@ -1,5 +1,5 @@
 """
-Stage 3: Data Gathering Agents 
+Stage 3: Data Gathering Agents
 Вход:  QueryPlan
 Выход: list[EvidenceChunk]
 
@@ -25,8 +25,8 @@ from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from ddgs import DDGS as _DDGS
 from openai import AsyncOpenAI
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from zerde.config import get_settings
 from zerde.models import (
@@ -203,7 +203,7 @@ async def gather_evidence(plan: QueryPlan) -> list[EvidenceChunk]:
     all_chunks = adilet_chunks + web_chunks
 
     # Сохраняем новые в кэш
-    cache.put_many([c for c in all_chunks if c.chunk_id])
+    await cache.put_many([c for c in all_chunks if c.chunk_id])
 
     logger.info(f"[S3] Done. adilet={len(adilet_chunks)} web={len(web_chunks)} total={len(all_chunks)}")
     return all_chunks
@@ -245,7 +245,7 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
         # Local DB fallback if CSS/PDF/API failed
         logger.warning(f"[S3/Adilet] All strategies failed for: '{query.query_text[:50]}'. Fallback to search_local.")
         try:
-            chunks = cache.search_local(query.query_text, law_ids=query.law_ids)
+            chunks = await cache.search_local(query.query_text, law_ids=query.law_ids)
             if chunks:
                 logger.info(f"[S3/Adilet] search_local found {len(chunks)} chunks for query: '{query.query_text[:50]}'")
                 # Mark strategy
@@ -657,7 +657,7 @@ def _regex_split_articles(text: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Agent 2: Web (Tavily)
+# Agent 2: Web Search (Multi-Provider: Tavily, Serper, Google, DuckDuckGo)
 # ---------------------------------------------------------------------------
 
 
@@ -674,85 +674,216 @@ async def _run_web_agent(queries: list[WebQuery], cache: CacheManager) -> list[E
     return chunks
 
 
-async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[EvidenceChunk]:
-    """Один запрос через Tavily API."""
-    async with _WEB_SEMAPHORE:
-        settings = get_settings()
+async def _search_tavily(query_text: str, max_results: int, include_domains: list[str] | None = None) -> list[dict]:
+    """Поиск через Tavily API."""
+    settings = get_settings()
+    if not settings.tavily_api_key:
+        return []
+    from tavily import TavilyClient
+    tavily = TavilyClient(api_key=settings.tavily_api_key)
+    search_params: dict = {
+        "query": query_text,
+        "max_results": max_results,
+        "search_depth": "advanced",
+        "exclude_domains": ["reddit.com", "forum", "otvet.mail.ru", "pikabu.ru", "answers.yahoo.com"]
+    }
+    if include_domains:
+        search_params["include_domains"] = include_domains
 
-        if not settings.tavily_api_key:
-            logger.warning("[S3/Web] Tavily API key not set. Skipping web search, falling back to local search.")
+    loop = asyncio.get_running_loop()
+    response = await loop.run_in_executor(
+        None,
+        lambda: tavily.search(**search_params),
+    )
+    results = response.get("results", [])
+    return [
+        {
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "content": r.get("content", r.get("raw_content", "")).strip()
+        }
+        for r in results
+    ]
+
+
+async def _search_serper(query_text: str, max_results: int) -> list[dict]:
+    """Поиск через Serper.dev API."""
+    settings = get_settings()
+    if not settings.serper_api_key:
+        return []
+    import httpx
+    url = "https://google.serper.dev/search"
+    headers = {
+        "X-API-KEY": settings.serper_api_key,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "q": query_text,
+        "num": max_results
+    }
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        if resp.status_code == 200:
+            data = resp.json()
+            organic = data.get("organic", [])
+            return [
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("link", ""),
+                    "content": r.get("snippet", "").strip()
+                }
+                for r in organic
+            ]
+        else:
+            logger.warning(f"[S3/Web] Serper error: {resp.status_code} - {resp.text}")
+    return []
+
+
+async def _search_google(query_text: str, max_results: int) -> list[dict]:
+    """Поиск через Google Custom Search API."""
+    settings = get_settings()
+    if not settings.google_api_key or not settings.google_cse_id:
+        return []
+    import httpx
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": settings.google_api_key,
+        "cx": settings.google_cse_id,
+        "q": query_text,
+        "num": max_results
+    }
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        resp = await client.get(url, params=params)
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("items", [])
+            return [
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("link", ""),
+                    "content": r.get("snippet", "").strip()
+                }
+                for r in items
+            ]
+        else:
+            logger.warning(f"[S3/Web] Google CSE error: {resp.status_code} - {resp.text}")
+    return []
+
+
+async def _search_duckduckgo(query_text: str, max_results: int) -> list[dict]:
+    """Асинхронный поиск через библиотеку ddgs (DuckDuckGo).
+
+    Используем asyncio.to_thread() для запуска синхронного DDGS.text() без блокировки event loop.
+    """
+    def _sync_search() -> list[dict]:
+        results = _DDGS().text(query_text, max_results=max_results)
+        if results:
+            return [
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("href", r.get("url", "")),
+                    "content": r.get("body", r.get("snippet", "")).strip()
+                }
+                for r in results
+            ]
+        return []
+
+    try:
+        return await asyncio.to_thread(_sync_search)
+    except Exception as e:
+        logger.error(f"[S3/Web] DDGS search failed: {e}")
+    return []
+
+
+async def _search_web(query: WebQuery) -> tuple[list[dict], str]:
+    """
+    Поочередно опрашивает настроенных провайдеров с таймаутом 10.0 сек.
+    Соблюдает приоритеты и автоматически откатывается на бесплатный DuckDuckGo / Local Cache.
+    """
+    settings = get_settings()
+    providers = []
+
+    # Формируем цепочку провайдеров на основе приоритета
+    if settings.search_provider == "tavily" and settings.tavily_api_key:
+        providers.append(("tavily", lambda q, m: _search_tavily(q, m, query.include_domains)))
+    if settings.serper_api_key:
+        providers.append(("serper", _search_serper))
+    if settings.google_api_key and settings.google_cse_id:
+        providers.append(("google", _search_google))
+
+    # DuckDuckGo всегда идет как универсальный бесплатный fallback
+    providers.append(("duckduckgo", _search_duckduckgo))
+
+    for name, search_func in providers:
+        try:
+            logger.info(f"[S3/Web] Attempting search via {name} for query: '{query.query_text[:50]}'")
+            
+            # Подготовка запроса с ограничением домена для не-Tavily провайдеров
+            final_query = query.query_text
+            if query.include_domains and name != "tavily":
+                site_queries = [f"site:{d}" for d in query.include_domains]
+                if site_queries:
+                    final_query = f"{final_query} ({' OR '.join(site_queries)})"
+
+            async with asyncio.timeout(10.0):
+                results = await search_func(final_query, query.max_results)
+                if results:
+                    logger.info(f"[S3/Web] Search successful using provider: {name}")
+                    return results, name
+        except asyncio.TimeoutError:
+            logger.warning(f"[S3/Web] Provider {name} timed out after 10.0 seconds.")
+        except Exception as e:
+            logger.warning(f"[S3/Web] Provider {name} failed: {e}")
+
+    return [], "none"
+
+
+async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[EvidenceChunk]:
+    """Выполняет один веб-запрос с автоматическим переключением провайдеров и оффлайн-кэшем."""
+    async with _WEB_SEMAPHORE:
+        results, provider = await _search_web(query)
+
+        if not results:
+            logger.warning(f"[S3/Web] All search providers failed or returned empty results for: '{query.query_text[:50]}'. Falling back to local offline search.")
             try:
-                chunks = cache.search_local(query.query_text)
+                chunks = await cache.search_local(query.query_text)
                 if chunks:
+                    for chunk in chunks:
+                        chunk.search_provider = "local"
                     logger.info(f"[S3/Web] local search found {len(chunks)} chunks for query: '{query.query_text[:50]}'")
                     return chunks
             except Exception as e:
                 logger.error(f"[S3/Web] local search fallback failed: {e}")
             return []
 
-        try:
-            from tavily import TavilyClient
+        chunks: list[EvidenceChunk] = []
+        for result in results:
+            chunk = _build_web_chunk(result, query, provider)
+            if chunk:
+                # Проверяем кэш
+                cached = await cache.get(chunk.chunk_id)
+                if cached:
+                    # Обновляем провайдера на кэшированном объекте для прозрачности
+                    cached.search_provider = provider
+                    chunks.append(cached)
+                else:
+                    chunks.append(chunk)
 
-            # Tavily клиент (синхронный — запускаем в executor)
-            tavily = TavilyClient(api_key=settings.tavily_api_key)
-
-            # Строим search params
-            search_params: dict = {
-                "query": query.query_text,
-                "max_results": query.max_results,
-                "search_depth": "advanced",
-            }
-            if query.include_domains:
-                search_params["include_domains"] = query.include_domains
-
-            # Исключаем BLACKLIST домены
-            exclude_domains = [
-                "reddit.com", "forum", "otvet.mail.ru", "pikabu.ru",
-                "answers.yahoo.com",
-            ]
-            search_params["exclude_domains"] = exclude_domains
-
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: tavily.search(**search_params),
-            )
-
-            results = response.get("results", [])
-            chunks: list[EvidenceChunk] = []
-
-            for result in results:
-                chunk = _build_web_chunk(result, query)
-                if chunk:
-                    # Проверяем кэш
-                    cached = cache.get(chunk.chunk_id)
-                    if cached:
-                        chunks.append(cached)
-                    else:
-                        chunks.append(chunk)
-
-            logger.debug(f"[S3/Web] '{query.query_text[:40]}': {len(chunks)} chunks")
-            return chunks
-
-        except ImportError:
-            logger.error("[S3/Web] tavily-python not installed")
-            return []
-        except Exception as e:
-            logger.warning(f"[S3/Web] Tavily error: {e}. Falling back to local search.")
-            try:
-                chunks = cache.search_local(query.query_text)
-                if chunks:
-                    logger.info(f"[S3/Web] local search found {len(chunks)} chunks after Tavily error")
-                    return chunks
-            except Exception as le:
-                logger.error(f"[S3/Web] local search fallback failed: {le}")
-            return []
+        logger.debug(f"[S3/Web] '{query.query_text[:40]}': {len(chunks)} chunks via {provider}")
+        return chunks
 
 
-def _build_web_chunk(result: dict, query: WebQuery) -> EvidenceChunk | None:
-    """Конвертирует Tavily result → EvidenceChunk. None для BLACKLIST."""
+def _build_web_chunk(result: dict, query: WebQuery, provider: str | None = None) -> EvidenceChunk | None:
+    """Конвертирует результат поиска → EvidenceChunk. None для BLACKLIST."""
     url: str = result.get("url", "")
     if not url:
+        return None
+
+    title: str = result.get("title", "").lower()
+    url_lower = url.lower()
+    trash_keywords = ["chsi", "исполнител", "судебный пристав", "пристав", "судебного исполнителя", "судебных исполнителей", "судебным исполнителям"]
+    if any(kw in url_lower or kw in title for kw in trash_keywords):
+        logger.info(f"[S3/Web] Blocking judicial executor/trash source: url={url} title='{result.get('title')}'")
         return None
 
     tier = classify_web_tier(url)
@@ -760,7 +891,7 @@ def _build_web_chunk(result: dict, query: WebQuery) -> EvidenceChunk | None:
         logger.debug(f"[S3/Web] Blacklisted: {url}")
         return None
 
-    content = result.get("content", result.get("raw_content", "")).strip()
+    content = result.get("content", "").strip()
     if len(content) < 50:
         return None
 
@@ -774,6 +905,7 @@ def _build_web_chunk(result: dict, query: WebQuery) -> EvidenceChunk | None:
         content_summary=content[:300],
         legal_rank=infer_legal_rank_from_tier(tier),
         web_tier=tier,
+        search_provider=provider,
     )
 
 

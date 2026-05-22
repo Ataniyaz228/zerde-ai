@@ -27,6 +27,10 @@ class Settings(BaseSettings):
         description="API ключ LLM провайдера. OpenRouter: sk-or-v1-... | OpenAI: sk-...",
     )
     tavily_api_key: str = Field(default="", description="Tavily Search API Key")
+    search_provider: str = Field(default="duckduckgo", description="Web search provider (tavily, google, serper, duckduckgo)")
+    serper_api_key: str = Field(default="", description="Serper.dev Search API Key")
+    google_api_key: str = Field(default="", description="Google CSE JSON API Key")
+    google_cse_id: str = Field(default="", description="Google Custom Search Engine ID (CX)")
 
     # Отдельный ключ для embeddings (опционально).
     # Нужен если LLM идёт через OpenRouter (не поддерживает /embeddings).

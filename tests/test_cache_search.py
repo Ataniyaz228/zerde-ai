@@ -3,7 +3,8 @@ from pathlib import Path
 from zerde.models import EvidenceChunk, LegalRank
 from zerde.utils.cache import CacheManager
 
-def test_cache_search_local(tmp_path):
+@pytest.mark.asyncio
+async def test_cache_search_local(tmp_path):
     db_file = tmp_path / "test_cache.db"
     manager = CacheManager(db_path=str(db_file))
 
@@ -36,43 +37,43 @@ def test_cache_search_local(tmp_path):
         article="5"
     )
 
-    manager.put_many([chunk1, chunk2, chunk3])
+    await manager.put_many([chunk1, chunk2, chunk3])
 
     # 1. Test search with strict AND keyword matching (filtered). Since we set limit=1, it should only return chunk1.
-    results = manager.search_local("персональных данных штраф", limit=1)
+    results = await manager.search_local("персональных данных штраф", limit=1)
     assert len(results) == 1
     assert results[0].chunk_id == "chunk1"
 
     # With higher limit, it fills with OR matches
-    results = manager.search_local("персональных данных штраф", limit=10)
+    results = await manager.search_local("персональных данных штраф", limit=10)
     assert len(results) == 2
     assert results[0].chunk_id == "chunk1"
     assert results[1].chunk_id == "chunk3"
 
     # 2. Test search with OR keyword matching fallback (when strict AND returns nothing)
     # "работа" only matches chunk2, "согласие" only matches chunk3. Both together should trigger OR search
-    results = manager.search_local("работа согласие")
+    results = await manager.search_local("работа согласие")
     assert len(results) == 2
     chunk_ids = {r.chunk_id for r in results}
     assert "chunk2" in chunk_ids
     assert "chunk3" in chunk_ids
 
     # 3. Test search with law_ids filter only
-    results = manager.search_local("какой-то текст", law_ids=["94-V"])
+    results = await manager.search_local("какой-то текст", law_ids=["94-V"])
     assert len(results) == 1
     assert results[0].chunk_id == "chunk3"
 
     # 4. Test search with law_ids and matching keywords (with limit=1 to test strict match)
-    results = manager.search_local("защита персональных", law_ids=["235-V", "226-V"], limit=1)
+    results = await manager.search_local("защита персональных", law_ids=["235-V", "226-V"], limit=1)
     assert len(results) == 1
     assert results[0].chunk_id == "chunk1"
 
     # With higher limit, it fills with other matching laws
-    results = manager.search_local("защита персональных", law_ids=["235-V", "226-V"], limit=10)
+    results = await manager.search_local("защита персональных", law_ids=["235-V", "226-V"], limit=10)
     assert len(results) == 3
     assert results[0].chunk_id == "chunk1"
 
     # 5. Test search with legal stop words filtering (e.g. "закон", "кодекс")
-    results = manager.search_local("закон кодекс информационная система", limit=1)
+    results = await manager.search_local("закон кодекс информационная система", limit=1)
     assert len(results) == 1
     assert results[0].chunk_id == "chunk2"

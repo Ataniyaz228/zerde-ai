@@ -6,12 +6,11 @@ Pydantic Models (Core Data Contracts)
 from __future__ import annotations
 
 import hashlib
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import IntEnum, StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
-
 
 # ---------------------------------------------------------------------------
 # 1. ENUMS & CONSTANTS
@@ -94,7 +93,7 @@ class DocumentState(BaseModel):
     # Метаданные
     char_count: int = Field(ge=0)
     language_detected: Literal["ru", "kk", "en", "mixed"] = "ru"
-    ingested_at: datetime = Field(default_factory=datetime.utcnow)
+    ingested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @computed_field  # type: ignore[misc]
     @property
@@ -149,7 +148,7 @@ class QueryPlan(BaseModel):
         description="Подзаконные акты, которые могут быть упомянуты",
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @computed_field  # type: ignore[misc]
     @property
@@ -175,6 +174,12 @@ class ClaimType(StrEnum):
     TEMPORAL = "temporal"         # Сроки, даты вступления, сроки уведомлений
     FACTUAL = "factual"           # Фактические утверждения (биометрия обязательна с 2026)
     NORMATIVE = "normative"       # Утверждения о нормах (закон запрещает X)
+
+
+class VerdictStatus(StrEnum):
+    CONFIRMED = "CONFIRMED"         # Утверждение подтверждено источниками
+    CONTRADICTED = "CONTRADICTED"   # Утверждение опровергнуто источниками
+    UNVERIFIED = "UNVERIFIED"       # Нет данных в корпусе для проверки
 
 
 class ClaimSeverity(StrEnum):
@@ -219,12 +224,6 @@ class DocumentClaim(BaseModel):
     )
 
 
-class VerdictStatus(StrEnum):
-    CONFIRMED = "CONFIRMED"         # Утверждение подтверждено источниками
-    CONTRADICTED = "CONTRADICTED"   # Утверждение опровергнуто источниками
-    UNVERIFIED = "UNVERIFIED"       # Нет данных в корпусе для проверки
-
-
 class ClaimVerdict(BaseModel):
     """Результат верификации одного утверждения аналитиком."""
 
@@ -244,6 +243,7 @@ class ClaimVerdict(BaseModel):
         description="Подробное описание противоречия",
     )
     confidence: Literal["HIGH", "MEDIUM", "LOW"] = "MEDIUM"
+    severity: ClaimSeverity = ClaimSeverity.MEDIUM
     is_deterministic: bool = Field(
         default=False,
         description="True если вердикт вынесен из reference_data без LLM",
@@ -262,7 +262,7 @@ class ClaimExtractionResult(BaseModel):
         default_factory=list,
         description="Структурные claims (не идут в Auditor, рендерятся отдельно)",
     )
-    extracted_at: datetime = Field(default_factory=datetime.utcnow)
+    extracted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @computed_field  # type: ignore[misc]
     @property
@@ -291,6 +291,7 @@ class EvidenceChunk(BaseModel):
     # Контент
     content: str = Field(description="Текст статьи или фрагмента")
     content_summary: str = Field(default="", description="Краткое резюме для промпта")
+    search_provider: str | None = Field(default=None, description="Провайдер поиска (tavily, serper, google, duckduckgo, local)")
 
     # Правовая атрибуция
     legal_rank: LegalRank
@@ -314,10 +315,10 @@ class EvidenceChunk(BaseModel):
     conflict_types: list[ConflictType] = Field(default_factory=list)
     conflict_with_ids: list[str] = Field(default_factory=list, description="chunk_id конфликтующих чанков")
 
-    gathered_at: datetime = Field(default_factory=datetime.utcnow)
+    gathered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
-    def compute_chunk_id(self) -> "EvidenceChunk":
+    def compute_chunk_id(self) -> EvidenceChunk:
         if not self.chunk_id:
             self.chunk_id = hashlib.sha256(self.content.encode()).hexdigest()
         return self
@@ -431,7 +432,7 @@ class AnalysisJSON(BaseModel):
         description="Все конфликтные чанки должны быть упомянуты",
     )
     llm_model_used: str = ""
-    analyzed_at: datetime = Field(default_factory=datetime.utcnow)
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # Заполняется Аудитором (BM25 reliability)
     overall_reliability: float | None = Field(

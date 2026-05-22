@@ -1,5 +1,5 @@
 """
-Stage 1: Document Ingestion 
+Stage 1: Document Ingestion
 Вход:  путь к файлу (PDF, DOCX, TXT)
 Выход: DocumentState
 
@@ -260,7 +260,7 @@ def _detect_language(text: str) -> str:
     Fallback: эвристика по кириллице если langdetect упадёт.
     """
     try:
-        from langdetect import detect, DetectorFactory
+        from langdetect import DetectorFactory, detect
         DetectorFactory.seed = 0  # Детерминированность
 
         sample = text[:3000]  # Достаточно для детектирования
@@ -279,13 +279,23 @@ def _detect_language(text: str) -> str:
 
 
 def _heuristic_lang(text: str) -> str:
-    """Эвристика: считаем кириллицу vs латиницу."""
+    """Эвристика: считаем кириллицу vs латиницу с поддержкой казахской латиницы."""
     cyrillic = sum(1 for c in text[:500] if "\u0400" <= c <= "\u04ff")
-    latin = sum(1 for c in text[:500] if "a" <= c.lower() <= "z")
+    latin = sum(1 for c in text[:500] if "a" <= c.lower() <= "z" or c.lower() in "áñóúığşý")
 
     if cyrillic > latin * 2:
         return "ru"
     elif latin > cyrillic * 2:
+        sample_lower = text[:1000].lower()
+        kk_latin_chars = set("áñóúığşý")
+        has_kk_chars = any(c in kk_latin_chars for c in sample_lower)
+
+        kk_latin_words = {"jane", "jáne", "bolady", "qazaqstan", "turaly", "týraly", "kodeksi", "zań", "zang", "memleket", "respyblıkasy", "respublika"}
+        words_in_sample = set(sample_lower.split())
+        has_kk_words = any(w in kk_latin_words for w in words_in_sample)
+
+        if has_kk_chars or has_kk_words:
+            return "kk"
         return "en"
     else:
         return "mixed"

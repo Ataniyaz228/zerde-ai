@@ -17,7 +17,7 @@ Stage 7: Renderer (Markdown "Lawyer" Format)
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from zerde.config import get_settings
@@ -25,9 +25,10 @@ from zerde.models import (
     AnalysisJSON,
     ClaimSeverity,
     ClaimType,
+    ClaimVerdict,
     ConflictRecord,
-    DocumentClaim,
     EvidenceChunk,
+    Fact,
     LegalRank,
     ValidationStatus,
     VerdictStatus,
@@ -52,14 +53,24 @@ _RISK_ICONS = {
 }
 
 
-def _fact_icon(fact: "Fact", verdict_map: dict[str, "ClaimVerdict"]) -> str:
+def _fact_icon(fact: Fact, verdict_map: dict[str, ClaimVerdict]) -> str:
     """V7.0: Определяет иконку факта с учётом вердикта (override BM25-цвета)."""
-    if fact.claim_id and fact.claim_id in verdict_map:
-        v = verdict_map[fact.claim_id]
+    import re
+    claim_id = fact.claim_id
+    if not claim_id and fact.claim:
+        match = re.search(r"\[(claim_\d{4})\]", fact.claim)
+        if match:
+            claim_id = match.group(1)
+
+    if claim_id and claim_id in verdict_map:
+        v = verdict_map[claim_id]
         if v.status == VerdictStatus.CONTRADICTED:
             return _RISK_ICONS["CONTRADICTED"]
-        if v.status == VerdictStatus.UNVERIFIED and v.confidence in ("HIGH", "MEDIUM"):
-            return _RISK_ICONS["UNVERIFIED_RISK"]
+        if v.status == VerdictStatus.UNVERIFIED:
+            is_high_severity = v.severity in (ClaimSeverity.CRITICAL, ClaimSeverity.HIGH)
+            is_high_confidence = v.confidence in ("HIGH", "MEDIUM")
+            if is_high_severity or is_high_confidence:
+                return _RISK_ICONS["UNVERIFIED_RISK"]
         if v.status == VerdictStatus.CONFIRMED:
             return _RISK_ICONS["CONFIRMED"]
     # Fallback на validation_status
@@ -142,7 +153,7 @@ async def render_report(
     if output_path is None:
         output_dir = Path(settings.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         output_path = output_dir / f"zerde_report_{ts}.md"
 
     Path(output_path).write_text(report_md, encoding="utf-8")
@@ -392,16 +403,16 @@ def _render_facts_and_conclusions(
             lines.append(f"#### {icon} `{fact.fact_id}`{score_str}")
 
             if verdict.status == VerdictStatus.CONTRADICTED:
-                lines.append(f"> [!WARNING]")
+                lines.append("> [!WARNING]")
                 lines.append(f"> **[ОШИБКА]** {fact.claim}\n")
             elif verdict.status == VerdictStatus.CONFIRMED:
-                lines.append(f"> [!NOTE]")
+                lines.append("> [!NOTE]")
                 lines.append(f"> **[ПОДТВЕРЖДЕНО]** {fact.claim}\n")
             elif verdict.status == VerdictStatus.UNVERIFIED and verdict.confidence in ("HIGH", "MEDIUM"):
                 # V7.0: Risk flag для важных непроверенных claims
-                lines.append(f"> [!CAUTION]")
+                lines.append("> [!CAUTION]")
                 lines.append(f"> **[⚠️ РИСК РЕТРИВАЛА]** {fact.claim}\n")
-                lines.append(f"> *Система не смогла найти подтверждающие источники. Требуется ручная верификация.*\n")
+                lines.append("> *Система не смогла найти подтверждающие источники. Требуется ручная верификация.*\n")
             else:
                 lines.append(f"> **[НЕ ПРОВЕРЕНО]** {fact.claim}\n")
 

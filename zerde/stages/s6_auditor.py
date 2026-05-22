@@ -1,5 +1,5 @@
 """
-Stage 6: The Auditor 
+Stage 6: The Auditor
 Вход:  AnalysisJSON + list[EvidenceChunk]
 Выход: AnalysisJSON со статусами
 
@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import re
-import string
 from typing import NamedTuple
 
 import numpy as np
@@ -86,6 +85,27 @@ def audit_analysis(
     # LLM может обрезать ID, поэтому проверяем по началу строки ("reference_")
     VIRTUAL_SOURCES = {"UNLINKED", "reference_data"}
 
+    # Downgrade "UNLINKED -> HIGH" loophole:
+    # Any CONFIRMED LLM verdict with no real sources (i.e. only UNLINKED or empty source_ids, and not is_deterministic)
+    # must be downgraded to UNVERIFIED and confidence to LOW.
+    for v in analysis.verdicts:
+        if v.status == VerdictStatus.CONFIRMED and not v.is_deterministic:
+            real_sources = [sid for sid in v.source_ids if sid and sid != "UNLINKED" and not sid.startswith("reference_")]
+            if not real_sources:
+                logger.warning(
+                    f"[S6/Downgrade] Downgrading verdict for claim '{v.claim_id}' from CONFIRMED to UNVERIFIED "
+                    f"due to lack of real source links."
+                )
+                v.status = VerdictStatus.UNVERIFIED
+                v.confidence = "LOW"
+
+                # Also update corresponding Fact
+                for fact in analysis.facts:
+                    if fact.claim_id == v.claim_id:
+                        fact.confidence = 0.4
+                        fact.claim = f"[{v.claim_id}]: '{v.document_value}'"
+                        fact.validation_status = ValidationStatus.UNVERIFIED
+
     logger.info(f"[S6] Audit start. facts={len(analysis.facts)} corpus={len(corpus_index)}")
 
     # Строим BM25 индекс
@@ -136,7 +156,8 @@ def audit_analysis(
             fact.validation_status = ValidationStatus.UNVERIFIED
 
     # V7.0: Override validation_status для CONTRADICTED verdicts
-    # Если вердикт CONTRADICTED — цвет всегда LOW (красный), независимо от BM25
+    # Если вердикт CONTRADICTED — статус всегда LOW (красный), независимо от BM25.
+    # UNVERIFIED вердикты НЕ override'ятся в LOW — они остаются UNVERIFIED.
     verdict_map = {v.claim_id: v for v in analysis.verdicts if v.claim_id}
     for fact in analysis.facts:
         if fact.claim_id and fact.claim_id in verdict_map:
@@ -144,45 +165,61 @@ def audit_analysis(
             if v.status == VerdictStatus.CONTRADICTED:
                 fact.validation_status = ValidationStatus.LOW
                 fact.bm25_score = 0.0
+            # UNVERIFIED: сохраняем BM25-статус как есть, не применяем LOW
 
     # Audit выводов
     _audit_conclusions(analysis, corpus_index, prefix_index)
 
-    # V7.0: Штрафная модель надёжности (пессимистичная)
-    # penalty = 0.15*N_critical_contradicted + 0.05*N_high_contradicted + 0.02*N_unverified_risks
-    # reliability = max(0.05, 1.0 - penalty)
+    # V8.0: Ratio-based reliability score с penalty-корректором.
+    # reliability = ratio_score * (1.0 - penalty)
+    # ratio_score = (n_confirmed + 0.3*n_unverified_neutral) / n_total
+    # Это исключает ситуацию 71% при 0 confirmed claims.
     if analysis.verdicts:
         # Считаем только аналитические вердикты (structural не участвуют)
         analytical_verdicts = [
             v for v in analysis.verdicts
             if not (v.claim_id and v.claim_id.startswith("structural_"))
         ]
+        n_total = len(analytical_verdicts)
 
+        n_confirmed = sum(1 for v in analytical_verdicts if v.status == VerdictStatus.CONFIRMED)
+        n_unverified_neutral = sum(
+            1 for v in analytical_verdicts
+            if v.status == VerdictStatus.UNVERIFIED
+            and v.severity not in (ClaimSeverity.CRITICAL, ClaimSeverity.HIGH)
+        )
         n_contradicted_critical = sum(
             1 for v in analytical_verdicts
-            if v.status == VerdictStatus.CONTRADICTED and v.confidence == "HIGH"
+            if v.status == VerdictStatus.CONTRADICTED and v.severity == ClaimSeverity.CRITICAL
         )
         n_contradicted_high = sum(
             1 for v in analytical_verdicts
-            if v.status == VerdictStatus.CONTRADICTED and v.confidence == "MEDIUM"
+            if v.status == VerdictStatus.CONTRADICTED and v.severity == ClaimSeverity.HIGH
         )
         n_unverified_risks = sum(
             1 for v in analytical_verdicts
-            if v.status == VerdictStatus.UNVERIFIED and v.confidence in ("HIGH", "MEDIUM")
+            if v.status == VerdictStatus.UNVERIFIED and v.severity in (ClaimSeverity.CRITICAL, ClaimSeverity.HIGH)
         )
 
-        penalty = (
-            0.15 * n_contradicted_critical +
-            0.05 * n_contradicted_high +
-            0.02 * n_unverified_risks
-        )
-        reliability = max(0.05, min(1.0, 1.0 - penalty))
+        if n_total > 0:
+            # Базовый confirmation ratio (0 confirmed → ratio_score ≈ 0)
+            ratio_score = (n_confirmed + 0.3 * n_unverified_neutral) / n_total
+            # Penalty: прямые противоречия существенно снижают
+            penalty = (
+                0.20 * n_contradicted_critical +
+                0.10 * n_contradicted_high +
+                0.05 * n_unverified_risks
+            )
+            reliability = max(0.05, min(1.0, ratio_score * (1.0 - penalty)))
+        else:
+            reliability = 0.05
         analysis.overall_reliability = reliability
 
         logger.info(
-            f"[S6/Score] crit_contrad={n_contradicted_critical} "
+            f"[S6/Score] n_total={n_total} confirmed={n_confirmed} "
+            f"unverified_neutral={n_unverified_neutral} crit_contrad={n_contradicted_critical} "
             f"high_contrad={n_contradicted_high} unverified_risks={n_unverified_risks} "
-            f"penalty={penalty:.2f} → reliability={reliability:.3f}"
+            f"ratio_score={ratio_score:.3f} penalty={penalty:.3f} → reliability={reliability:.3f}"
         )
     elif scores:
         analysis.overall_reliability = float(np.mean(scores))
@@ -204,7 +241,7 @@ def audit_analysis(
         f"LOW={status_counts[ValidationStatus.LOW]} "
         f"UNVERIFIED={status_counts[ValidationStatus.UNVERIFIED]} "
         f"reliability={analysis.overall_reliability:.3f}"
-        if analysis.overall_reliability is not None else f"[S6] Done. No scores."
+        if analysis.overall_reliability is not None else "[S6] Done. No scores."
     )
     return analysis
 
@@ -370,6 +407,50 @@ def _score_to_status(
 # ---------------------------------------------------------------------------
 
 
+def _levenshtein_distance(s1: str, s2: str) -> int:
+    if len(s1) < len(s2):
+        return _levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+
+    return previous_row[-1]
+
+
+def _find_closest_source_id(
+    sid: str,
+    corpus_index: dict[str, EvidenceChunk],
+    max_distance: int = 3,
+) -> str | None:
+    best_cid = None
+    best_dist = max_distance + 1
+
+    target_len = len(sid)
+    if target_len < 4:
+        return None
+
+    for cid in corpus_index:
+        pfx = cid[:target_len]
+        dist = _levenshtein_distance(sid, pfx)
+        if dist < best_dist:
+            best_dist = dist
+            best_cid = cid
+
+    if best_dist <= max_distance:
+        logger.info(f"[S6/Fuzzy] Resolved hallucinated ID '{sid}' to '{best_cid[:target_len]}' (dist={best_dist})")
+        return best_cid
+    return None
+
+
 def _resolve_source_ids(
     source_ids: list[str],
     corpus_index: dict[str, EvidenceChunk],
@@ -389,7 +470,12 @@ def _resolve_source_ids(
         elif sid in prefix_index:
             resolved.append(prefix_index[sid])  # Найден по префиксу
         else:
-            resolved.append(sid)  # Оставляем как есть (для логирования)
+            # Fuzzy matching fallback
+            fuzzy_cid = _find_closest_source_id(sid, corpus_index)
+            if fuzzy_cid:
+                resolved.append(fuzzy_cid)
+            else:
+                resolved.append(sid)  # Оставляем как есть (для логирования)
     return resolved
 
 
@@ -478,18 +564,34 @@ def _extract_numbers_with_units(text: str) -> dict[str, set[str]]:
 
 
 def _normalize_numbers(num_strings: set[str]) -> set[float]:
-    """Конвертирует строки в float через sympy."""
+    """Конвертирует строки в float через sympy, защищая дефисы."""
     result: set[float] = set()
     for s in num_strings:
+        cleaned = s.replace(" ", "")
+        # Сначала пробуем прямой парсинг во избежание оверхеда/ошибок SymPy
+        try:
+            result.add(float(cleaned))
+            continue
+        except ValueError:
+            pass
+
+        # Если содержит дефис, проверяем, не отрицательное ли это число
+        if "-" in cleaned:
+            if cleaned.startswith("-") and cleaned.count("-") == 1:
+                try:
+                    result.add(float(cleaned))
+                    continue
+                except ValueError:
+                    pass
+            # Иначе это диапазон или номер подстатьи (например, 196-1), пропускаем его
+            continue
+
         try:
             from sympy import sympify
-            val = float(sympify(s.replace(" ", "")))
+            val = float(sympify(cleaned))
             result.add(val)
         except Exception:
-            try:
-                result.add(float(s))
-            except ValueError:
-                pass
+            pass
     return result
 
 
@@ -532,9 +634,37 @@ def _audit_conclusions(
 
 
 def _build_conflicts_from_verdicts(verdicts: list[ClaimVerdict]) -> list[ConflictRecord]:
-    """Превращает CONTRADICTED вердикты в ConflictRecord для единой секции конфликтов."""
+    """
+    Превращает CONTRADICTED вердикты в ConflictRecord для единой секции конфликтов.
+
+    V8.0: Классификация ConflictType основана на структурированных приоритетах:
+      1. HIERARCHY: только если в contradiction_detail есть явные иерархические сигналы
+         (отсылки на КоАП, иерархию актов, подзаконные акты vs кодекс)
+         Сигнал: "коап" | "иерарх" | "подзакон" | "ппрк" | "постановление правительства"
+      2. TEMPORAL: если спор о сроках/датах, без иерархического конфликта
+      3. FACTUAL: все остальные CONTRADICTED (числа, факты, ссылки на статьи)
+
+    ЗАПРЕЩЕНО: пропаганда HIERARCHY только из-за отсутствия документа в корпусе.
+    """
     conflicts: list[ConflictRecord] = []
     seen: set[str] = set()
+
+    # Строгие сигналы для HIERARCHY иерархических конфликтов
+    # Только явные ссылки на иерархию нормативных актов (КоАП > закон, ППРК > приказ)
+    _HIERARCHY_SIGNALS = (
+        "коап",               # Кодекс административных правонарушений
+        "иерарх",             # иерархия актов
+        "подзакон",           # подзаконный акт
+        "ппрк",               # Постановление Правительства
+        "постановление правительства",  # полный вариант
+        "приказ министр",      # приказ министерства
+        "legal_rank",           # технический маркер (rank_deltaом)
+    )
+    # Сигналы для TEMPORAL конфликтов (временные расхождения)
+    _TEMPORAL_SIGNALS = (
+        "срок", "дата", "дней", "часов", "месяц",
+        "вступает", "действие", "времен", "срок уведомления",
+    )
 
     for v in verdicts:
         if v.status != VerdictStatus.CONTRADICTED:
@@ -543,28 +673,20 @@ def _build_conflicts_from_verdicts(verdicts: list[ClaimVerdict]) -> list[Conflic
             continue
         seen.add(v.claim_id)
 
-        # V7.0: Точная классификация ConflictType
         detail_lower = (v.contradiction_detail or "").lower()
-        # HIERARCHY: только явные иерархические коллизии (КоАП > закон, подзаконный акт)
-        hierarchy_signals = ("коап", "иерарх", "подзакон", "ппрк", "постановление правительства")
-        has_hierarchy = any(w in detail_lower for w in hierarchy_signals)
 
-        # TEMPORAL: сроки, даты, вступление в силу
-        temporal_signals = ("срок", "дата", "дней", "часов", "месяц", "вступает", "действие", "времен", "срок уведомления")
-        has_temporal = any(w in detail_lower for w in temporal_signals)
-
-        # Числовое расхождение без иерархии/времени → FACTUAL
-        numeric_signals = ("мрп", "тенге", "сумма", "размер", "число", "количество")
-        has_numeric = any(w in detail_lower for w in numeric_signals)
+        # Строгая приоритетная классификация:
+        # 1. HIERARCHY — только если есть явные ссылки на иерархию актов
+        has_hierarchy = any(sig in detail_lower for sig in _HIERARCHY_SIGNALS)
+        # 2. TEMPORAL — конфликт сроков/дат, без иерархии
+        has_temporal = any(sig in detail_lower for sig in _TEMPORAL_SIGNALS) and not has_hierarchy
 
         if has_hierarchy:
             ctype = ConflictType.HIERARCHY
-        elif has_temporal and not has_hierarchy:
+        elif has_temporal:
             ctype = ConflictType.TEMPORAL
-        elif has_numeric and not has_hierarchy and not has_temporal:
-            ctype = ConflictType.FACTUAL
         else:
-            # По умолчанию — factual для любого противоречия
+            # Все остальные CONTRADICTED (числа, ссылки, факты) → FACTUAL
             ctype = ConflictType.FACTUAL
 
         severity = ClaimSeverity.HIGH if v.confidence == "HIGH" else ClaimSeverity.MEDIUM

@@ -14,7 +14,6 @@ Stage 4: Fusion & Quality Validation
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from itertools import combinations
@@ -111,7 +110,7 @@ _TRUSTED_URL_PATTERNS: list[str] = [
 ]
 
 
-def _is_spam(chunk: "EvidenceChunk") -> bool:
+def _is_spam(chunk: EvidenceChunk) -> bool:
     """
     Детерминированный спам-фильтр для web-чанков.
     Adilet-чанки всегда проходят.
@@ -146,7 +145,7 @@ def _is_spam(chunk: "EvidenceChunk") -> bool:
     return False
 
 
-def _apply_spam_filter(chunks: list["EvidenceChunk"]) -> list["EvidenceChunk"]:
+def _apply_spam_filter(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
     """Применяет спам-фильтр, логирует результат."""
     before = len(chunks)
     filtered = [c for c in chunks if not _is_spam(c)]
@@ -182,10 +181,10 @@ async def fuse_and_validate(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
     chunks = _dedup_by_hash(chunks)
 
     # 2. Cosine Similarity (только если есть API ключ)
-    if settings.openai_api_key:
+    if settings.can_use_embeddings and settings.effective_embedding_key:
         chunks = await _dedup_by_cosine(chunks, settings.cosine_similarity_threshold)
     else:
-        logger.warning("[S4] No OpenAI key — skipping cosine dedup")
+        logger.warning("[S4] Embedding key not available or not supported — skipping cosine dedup")
 
     # 3. Конфликты
     chunks = _detect_conflicts(chunks, settings.hierarchy_conflict_rank_delta)

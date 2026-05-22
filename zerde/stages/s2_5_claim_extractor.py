@@ -14,30 +14,24 @@ Stage 2.5: Claim Extractor
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import string
-import uuid
-
 
 from openai import AsyncOpenAI
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from zerde.config import get_settings
 from zerde.models import (
-    VerdictStatus,
     ClaimExtractionResult,
     ClaimSeverity,
     ClaimType,
     DocumentClaim,
     DocumentState,
+    VerdictStatus,
 )
 from zerde.reference_data import (
     KOAP_MAX_FINES,
     LAW_REGISTRY,
-    MRP_BY_YEAR,
-    UK_ARTICLES,
     check_law_id,
     get_koap_article,
     get_mrp,
@@ -156,9 +150,14 @@ def _dedup_claims(claims: list[DocumentClaim]) -> list[DocumentClaim]:
     """V7.0: Детерминированная дедупликация по нормализованному тексту."""
     groups: dict[str, list[DocumentClaim]] = {}
     for c in claims:
-        key = _normalize_claim_text(c.claim_text)
-        if not key:
-            key = c.claim_text.lower()[:40]
+        if c.entities:
+            # Group regex/entity claims using their type and sorted normalized entities
+            sorted_ents = sorted(str(e).strip().replace(" ", "").upper() for e in c.entities)
+            key = f"regex_{c.claim_type.value}_{'_'.join(sorted_ents)}"
+        else:
+            key = _normalize_claim_text(c.claim_text)
+            if not key:
+                key = c.claim_text.lower()[:40]
         groups.setdefault(key, []).append(c)
 
     result: list[DocumentClaim] = []

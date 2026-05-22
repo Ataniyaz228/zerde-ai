@@ -80,13 +80,13 @@ async def run_policy_analyst(
 ) -> dict | None:
     """
     Запускает аналитический агент.
-    
+
     Args:
         doc_text: Нормализованный текст документа.
         analysis: Результат S5 (вердикты).
         chunks: Активные evidence chunks.
         max_doc_chars: Лимит символов документа в промпте.
-    
+
     Returns:
         Словарь с аналитической оценкой или None при ошибке.
     """

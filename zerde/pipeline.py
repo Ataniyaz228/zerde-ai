@@ -24,13 +24,13 @@ from zerde.models import (
     QueryPlan,
 )
 from zerde.stages.s1_ingest import ingest_document
-from zerde.stages.s2_planner import build_query_plan
 from zerde.stages.s2_5_claim_extractor import extract_claims
 from zerde.stages.s2_7_self_check import run_self_check
+from zerde.stages.s2_planner import build_query_plan
 from zerde.stages.s3_gather import gather_evidence
 from zerde.stages.s4_fusion import fuse_and_validate
-from zerde.stages.s5_analyst import run_auditor
 from zerde.stages.s5_5_analyst import run_policy_analyst
+from zerde.stages.s5_analyst import run_auditor
 from zerde.stages.s6_auditor import audit_analysis
 from zerde.stages.s7_render import render_report
 
@@ -53,6 +53,28 @@ class ZerdePipelineResult(dict):
     report_path: str
     elapsed_seconds: float
 
+    def __getattr__(self, name: str) -> any:
+        if name.startswith("_"):
+            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
+        import typing
+        hints = typing.get_type_hints(type(self))
+        if name not in hints:
+            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: any) -> None:
+        if name.startswith("_"):
+            super().__setattr__(name, value)
+            return
+        import typing
+        hints = typing.get_type_hints(type(self))
+        if name not in hints:
+            raise AttributeError(f"Cannot set invalid attribute '{name}' on 'ZerdePipelineResult'")
+        self[name] = value
+
 
 async def run_pipeline(
     file_path: str | Path,
@@ -71,7 +93,7 @@ async def run_pipeline(
     Returns:
         ZerdePipelineResult с результатами всех этапов.
     """
-    settings = get_settings()
+    get_settings()
     start_time = time.perf_counter()
 
     logger.info("=" * 60)
@@ -140,12 +162,13 @@ async def run_pipeline(
     t56 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 5.5 + 6: Policy Analyst ∥ BM25 Audit (параллельно)")
 
-    # C2 Fix: Избегаем in-place мутаций разделяемого объекта analysis.
+    # C2 Fix: Избегаем in-place мутаций разделяемого объекта analysis и chunks.
     # Мутируем глубокую копию для аудита (S6), а Policy Analyst (S5.5) читает исходную.
     analysis_for_audit = analysis.model_copy(deep=True)
+    active_chunks_for_audit = [c.model_copy(deep=True) for c in active_chunks]
 
     async def _run_s6():
-        return audit_analysis(analysis_for_audit, active_chunks)
+        return audit_analysis(analysis_for_audit, active_chunks_for_audit)
 
     policy_analysis, audited_analysis = await asyncio.gather(
         run_policy_analyst(

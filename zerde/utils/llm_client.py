@@ -150,13 +150,13 @@ async def cached_llm_call(
     cache = LLMCache(s.cache_db_path)
 
     # Очищаем устаревшие при каждом вызове (дёшево — O(idx))
-    cache.invalidate_expired()
+    await cache.invalidate_expired()
 
     # Ключ = model + все messages (system + user)
     prompt_key = json.dumps(messages, ensure_ascii=False, sort_keys=True)
 
     # Проверяем кэш
-    cached = cache.get(model, prompt_key)
+    cached = await cache.get(model, prompt_key)
     if cached is not None:
         return cached
 
@@ -181,7 +181,7 @@ async def cached_llm_call(
             err_str = str(e)
             if "json" in err_str.lower() or "400" in err_str:
                 if use_json_mode:
-                    logger.info(f"[LLMCall] json_object not supported, retrying without it...")
+                    logger.info("[LLMCall] json_object not supported, retrying without it...")
                     continue  # Попробуем без json_mode
             raise  # Другая ошибка — пробрасываем
 
@@ -200,7 +200,7 @@ async def cached_llm_call(
         if json_match:
             try:
                 parsed = json.loads(json_match.group(1))
-                logger.info(f"[LLMCall] Extracted JSON from text response.")
+                logger.info("[LLMCall] Extracted JSON from text response.")
             except json.JSONDecodeError:
                 parsed = _repair_truncated_json(content)
                 if parsed:
@@ -221,15 +221,15 @@ async def cached_llm_call(
         if isinstance(parsed, list):
             parsed = {"_raw": parsed}
         else:
-            logger.warning(f"[LLMCall] LLM returned non-dict JSON, wrapping.")
+            logger.warning("[LLMCall] LLM returned non-dict JSON, wrapping.")
             parsed = {"_raw": parsed}
 
     # НЕ кэшируем сломанные ответы: пустой dict или parse_failed
     if parse_failed or not parsed:
-        logger.warning(f"[LLMCall] Skipping cache — response is empty or malformed.")
+        logger.warning("[LLMCall] Skipping cache — response is empty or malformed.")
         return parsed
 
     # Сохраняем в кэш только валидные непустые ответы
-    cache.put(model, prompt_key, parsed, ttl_seconds=ttl_seconds)
+    await cache.put(model, prompt_key, parsed, ttl_seconds=ttl_seconds)
 
     return parsed

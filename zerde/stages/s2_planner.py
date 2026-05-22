@@ -1,5 +1,5 @@
 """
-Stage 2: LLM Planner 
+Stage 2: LLM Planner
 Вход:  DocumentState
 Выход: QueryPlan
 
@@ -26,7 +26,7 @@ from tenacity import (
 )
 
 from zerde.config import get_settings
-from zerde.models import AdiletQuery, DocumentState, QueryPlan, WebQuery, WebTier
+from zerde.models import AdiletQuery, DocumentState, QueryPlan, WebQuery
 from zerde.prompts.planner import build_planner_prompt
 from zerde.utils.llm_client import cached_llm_call, make_llm_client
 
@@ -91,7 +91,7 @@ async def build_query_plan(doc_state: DocumentState) -> QueryPlan:
         llm_cache = LLMCache(settings.cache_db_path)
         prompt_key = json.dumps([{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}], ensure_ascii=False, sort_keys=True)
         cache_key = LLMCache._make_key(settings.llm_model_planner, prompt_key)
-        llm_cache._delete(cache_key)
+        await llm_cache._delete(cache_key)
         logger.info(f"[S2] Cache invalidated for retry {attempt + 1}")
 
     # Сохраняем для отладки

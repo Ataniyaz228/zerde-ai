@@ -223,3 +223,52 @@ def test_reliability_structural_verdicts_ignored():
     ]
     score = _compute_reliability(verdicts)
     assert score == pytest.approx(0.05), f"Structural verdicts should be ignored, got {score:.3f}"
+
+
+# ===========================================================================
+# Тесты: Резолвинг человекочитаемых названий в law_id
+# ===========================================================================
+
+
+class TestResolveLawName:
+    """_resolve_law_name должна преобразовывать названия НПА в короткие ID."""
+
+    def test_exact_name_to_id(self):
+        from zerde.stages.s3_gather import _resolve_law_name
+        assert _resolve_law_name("ГК РК (Общая часть)") == "1000-XIII"
+        assert _resolve_law_name("Земельный кодекс РК") == "442-II"
+        assert _resolve_law_name("Бюджетный кодекс РК") == "95-IV"
+
+    def test_full_name_to_id(self):
+        from zerde.stages.s3_gather import _resolve_law_name
+        assert _resolve_law_name("Гражданский кодекс Республики Казахстан (Общая часть)") == "1000-XIII"
+        assert _resolve_law_name("Земельный кодекс Республики Казахстан") == "442-II"
+
+    def test_law_name_to_id(self):
+        from zerde.stages.s3_gather import _resolve_law_name
+        assert _resolve_law_name("Закон о государственном имуществе") == "413-IV"
+        assert _resolve_law_name("Закон о местном государственном управлении") == "148-II"
+        assert _resolve_law_name("Закон о персональных данных") == "94-V"
+
+    def test_substring_match(self):
+        from zerde.stages.s3_gather import _resolve_law_name
+        # "Закон РК о государственном имуществе" содержит "государственном имуществе" — должно матчиться
+        result = _resolve_law_name("Закон РК о государственном имуществе")
+        assert result == "413-IV"
+
+    def test_short_id_passthrough(self):
+        from zerde.stages.s3_gather import _resolve_law_name
+        assert _resolve_law_name("550-IV") == "550-IV"
+        assert _resolve_law_name("94-V") == "94-V"
+        assert _resolve_law_name("1000-XIII") == "1000-XIII"
+
+    def test_adilet_code_passthrough(self):
+        from zerde.stages.s3_gather import _resolve_law_name
+        assert _resolve_law_name("K940001000_") == "K940001000_"
+        assert _resolve_law_name("Z1300000094") == "Z1300000094"
+
+    def test_case_insensitive(self):
+        from zerde.stages.s3_gather import _resolve_law_name
+        assert _resolve_law_name("Гражданский Кодекс РК (Общая Часть)") == "1000-XIII"
+        assert _resolve_law_name("КоАП") == "235-V"
+        assert _resolve_law_name("коап") == "235-V"

@@ -447,12 +447,18 @@ def _parse_adilet_json_response(data: dict | list, law_id: str, query: AdiletQue
     return chunks
 
 
-# Fallback 2: CSS Selectors
+# Wayback Machine URL prefix для fallback при недоступности Adilet
+_WAYBACK_PREFIX = "https://web.archive.org/web/2024/"
+
+
+# Fallback 2: CSS Selectors (с Wayback Machine fallback)
 async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> list[EvidenceChunk]:
     """
     Парсит HTML страницы НПА через CSS-селекторы.
     Гранулярность: 1 чанк = 1 статья.
-    Селекторы: p[id^='st'], .law-article, .article-content
+    Селекторы: p[id^='st'], p[id^='z'], .law-article, .article-content
+
+    При ConnectTimeout к adilet.zan.kz автоматически пробует Wayback Machine.
     """
     settings = get_settings()
     base = str(settings.adilet_base_url).rstrip("/")
@@ -469,8 +475,7 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> 
     if not urls_to_try:
         urls_to_try = await _search_adilet_for_query(query, base)
 
-    # НЕ используем Adilet Search как доп. источник если law_ids есть —
-    # для known IDs он всегда 404
+    adilet_is_down = False  # Флаг: прямой Adilet недоступен
 
     async with httpx.AsyncClient(
         timeout=settings.adilet_timeout_seconds,
@@ -486,20 +491,45 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> 
             if url in seen_urls:
                 continue
             seen_urls.add(url)
+
+            # --- Попытка 1: Прямой запрос к Adilet ---
+            if not adilet_is_down:
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        html = resp.text
+                        page_chunks = _parse_adilet_html(html, url, query)
+                        chunks.extend(page_chunks)
+                        logger.debug(f"[S3/CSS] {url}: {len(page_chunks)} articles parsed")
+                        if page_chunks:
+                            break
+                        continue
+                except (httpx.ConnectTimeout, httpx.ConnectError, httpx.ReadTimeout) as e:
+                    logger.warning(f"[S3/CSS] Adilet unreachable ({type(e).__name__}), switching to Wayback Machine")
+                    adilet_is_down = True  # Переключаемся на Wayback для всех следующих URL
+                except Exception as e:
+                    logger.warning(f"[S3/CSS] Failed {url}: {e}")
+
+            # --- Попытка 2: Wayback Machine fallback ---
+            wayback_url = _WAYBACK_PREFIX + url
             try:
-                resp = await client.get(url)
+                resp = await client.get(wayback_url)
                 if resp.status_code != 200:
+                    logger.debug(f"[S3/CSS/Wayback] {wayback_url}: status {resp.status_code}")
                     continue
 
                 html = resp.text
-                page_chunks = _parse_adilet_html(html, url, query)
+                # Wayback добавляет свой toolbar — парсер справится
+                page_chunks = _parse_adilet_html(html, url, query)  # source_url = оригинальный URL
                 chunks.extend(page_chunks)
-                logger.debug(f"[S3/CSS] {url}: {len(page_chunks)} articles parsed")
                 if page_chunks:
-                    break  # Удалось с этим URL
+                    logger.info(f"[S3/CSS/Wayback] {url}: {len(page_chunks)} articles via Wayback Machine")
+                    break
+                else:
+                    logger.debug(f"[S3/CSS/Wayback] {url}: page fetched but 0 articles parsed")
 
             except Exception as e:
-                logger.warning(f"[S3/CSS] Failed {url}: {e}")
+                logger.warning(f"[S3/CSS/Wayback] Failed {wayback_url}: {e}")
 
     return chunks
 
@@ -559,7 +589,7 @@ def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[E
 
     # Основные CSS-селекторы для статей
     article_selectors = [
-        "p[id^='st']",           # Адилет основной
+        "p[id^='st']",           # Адилет основной формат
         ".law-article",
         ".article-text",
         "div[class*='article']",
@@ -567,13 +597,15 @@ def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[E
     ]
 
     articles_found = False
+    _ARTICLE_TITLE_RE = re.compile(r"^\s*(Статья|Бап|Article)\s+(\d+[\-\d]*)", re.IGNORECASE)
+
     for selector in article_selectors:
         nodes = tree.css(selector)
         if not nodes:
             continue
         articles_found = True
 
-        for node in nodes[:50]:  # Максимум 50 статей
+        for node in nodes[:80]:  # Максимум 80 статей
             article_text = node.text(strip=True)
             if len(article_text) < 30:
                 continue
@@ -601,6 +633,53 @@ def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[E
                 adilet_fallback_used=AdiletFallbackStrategy.CSS_SELECTOR,
             ))
         break
+
+    # Стратегия h3: для Adilet/Wayback где статьи в <h3>
+    # Каждый <h3> "Статья N." + текст siblings до следующего <h3>
+    if not chunks:
+        h3_nodes = tree.css("h3")
+        art_h3 = [(n, _ARTICLE_TITLE_RE.match(n.text(strip=True))) for n in h3_nodes]
+        art_h3 = [(n, m) for n, m in art_h3 if m]
+
+        if art_h3:
+            articles_found = True
+            # Если есть фильтр по статьям — проходим все h3, иначе первые 80
+            scan_limit = len(art_h3) if query.articles else 80
+            for node, match in art_h3[:scan_limit]:
+                article_num = match.group(2)
+
+                # Фильтр по запрошенным статьям
+                if query.articles and article_num and article_num not in query.articles:
+                    continue
+
+                # Собираем текст: h3 + все siblings до следующего h3
+                text_parts = [node.text(strip=True)]
+                sibling = node.next
+                while sibling:
+                    if sibling.tag == "h3":
+                        break
+                    sib_text = sibling.text(strip=True)
+                    if sib_text:
+                        text_parts.append(sib_text)
+                    sibling = sibling.next
+
+                article_text = " ".join(text_parts)
+                if len(article_text) < 30:
+                    continue
+
+                chunk_id = hashlib.sha256(article_text.encode()).hexdigest()
+                chunks.append(EvidenceChunk(
+                    chunk_id=chunk_id,
+                    source_url=source_url + f"#art{article_num}",
+                    source_title=f"{law_title} | Ст. {article_num}",
+                    content=article_text,
+                    legal_rank=_infer_adilet_rank(law_title),
+                    law_id=law_id,
+                    law_title=law_title,
+                    article=article_num,
+                    effective_date=effective_date,
+                    adilet_fallback_used=AdiletFallbackStrategy.CSS_SELECTOR,
+                ))
 
     # Если статьи не найдены через селекторы — берём весь body как один чанк
     if not articles_found or not chunks:

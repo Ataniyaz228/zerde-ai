@@ -8,8 +8,10 @@ os.environ["OPENBLAS_NUM_THREADS"] = "2"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
 os.environ["NUMEXPR_NUM_THREADS"] = "2"
 
-# Force PyTorch to use CPU to completely bypass CUDA Out Of Memory errors on 6GB VRAM GPU
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# Force PyTorch to use CPU to completely bypass CUDA Out Of Memory errors on 6GB VRAM GPU,
+# unless ZERDE_USE_CUDA=1 is explicitly requested.
+if os.getenv("ZERDE_USE_CUDA") != "1":
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import sys
 import json
@@ -43,7 +45,8 @@ async def embed_existing():
         print("No chunks found to embed.")
         return
         
-    print("\n🧠 Generating BGE-M3 vector embeddings for all chunks on CPU (limited to 2 threads to prevent system lag)...")
+    device_name = "GPU (CUDA)" if os.getenv("ZERDE_USE_CUDA") == "1" else "CPU (limited to 2 threads)"
+    print(f"\n🧠 Generating BGE-M3 vector embeddings for all chunks on {device_name}...")
     
     chunk_size = 50
     loop = asyncio.get_running_loop()

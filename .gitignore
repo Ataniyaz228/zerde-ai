@@ -8,8 +8,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 output/
+docs/
 zerde_cache.db
 zerde.log
 *.egg-info/
 dist/
 build/
+zerde_cache.db-shm

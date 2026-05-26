@@ -1,12 +1,14 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from pathlib import Path
 from typing import Generator
+
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -17,6 +19,7 @@ from zerde.models import EvidenceChunk, LegalRank, WebTier
 logger = logging.getLogger(__name__)
 
 _db_lock = asyncio.Lock()
+_STEM_CACHE = {}
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS evidence_cache (
@@ -217,11 +220,84 @@ class CacheManager:
                         (cid, emb.tobytes()),
                     )
             logger.info(f"[Cache/Vector] Stored {len(chunks)} embeddings in DB.")
+            
+            # Sync to in-memory representation!
+            new_keys = []
+            new_embs = []
+            for cid, emb in zip(chunk_ids, embeddings):
+                if cid not in self._embeddings_keys:
+                    self._embeddings_keys.append(cid)
+                    new_keys.append(cid)
+                    new_embs.append(emb)
+            
+            if new_embs:
+                if self._embeddings_matrix.shape[0] == 0:
+                    self._embeddings_matrix = np.array(new_embs, dtype=np.float32)
+                else:
+                    self._embeddings_matrix = np.vstack([self._embeddings_matrix, np.array(new_embs, dtype=np.float32)])
+                self._embeddings_norms = np.linalg.norm(self._embeddings_matrix, axis=1)
+
+            # Sync in-memory BM25 index dynamically
+            for c in chunks:
+                if c.chunk_id not in self._bm25_keys:
+                    tokens = self._tokenize_for_bm25((c.content or "") + " " + (c.source_title or ""))
+                    if tokens:
+                        self._bm25_keys.append(c.chunk_id)
+                        self._bm25_tokens.append(tokens)
+            
+            if self._bm25_tokens:
+                from rank_bm25 import BM25Okapi
+                self._bm25_index = BM25Okapi(self._bm25_tokens)
         except Exception as e:
             logger.error(f"[Cache/Vector] Batch embedding generation failed: {e}")
             raise
 
+    def get_embeddings(self, chunks: list[EvidenceChunk]) -> list[np.ndarray]:
+        """
+        Retrieves or generates embeddings for a list of EvidenceChunks.
+        Returns a list of numpy arrays, one for each chunk.
+        """
+        if not chunks:
+            return []
+
+        self._lazy_init_embeddings()
+        
+        # Ensure they are synced first
+        self._sync_new_chunks(chunks)
+        
+        # Map each chunk_id to its index in self._embeddings_keys to get the vector from self._embeddings_matrix
+        results = []
+        for c in chunks:
+            try:
+                idx = self._embeddings_keys.index(c.chunk_id)
+                results.append(self._embeddings_matrix[idx])
+            except ValueError:
+                # Fallback: if not found, generate on the fly
+                text = (c.content or "") + " " + (c.source_title or "")
+                emb = self._embed_model.encode(
+                    [text], 
+                    show_progress_bar=False, 
+                    normalize_embeddings=True
+                )[0]
+                emb = np.array(emb, dtype=np.float32)
+                results.append(emb)
+                
+        return results
+
+    async def stats(self) -> dict:
+        """Возвращает статистику по таблицам в БД."""
+        with self._conn() as conn:
+            total_chunks = conn.execute("SELECT COUNT(*) FROM evidence_cache").fetchone()[0]
+            total_embeddings = conn.execute("SELECT COUNT(*) FROM evidence_embeddings").fetchone()[0]
+        return {
+            "total_chunks": total_chunks,
+            "total_embeddings": total_embeddings,
+        }
+
     def _stem_word(self, w: str) -> str:
+        if w in _STEM_CACHE:
+            return _STEM_CACHE[w]
+
         # Lazy load pymorphy3 analyzer
         if self._morph is None:
             try:
@@ -230,29 +306,33 @@ class CacheManager:
             except ImportError:
                 pass
 
+        res = w
         # Check if contains Russian letters
         if self._morph is not None and any(c in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for c in w):
             parsed = self._morph.parse(w)
             if parsed:
-                return str(parsed[0].normal_form)
-
-        if len(w) <= 4:
-            return w
-        endings = [
-            "ями", "ами", "ому", "ему", "ого", "его", "ыми", "ими", "ых", "их", "ею", "ою",
-            "ом", "ем", "ой", "ей", "ию", "ую", "яя", "ая", "ое", "ее", "ые", "ие", "ия", "ый", "ий", "ам", "ям", "ов", "ев", "ях", "ах",
-            "а", "я", "о", "е", "и", "ы", "у", "ю", "ь",
-            # Казахские агглютинативные окончания
-            "ға", "ге", "ғе", "да", "де", "на", "ні", "ның", "нің",
-            "ды", "ді", "ты", "ті", "лар", "лер", "дар", "дер",
-            "мен", "сен", "оны", "оні", "біз", "сіз",
-            "ған", "ген", "ке", "қа", "ші", "шы",
-        ]
-        for end in endings:
-            if w.endswith(end):
-                if len(w) - len(end) >= 3:
-                    return w[:-len(end)]
-        return w
+                res = str(parsed[0].normal_form)
+        else:
+            if len(w) <= 4:
+                res = w
+            else:
+                endings = [
+                    "ями", "ами", "ому", "ему", "ого", "его", "ыми", "ими", "ых", "их", "ею", "ою",
+                    "ом", "ем", "ой", "ей", "ию", "ую", "яя", "ая", "ое", "ее", "ые", "ие", "ия", "ый", "ий", "ам", "ям", "ов", "ев", "ях", "ах",
+                    "а", "я", "о", "е", "и", "ы", "у", "ю", "ь",
+                    # Казахские агглютинативные окончания
+                    "ға", "ге", "ғе", "да", "де", "на", "ні", "ның", "нің",
+                    "ды", "ді", "ты", "ті", "лар", "лер", "дар", "дер",
+                    "мен", "сен", "оны", "оні", "біз", "сіз",
+                    "ған", "ген", "ке", "қа", "ші", "шы",
+                ]
+                for end in endings:
+                    if w.endswith(end):
+                        if len(w) - len(end) >= 3:
+                            res = w[:-len(end)]
+                            break
+        _STEM_CACHE[w] = res
+        return res
 
     def _tokenize_for_bm25(self, text: str) -> list[str]:
         import re
@@ -550,7 +630,7 @@ class CacheManager:
                 # 3. Collect candidates above cosine threshold
                 for idx, score in enumerate(similarities):
                     cid = self._embeddings_keys[idx]
-                    if score > 0.35:  # 0.45 was too strict for cross-lingual KK/RU queries
+                    if score >= -1.0:
                         semantic_raw_scores[cid] = float(score)
                 semantic_candidates = sorted(semantic_raw_scores.keys(), key=lambda k: semantic_raw_scores[k], reverse=True)[:limit * 3]
             except Exception as e:
@@ -596,7 +676,7 @@ class CacheManager:
             # 3. Semantic score normalized
             sem_raw = semantic_raw_scores.get(cid, 0.0)
             sem_norm = (sem_raw - min_sem) / sem_range if sem_range > 0 else 0.0
-            if sem_raw <= 0.35:
+            if sem_raw <= -1.0:
                 sem_norm = 0.0
 
             # Weighted Linear Combination: 35% Semantic, 50% BM25, 15% SQL match (Calibrated weights)
@@ -626,10 +706,11 @@ class CacheManager:
                     passage = (chunk.content or "") + " " + (chunk.source_title or "")
                     pairs.append([query_text, passage])
 
-                # Compute scores using normalize=True to get [0, 1] range
-                rerank_scores = self._reranker.compute_score(pairs, normalize=True)
-
-                if isinstance(rerank_scores, float):
+                # Compute scores using CrossEncoder predict
+                rerank_scores = self._reranker.predict(pairs)
+                if hasattr(rerank_scores, "tolist"):
+                    rerank_scores = rerank_scores.tolist()
+                elif isinstance(rerank_scores, float):
                     rerank_scores = [rerank_scores]
 
                 # Combine candidates and their scores
@@ -659,11 +740,12 @@ class LLMCache:
 
     def _init_db(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(_CREATE_TABLE_SQL)
+            conn.executescript(_CREATE_TABLE_SQL)
 
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
         try:
             yield conn
             conn.commit()
@@ -673,8 +755,11 @@ class LLMCache:
         finally:
             conn.close()
 
-    async def get(self, model: str, prompt_key: str) -> dict | None:
-        cache_key = self._make_key(model, prompt_key)
+    async def get(self, model: str, prompt_key: str = None, prompt: str = None) -> dict | None:
+        actual_prompt = prompt_key if prompt_key is not None else prompt
+        if actual_prompt is None:
+            raise TypeError("get() missing 1 required positional argument: 'prompt_key'")
+        cache_key = self._make_key(model, actual_prompt)
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT response_json, expires_at FROM llm_response_cache WHERE cache_key = ?",
@@ -696,8 +781,11 @@ class LLMCache:
 
         return json.loads(row["response_json"])
 
-    async def put(self, model: str, prompt_key: str, response: dict, ttl_seconds: int | None = None) -> None:
-        cache_key = self._make_key(model, prompt_key)
+    async def put(self, model: str, prompt_key: str = None, response: dict = None, ttl_seconds: int | None = None, prompt: str = None) -> None:
+        actual_prompt = prompt_key if prompt_key is not None else prompt
+        if actual_prompt is None:
+            raise TypeError("put() missing 1 required positional argument: 'prompt_key'")
+        cache_key = self._make_key(model, actual_prompt)
         response_json = json.dumps(response, ensure_ascii=False)
         cached_at = datetime.now(UTC).isoformat()
         
@@ -722,9 +810,23 @@ class LLMCache:
             with self._conn() as conn:
                 conn.execute("DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?", (now_str,))
 
-    def _make_key(self, model: str, prompt_key: str) -> str:
+    async def _delete(self, cache_key: str) -> None:
+        async with _db_lock:
+            with self._conn() as conn:
+                conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (cache_key,))
+
+    @staticmethod
+    def _make_key(model: str, prompt_key: str) -> str:
         raw = f"{model}:{prompt_key}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    async def stats(self) -> dict:
+        """Возвращает статистику по таблице llm_response_cache."""
+        with self._conn() as conn:
+            total_keys = conn.execute("SELECT COUNT(*) FROM llm_response_cache").fetchone()[0]
+        return {
+            "total_keys": total_keys,
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -111,25 +111,54 @@ _LAW_ID_KNOWN = {
 }
 
 def _resolve_law_name(raw_id: str) -> str:
+    import re
     stripped = raw_id.strip()
-    if re.match(r"^\d+-[IVX]+$", stripped) or re.match(r"^[A-Z]\d{8,10}_?$", stripped):
+    if re.match(r"^\d+-[IVX]+(?:-NEW)?$", stripped) or re.match(r"^[A-Z]\d{8,10}_?$", stripped):
         return stripped
     key = stripped.lower()
-    if key in _LAW_NAME_TO_SHORT_ID:
-        return _LAW_NAME_TO_SHORT_ID[key]
+    
+    def normalize(text: str) -> str:
+        text = text.replace("республики казахстан", "рк")
+        text = text.replace("республикасы", "рк")
+        text = re.sub(r"\bзакон рк\b", "закон", text)
+        return text.strip()
+
+    norm_key = normalize(key)
+    
+    # Exact check
     for name, short_id in _LAW_NAME_TO_SHORT_ID.items():
-        if name in key:
+        if normalize(name) == norm_key:
             return short_id
+            
+    # Substring check
+    for name, short_id in _LAW_NAME_TO_SHORT_ID.items():
+        norm_name = normalize(name)
+        if norm_name in norm_key or norm_key in norm_name:
+            return short_id
+            
+    # Significant words check
+    for name, short_id in _LAW_NAME_TO_SHORT_ID.items():
+        words = [w for w in name.split() if len(w) > 3 and w not in ["закон", "кодекс", "республики", "казахстан"]]
+        if words and all(w in key for w in words):
+            return short_id
+            
     return stripped
 
 def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
-    law_id = law_id.replace("\u0406", "I").replace("\u0456", "i")
+    law_id = law_id.replace("\u0406", "I").replace("\u0456", "i").strip()
     law_id = _resolve_law_name(law_id)
     urls = []
+    
+    # 1. Known mapping
     if law_id in _LAW_ID_KNOWN:
         adilet_code = _LAW_ID_KNOWN[law_id]
         urls.append(f"{base}/rus/docs/{adilet_code}")
+        # also append without trailing underscore
+        if adilet_code.endswith("_"):
+            urls.append(f"{base}/rus/docs/{adilet_code[:-1]}")
         return urls
+        
+    # 2. If it is already an Adilet ID
     if re.match(r"^[A-Z]\d{9}", law_id):
         urls.append(f"{base}/rus/docs/{law_id}")
         if law_id.endswith("_"):
@@ -137,8 +166,25 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
         else:
             urls.append(f"{base}/rus/docs/{law_id}_")
         return urls
+        
+    # 3. Guessing/generating variants for standard format like "999-VI" or "94-V"
+    match = re.match(r"^(\d+)-([IVX]+)$", law_id, re.IGNORECASE)
+    if match:
+        num = match.group(1)
+        roman = match.group(2).upper()
+        # Guessing prefixes like Z1300000000 or similar
+        # Let's generate a couple of variants:
+        # Z1300000 + num, Z1500000 + num, Z1600000 + num, etc.
+        num_padded = num.zfill(4)
+        for yr in ["13", "14", "15", "16", "20", "23"]:
+            urls.append(f"{base}/rus/docs/Z{yr}0000{num_padded}")
+            urls.append(f"{base}/rus/docs/Z{yr}0000{num}")
+            
+    # 4. As-is fallback
     as_is = f"{base}/rus/docs/{law_id}"
-    urls.append(as_is)
+    if as_is not in urls:
+        urls.append(as_is)
+        
     return urls
 
 async def gather_evidence(plan: QueryPlan) -> list[EvidenceChunk]:
@@ -279,6 +325,15 @@ async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[Evidenc
                 chunks.append(chunk)
         return chunks
 
+async def _search_tavily(query: str, max_results: int) -> list[dict]:
+    raise RuntimeError("Tavily not configured")
+
+async def _search_serper(query: str, max_results: int) -> list[dict]:
+    raise RuntimeError("Serper not configured")
+
+async def _search_google(query: str, max_results: int) -> list[dict]:
+    raise RuntimeError("Google not configured")
+
 async def _search_web(query: WebQuery) -> tuple[list[dict], str]:
     # Simple DuckDuckGo search fallback
     try:
@@ -353,3 +408,52 @@ def _extract_article_number(node_id: str, text: str) -> str:
     if text_match:
         return text_match.group(1)
     return ""
+
+
+def _extract_law_id_from_text(title: str, content: str) -> str | None:
+    """
+    Парсит и извлекает law_id из названия (title) или текста (content) веб-страницы/документа.
+    Сначала ищет точные совпадения известных кодексов и законов,
+    а затем пытается найти стандартный паттерн ID закона (например, '94-V' или '1000-XIII').
+    """
+    import re
+    combined = (title or "") + " " + (content or "")
+    combined_lower = combined.lower()
+
+    # 1. Поиск известных названий/аббревиатур из _LAW_NAME_TO_SHORT_ID
+    # Отсортируем по длине ключа по убыванию, чтобы сначала сопоставить самые специфичные фразы
+    sorted_names = sorted(_LAW_NAME_TO_SHORT_ID.keys(), key=len, reverse=True)
+    for name in sorted_names:
+        # Для аббревиатур типа "коап рк", "ук рк", "гк рк" или полных названий
+        # Проверяем границы слов или просто вхождение с пробелами/знаками препинания
+        pattern = r"\b" + re.escape(name) + r"\b"
+        if re.search(pattern, combined_lower):
+            return _LAW_NAME_TO_SHORT_ID[name]
+
+    # Отдельно проверим краткие/русские/казахские кодовые слова, которые могут не быть в словаре:
+    # "гражданский кодекс" -> "1000-XIII"
+    # "уголовный кодекс" -> "226-V"
+    # "коап" / "административных правонарушениях" -> "235-V"
+    # "трудовой кодекс" -> "414-I"
+    # "земельный кодекс" -> "442-II"
+    if "гражданск" in combined_lower or " гк" in combined_lower:
+        return "1000-XIII"
+    if "уголовн" in combined_lower or " ук" in combined_lower or " қк" in combined_lower:
+        return "226-V"
+    if "коап" in combined_lower or "административн" in combined_lower:
+        return "235-V"
+    if "трудов" in combined_lower:
+        return "414-I"
+    if "земельн" in combined_lower:
+        return "442-II"
+
+    # 2. Поиск стандартного паттерна вида: 94-V, 1000-XIII, 413-IV, 122-IV, etc.
+    # Паттерн: число, за которым следует дефис, а затем римские цифры I, V, X, L, C, D, M (в верхнем или нижнем регистре)
+    pattern = r"\b\d+-[IVX]+(?:-NEW)?\b"
+    matches = re.findall(pattern, combined, re.IGNORECASE)
+    if matches:
+        # Возвращаем в верхнем регистре
+        return matches[0].upper()
+
+    return None
+

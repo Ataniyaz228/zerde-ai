@@ -288,7 +288,15 @@ class CacheManager:
             
             # 1. Lazy load SentenceTransformers
             try:
+                import os
+                # Limit CPU threads to 2 to prevent system lagging and IDE crashes
+                os.environ["OMP_NUM_THREADS"] = "2"
+                os.environ["MKL_NUM_THREADS"] = "2"
+                os.environ["OPENBLAS_NUM_THREADS"] = "2"
+                
                 import torch
+                torch.set_num_threads(2)
+                
                 from sentence_transformers import SentenceTransformer
             except ImportError as e:
                 logger.error(f"[Cache/Vector] Failed to import sentence-transformers/torch: {e}")

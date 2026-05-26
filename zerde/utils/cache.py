@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS evidence_cache (
 
 CREATE INDEX IF NOT EXISTS idx_content_hash ON evidence_cache(content_hash);
 
+CREATE TABLE IF NOT EXISTS evidence_embeddings (
+    chunk_id   TEXT PRIMARY KEY,
+    embedding  BLOB NOT NULL,
+    FOREIGN KEY(chunk_id) REFERENCES evidence_cache(chunk_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS llm_response_cache (
     cache_key     TEXT PRIMARY KEY,
     model         TEXT NOT NULL,
@@ -80,7 +86,9 @@ class CacheManager:
     """
 
     def __init__(self, db_path: str = "zerde_cache.db") -> None:
-        self.db_path = Path(db_path)
+        import os
+        env_db_path = os.getenv("ZERDE_CACHE_DB")
+        self.db_path = Path(env_db_path if env_db_path else db_path)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -169,6 +177,7 @@ class CacheManager:
                     ),
                 )
         logger.debug(f"[Cache] STORED: {chunk.chunk_id[:12]}…")
+        self._sync_new_chunks([chunk])
 
     async def put_many(self, chunks: list[EvidenceChunk]) -> int:
         """
@@ -198,6 +207,8 @@ class CacheManager:
                     stored += result.rowcount
 
         logger.info(f"[Cache] Batch stored {stored}/{len(chunks)} chunks")
+        if stored > 0:
+            self._sync_new_chunks(chunks)
         return stored
 
     async def has(self, chunk_id: str) -> bool:
@@ -230,6 +241,282 @@ class CacheManager:
         logger.warning(f"[Cache] CLEARED: {deleted} chunks deleted")
         return deleted
 
+    def _stem_russian_word(self, w: str) -> str:
+        if len(w) <= 4:
+            return w
+        endings = [
+            "ями", "ами", "ому", "ему", "ого", "его", "ыми", "ими", "ых", "их", "ею", "ою",
+            "ом", "ем", "ой", "ей", "ию", "ую", "яя", "ая", "ое", "ее", "ые", "ие", "ия", "ый", "ий", "ам", "ям", "ов", "ев", "ях", "ах",
+            "а", "я", "о", "е", "и", "ы", "у", "ю", "ь"
+        ]
+        for end in endings:
+            if w.endswith(end):
+                if len(w) - len(end) >= 3:
+                    return w[:-len(end)]
+        return w
+
+    def _tokenize_for_bm25(self, text: str) -> list[str]:
+        import re
+        text_lower = text.lower()
+        # Удаляем пунктуацию (кроме дефиса в словах)
+        text_clean = re.sub(r"[^\w\s\-]", " ", text_lower)
+        words = [w.strip() for w in text_clean.split() if len(w.strip()) > 2]
+        LEGAL_STOP_WORDS = {
+            "закон", "кодекс", "статья", "статье", "статьи", "республики", "казахстан",
+            "утратил", "силу", "вводится", "действие", "постановление", "правительства",
+            "республика", "закона", "кодекса", "об", "о", "и", "в", "на", "для", "рк"
+        }
+        filtered = [self._stem_russian_word(w) for w in words if w not in LEGAL_STOP_WORDS]
+        return filtered if filtered else [self._stem_russian_word(w) for w in words]
+
+    def _lazy_init_embeddings(self) -> None:
+        """Lazy loads BGE-M3 model and pre-loads all embeddings/BM25 index in memory."""
+        if getattr(self, "_embeddings_loaded", False):
+            return
+
+        import threading
+        if not hasattr(self, "_init_lock"):
+            self._init_lock = threading.Lock()
+
+        with self._init_lock:
+            if getattr(self, "_embeddings_loaded", False):
+                return
+            
+            logger.info("[Cache/Vector] Initializing BGE-M3 model and pre-loading embeddings...")
+            
+            import numpy as np
+            
+            # 1. Lazy load SentenceTransformers
+            try:
+                import torch
+                from sentence_transformers import SentenceTransformer
+            except ImportError as e:
+                logger.error(f"[Cache/Vector] Failed to import sentence-transformers/torch: {e}")
+                raise e
+
+            # Use GPU if available, else CPU
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"[Cache/Vector] Using device: {device}")
+            
+            # Load BGE-M3 in FP16 if on CUDA to save VRAM, else FP32 on CPU
+            model_kwargs = {}
+            if device == "cuda":
+                model_kwargs["torch_dtype"] = torch.float16
+            
+            self._embed_model = SentenceTransformer(
+                "BAAI/bge-m3",
+                device=device,
+                model_kwargs=model_kwargs if model_kwargs else None
+            )
+            
+            # 2. Pre-load all embeddings from SQLite
+            self._embeddings_keys = []
+            embeddings_list = []
+            
+            with self._conn() as conn:
+                rows = conn.execute("SELECT chunk_id, embedding FROM evidence_embeddings").fetchall()
+                for row in rows:
+                    self._embeddings_keys.append(row["chunk_id"])
+                    vec = np.frombuffer(row["embedding"], dtype=np.float32)
+                    embeddings_list.append(vec)
+                    
+            if embeddings_list:
+                self._embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
+                self._embeddings_norms = np.linalg.norm(self._embeddings_matrix, axis=1)
+            else:
+                self._embeddings_matrix = np.empty((0, 1024), dtype=np.float32)
+                self._embeddings_norms = np.empty((0,), dtype=np.float32)
+                
+            # 3. Pre-load and construct BM25 index for all cached chunks
+            logger.info("[Cache/Vector] Constructing BM25 index for all chunks...")
+            self._bm25_keys = []
+            tokenized_corpus = []
+            
+            with self._conn() as conn:
+                rows = conn.execute("SELECT chunk_id, chunk_json FROM evidence_cache").fetchall()
+                for row in rows:
+                    try:
+                        data = json.loads(row["chunk_json"])
+                        content = data.get("content", "")
+                        title = data.get("source_title", "")
+                        tokens = self._tokenize_for_bm25(content + " " + title)
+                        if tokens:
+                            self._bm25_keys.append(row["chunk_id"])
+                            tokenized_corpus.append(tokens)
+                    except Exception as ex:
+                        pass
+                        
+            if tokenized_corpus:
+                from rank_bm25 import BM25Okapi
+                self._bm25_index = BM25Okapi(tokenized_corpus)
+                self._bm25_tokens = tokenized_corpus
+            else:
+                self._bm25_index = None
+                self._bm25_tokens = []
+                
+            self._embeddings_loaded = True
+            logger.info(f"[Cache/Vector] Initialized successfully. Loaded {len(self._embeddings_keys)} embeddings and {len(self._bm25_keys)} BM25 documents.")
+
+    def _sync_new_chunks(self, chunks: list[EvidenceChunk]) -> None:
+        """Dynamically syncs new chunks with in-memory embeddings and BM25 index at runtime."""
+        if not getattr(self, "_embeddings_loaded", False):
+            return
+
+        import numpy as np
+        
+        new_chunk_ids = []
+        new_texts = []
+        
+        for c in chunks:
+            if c.chunk_id not in self._embeddings_keys:
+                new_chunk_ids.append(c.chunk_id)
+                new_texts.append((c.content or "") + " " + (c.source_title or ""))
+
+        if not new_chunk_ids:
+            return
+
+        logger.info(f"[Cache/Vector] Dynamically syncing {len(new_chunk_ids)} new chunks in RAM...")
+
+        try:
+            # Generate normalized BGE-M3 embeddings
+            embeddings = self._embed_model.encode(
+                new_texts, 
+                batch_size=32, 
+                show_progress_bar=False, 
+                normalize_embeddings=True
+            )
+            embeddings = np.array(embeddings, dtype=np.float32)
+            
+            # Store in SQLite evidence_embeddings
+            with self._conn() as conn:
+                for cid, emb in zip(new_chunk_ids, embeddings):
+                    conn.execute(
+                        "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
+                        (cid, emb.tobytes()),
+                    )
+            
+            # Append to in-memory matrix
+            self._embeddings_keys.extend(new_chunk_ids)
+            if self._embeddings_matrix.shape[0] == 0:
+                self._embeddings_matrix = embeddings
+            else:
+                self._embeddings_matrix = np.vstack([self._embeddings_matrix, embeddings])
+            self._embeddings_norms = np.linalg.norm(self._embeddings_matrix, axis=1)
+            
+            # Rebuild BM25 index
+            logger.info("[Cache/Vector] Rebuilding in-memory BM25 index...")
+            tokenized_corpus = []
+            self._bm25_keys = []
+            with self._conn() as conn:
+                rows = conn.execute("SELECT chunk_id, chunk_json FROM evidence_cache").fetchall()
+                for row in rows:
+                    try:
+                        data = json.loads(row["chunk_json"])
+                        content = data.get("content", "")
+                        title = data.get("source_title", "")
+                        tokens = self._tokenize_for_bm25(content + " " + title)
+                        if tokens:
+                            self._bm25_keys.append(row["chunk_id"])
+                            tokenized_corpus.append(tokens)
+                    except Exception:
+                        pass
+            
+            if tokenized_corpus:
+                from rank_bm25 import BM25Okapi
+                self._bm25_index = BM25Okapi(tokenized_corpus)
+                self._bm25_tokens = tokenized_corpus
+                
+        except Exception as e:
+            logger.error(f"[Cache/Vector] Failed to dynamically sync new chunks: {e}")
+
+    def embed_chunks(self, chunks: list[EvidenceChunk]) -> None:
+        """Pre-computes and stores embeddings for a list of chunks in SQLite. Optimized for RTX 4050."""
+        if not chunks:
+            return
+
+        import numpy as np
+        self._lazy_init_embeddings()
+        
+        logger.info(f"[Cache/Vector] Encoding {len(chunks)} chunks in batches of 32 using BGE-M3...")
+        texts = [(c.content or "") + " " + (c.source_title or "") for c in chunks]
+        
+        try:
+            embeddings = self._embed_model.encode(
+                texts,
+                batch_size=32,
+                show_progress_bar=True,
+                normalize_embeddings=True
+            )
+            embeddings = np.array(embeddings, dtype=np.float32)
+            
+            logger.info(f"[Cache/Vector] Storing {len(chunks)} embeddings in SQLite...")
+            with self._conn() as conn:
+                for chunk, emb in zip(chunks, embeddings):
+                    conn.execute(
+                        "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
+                        (chunk.chunk_id, emb.tobytes()),
+                    )
+            logger.info("[Cache/Vector] Finished storing embeddings successfully.")
+            
+            # If loaded, sync in-memory matrix as well
+            if getattr(self, "_embeddings_loaded", False):
+                self._sync_new_chunks(chunks)
+        except Exception as e:
+            logger.error(f"[Cache/Vector] Failed to generate/store embeddings: {e}")
+            raise e
+
+    def get_embeddings(self, chunks: list[EvidenceChunk]) -> list[list[float]]:
+        """Retrieves cached embeddings from SQLite or computes them locally via BGE-M3."""
+        import numpy as np
+        
+        # Check cache first
+        chunk_ids = [c.chunk_id for c in chunks]
+        embeddings_map = {}
+        
+        with self._conn() as conn:
+            # Batch queries by 999 (SQLite limit)
+            for idx in range(0, len(chunk_ids), 999):
+                batch_ids = chunk_ids[idx:idx+999]
+                placeholders = ",".join(["?"] * len(batch_ids))
+                rows = conn.execute(
+                    f"SELECT chunk_id, embedding FROM evidence_embeddings WHERE chunk_id IN ({placeholders})",
+                    tuple(batch_ids)
+                ).fetchall()
+                for row in rows:
+                    vec = np.frombuffer(row["embedding"], dtype=np.float32)
+                    embeddings_map[row["chunk_id"]] = vec.tolist()
+                    
+        # Identify missing chunks
+        missing_chunks = [c for c in chunks if c.chunk_id not in embeddings_map]
+        
+        if missing_chunks:
+            logger.info(f"[Cache/Vector] Computing embeddings for {len(missing_chunks)} chunks using BGE-M3...")
+            self._lazy_init_embeddings()
+            texts = [(c.content or "") + " " + (c.source_title or "") for c in missing_chunks]
+            computed = self._embed_model.encode(
+                texts,
+                batch_size=32,
+                show_progress_bar=False,
+                normalize_embeddings=True
+            )
+            
+            # Store in DB and populate map
+            with self._conn() as conn:
+                for chunk, emb in zip(missing_chunks, computed):
+                    emb_float32 = emb.astype(np.float32)
+                    conn.execute(
+                        "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
+                        (chunk.chunk_id, emb_float32.tobytes()),
+                    )
+                    embeddings_map[chunk.chunk_id] = emb_float32.tolist()
+                    
+            # Update RAM representation if initialized
+            if getattr(self, "_embeddings_loaded", False):
+                self._sync_new_chunks(missing_chunks)
+                
+        # Return in original order
+        return [embeddings_map[c.chunk_id] for c in chunks]
+
     async def search_local(
         self,
         query_text: str,
@@ -238,14 +525,14 @@ class CacheManager:
         limit: int = 10,
     ) -> list[EvidenceChunk]:
         """
-        Ищет чанки в локальном кэше по ключевым словам в content и/или по law_ids.
-        Полезно как оффлайн-fallback при ошибках сети/лимитах API.
+        Parallel Hybrid Search (SQL Strategy 0 + BM25 + BGE-M3 Semantic) 
+        fused via Reciprocal Rank Fusion (RRF k=60).
         """
         import json
         import re
-        import sqlite3
-
-        # 1. Нормализация law_ids
+        import numpy as np
+        
+        # 1. Normalize law_ids
         normalized_law_ids = []
         if law_ids:
             try:
@@ -258,11 +545,10 @@ class CacheManager:
                 known_code = _LAW_ID_KNOWN.get(lid_norm)
                 if known_code:
                     normalized_law_ids.append(known_code.upper())
-                # Также добавим без суффикса _ для надежности
                 if known_code and known_code.endswith("_"):
                     normalized_law_ids.append(known_code[:-1].upper())
 
-        # Нормализация articles
+        # Normalize articles
         normalized_articles = []
         if articles:
             for art in articles:
@@ -270,180 +556,134 @@ class CacheManager:
                 if art_norm:
                     normalized_articles.append(art_norm)
 
-        # Вспомогательная функция для стемминга русских слов
-        def stem_russian_word(w: str) -> str:
-            if len(w) <= 4:
-                return w
-            # Сортируем окончания по убыванию длины для корректного сопоставления
-            endings = [
-                "ями", "ами", "ому", "ему", "ого", "его", "ыми", "ими", "ых", "их", "ею", "ою",
-                "ом", "ем", "ой", "ей", "ию", "ую", "яя", "ая", "ое", "ее", "ые", "ие", "ый", "ий", "ам", "ям", "ов", "ев", "ях", "ах",
-                "а", "я", "о", "е", "и", "ы", "у", "ю", "ь"
-            ]
-            for end in endings:
-                if w.endswith(end):
-                    # Убедимся, что после отсечения основы остается хотя бы 3 символа
-                    if len(w) - len(end) >= 3:
-                        return w[:-len(end)]
-            return w
-
-        # 2. Выделение слов
-        words = [w.strip().lower() for w in re.split(r'\s+', query_text) if len(w.strip()) > 2]
-        LEGAL_STOP_WORDS = {
-            "закон", "кодекс", "статья", "статье", "статьи", "республики", "казахстан",
-            "утратил", "силу", "вводится", "действие", "постановление", "правительства",
-            "республика", "закона", "кодекса", "об", "о", "и", "в", "на", "для", "рк"
-        }
-        filtered_words = [w for w in words if w not in LEGAL_STOP_WORDS]
-        if not filtered_words:
-            filtered_words = words
-
-        # Применяем стемминг к ключевым словам
-        stemmed_words = [stem_russian_word(w) for w in filtered_words]
-
-        chunks = []
-        seen_chunk_ids = set()
-
-        def add_rows(rows_to_add):
-            added_count = 0
-            for r in rows_to_add:
-                try:
-                    data = json.loads(r["chunk_json"])
-                    chunk = EvidenceChunk.model_validate(data)
-                    old_rank = chunk.legal_rank
-                    chunk = _heal_chunk_rank(chunk)
-                    if chunk.legal_rank != old_rank:
-                        try:
-                            with self._conn() as conn:
-                                conn.execute(
-                                    "UPDATE evidence_cache SET chunk_json = ? WHERE chunk_id = ?",
-                                    (chunk.model_dump_json(), chunk.chunk_id),
-                                )
-                        except Exception as ex:
-                            logger.warning(f"[Cache/search_local] Failed to update healed rank: {ex}")
-                    if chunk.chunk_id not in seen_chunk_ids:
-                        chunks.append(chunk)
-                        seen_chunk_ids.add(chunk.chunk_id)
-                        added_count += 1
-                except Exception as e:
-                    logger.warning(f"[Cache/search_local] Failed to parse row: {e}")
-            return added_count
-
+        # ----------------------------------------------------
+        # BRANCH A: Parallel Search 1 — Exact SQL Search (Strategy 0)
+        # ----------------------------------------------------
+        sql_candidates = []
         with self._conn() as conn:
-            # СТРАТЕГИЯ 0: Точный поиск по law_ids и конкретным номерам статей (если запрошены)
-            if normalized_law_ids and normalized_articles:
-                law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
-                art_conds = " OR ".join(["json_extract(chunk_json, '$.article') = ?" for _ in normalized_articles])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({art_conds}) LIMIT ?"
-                
-                params = []
-                for lid in normalized_law_ids:
-                    params.append(f"%{lid}%")
-                for art in normalized_articles:
-                    params.append(art)
-                params.append(limit)
-                
+            if normalized_law_ids:
+                if normalized_articles:
+                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                    art_conds = " OR ".join(["json_extract(chunk_json, '$.article') = ?" for _ in normalized_articles])
+                    sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({art_conds}) LIMIT ?"
+                    params = [f"%{lid}%" for lid in normalized_law_ids] + list(normalized_articles) + [limit * 2]
+                else:
+                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                    sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) LIMIT ?"
+                    params = [f"%{lid}%" for lid in normalized_law_ids] + [limit * 2]
                 try:
                     rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
+                    for r in rows:
+                        data = json.loads(r["chunk_json"])
+                        chunk = EvidenceChunk.model_validate(data)
+                        sql_candidates.append(chunk.chunk_id)
                 except sqlite3.OperationalError:
                     pass
 
-            if len(chunks) < limit and not normalized_law_ids and normalized_articles:
-                art_conds = " OR ".join(["json_extract(chunk_json, '$.article') = ?" for _ in normalized_articles])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({art_conds}) LIMIT ?"
-                params = list(normalized_articles) + [limit - len(chunks)]
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+        # ----------------------------------------------------
+        # BRANCH B: Parallel Search 2 — Lexical BM25 Search
+        # ----------------------------------------------------
+        bm25_candidates = []
+        query_tokens = self._tokenize_for_bm25(query_text)
+        
+        # Ensure BM25 index is lazy loaded
+        self._lazy_init_embeddings()
+        
+        if self._bm25_index and query_tokens:
+            try:
+                bm25_scores = self._bm25_index.get_scores(query_tokens)
+                top_indices = np.argsort(bm25_scores)[::-1][:limit * 3]
+                for idx in top_indices:
+                    if idx < len(self._bm25_tokens) and (set(query_tokens) & set(self._bm25_tokens[idx])):
+                        bm25_candidates.append(self._bm25_keys[idx])
+            except Exception as e:
+                logger.warning(f"[Cache/search_local] BM25 scoring failed: {e}")
 
-            # СТРАТЕГИЯ 1: Поиск по law_ids + ВСЕМ отфильтрованным словам (AND)
-            if normalized_law_ids and stemmed_words:
-                law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
-                word_conds = " AND ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
+        # ----------------------------------------------------
+        # BRANCH C: Parallel Search 3 — Semantic Vector Search (BGE-M3)
+        # ----------------------------------------------------
+        semantic_candidates = []
+        if self._embeddings_matrix.shape[0] > 0:
+            try:
+                # 1. Embed query
+                query_vector = self._embed_model.encode(
+                    query_text, 
+                    show_progress_bar=False, 
+                    normalize_embeddings=True
+                ).astype(np.float32)
                 
-                params = []
-                for lid in normalized_law_ids:
-                    params.append(f"%{lid}%")
-                for w in stemmed_words:
-                    params.extend([f"%{w}%", f"%{w}%"])
-                params.append(limit)
+                # 2. Vectorized Cosine Similarities calculation
+                similarities = np.dot(self._embeddings_matrix, query_vector)
                 
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+                # 3. Sort indices descending
+                top_indices = np.argsort(similarities)[::-1][:limit * 3]
+                for idx in top_indices:
+                    if similarities[idx] > 0.45:
+                        semantic_candidates.append(self._embeddings_keys[idx])
+            except Exception as e:
+                logger.error(f"[Cache/search_local] Semantic search failed: {e}")
 
-            # СТРАТЕГИЯ 2: Поиск по law_ids + ХОТЯ БЫ ОДНОМУ слову (OR)
-            if len(chunks) < limit and normalized_law_ids and stemmed_words:
-                law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
-                word_conds = " OR ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words[:3]])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
-                
-                params = []
-                for lid in normalized_law_ids:
-                    params.append(f"%{lid}%")
-                for w in stemmed_words[:3]:
-                    params.extend([f"%{w}%", f"%{w}%"])
-                params.append(limit - len(chunks))
-                
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+        # Law ID priority boost
+        law_id_boost = {}
+        if normalized_law_ids:
+            candidate_ids = set(sql_candidates + bm25_candidates + semantic_candidates)
+            for cid in candidate_ids:
+                chunk_obj = await self.get(cid)
+                if chunk_obj and chunk_obj.law_id:
+                    cid_law = chunk_obj.law_id.strip().upper()
+                    if any(lid in cid_law for lid in normalized_law_ids):
+                        law_id_boost[cid] = 5.0
 
-            # СТРАТЕГИЯ 3: Только по law_ids (если слова не совпали)
-            if len(chunks) < limit and normalized_law_ids:
-                law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) LIMIT ?"
-                params = [f"%{lid}%" for lid in normalized_law_ids] + [limit - len(chunks)]
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+        # ----------------------------------------------------
+        # Strict AND Boost
+        # ----------------------------------------------------
+        strict_and_boost = {}
+        query_set = set(query_tokens)
+        if query_set:
+            candidate_ids = set(sql_candidates + bm25_candidates + semantic_candidates)
+            for cid in candidate_ids:
+                chunk_obj = await self.get(cid)
+                if chunk_obj:
+                    chunk_tokens = set(self._tokenize_for_bm25((chunk_obj.content or "") + " " + (chunk_obj.source_title or "")))
+                    if query_set.issubset(chunk_tokens):
+                        strict_and_boost[cid] = 10.0
 
-            # СТРАТЕГИЯ 4: Поиск по всем отфильтрованным словам (AND) без привязки к law_ids
-            if len(chunks) < limit and stemmed_words:
-                word_conds = " AND ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words])
-                sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
-                
-                params = []
-                for w in stemmed_words:
-                    params.extend([f"%{w}%", f"%{w}%"])
-                params.append(limit - len(chunks))
-                
-                try:
-                    rows = conn.execute(sql, tuple(params)).fetchall()
-                    add_rows(rows)
-                except sqlite3.OperationalError:
-                    pass
+        # ----------------------------------------------------
+        # Reciprocal Rank Fusion (RRF k=60)
+        # ----------------------------------------------------
+        rrf_scores = {}
+        k = 60
+        
+        # SQL Exact Search gets very high priority
+        for rank, cid in enumerate(sql_candidates):
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.5 / (k + rank))
+            
+        for rank, cid in enumerate(bm25_candidates):
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k + rank))
+            
+        for rank, cid in enumerate(semantic_candidates):
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k + rank))
 
-            # СТРАТЕГИЯ 5: Поиск по любым словам (OR), исключая чисто числовые короткие запросы для исключения утечек
-            if len(chunks) < limit and stemmed_words:
-                safe_words = [w for w in stemmed_words[:3] if not w.isdigit() or len(w) > 3]
-                if safe_words:
-                    word_conds = " OR ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in safe_words])
-                    sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
-                    
-                    params = []
-                    for w in safe_words:
-                        params.extend([f"%{w}%", f"%{w}%"])
-                    params.append(limit - len(chunks))
-                    
-                    try:
-                        rows = conn.execute(sql, tuple(params)).fetchall()
-                        add_rows(rows)
-                    except sqlite3.OperationalError:
-                        pass
+        # Add strict AND boost
+        for cid, boost in strict_and_boost.items():
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + boost
 
-        logger.debug(f"[Cache] Local search query='{query_text}' law_ids={law_ids} found={len(chunks)} chunks")
-        return chunks
+        # Add law ID boost
+        for cid, boost in law_id_boost.items():
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + boost
+
+        # Sort combined chunk_ids by RRF score descending
+        sorted_rrf = sorted(rrf_scores.items(), key=lambda item: item[1], reverse=True)[:limit]
+        
+        # Load full EvidenceChunk objects for the winners
+        final_chunks = []
+        for cid, score in sorted_rrf:
+            chunk_obj = await self.get(cid)
+            if chunk_obj:
+                final_chunks.append(chunk_obj)
+
+        logger.debug(f"[Cache] Local parallel hybrid search query='{query_text}' found={len(final_chunks)} chunks via RRF")
+        return final_chunks
 
 
 

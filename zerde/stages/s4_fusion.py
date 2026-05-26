@@ -180,11 +180,8 @@ async def fuse_and_validate(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
     # 1. SHA256
     chunks = _dedup_by_hash(chunks)
 
-    # 2. Cosine Similarity (только если есть API ключ)
-    if settings.can_use_embeddings and settings.effective_embedding_key:
-        chunks = await _dedup_by_cosine(chunks, settings.cosine_similarity_threshold)
-    else:
-        logger.warning("[S4] Embedding key not available or not supported — skipping cosine dedup")
+    # 2. Cosine Similarity (prefer local BGE-M3, fallback to OpenAI if key is present)
+    chunks = await _dedup_by_cosine(chunks, settings.cosine_similarity_threshold)
 
     # 3. Конфликты
     chunks = _detect_conflicts(chunks, settings.hierarchy_conflict_rank_delta)
@@ -224,22 +221,38 @@ def _dedup_by_hash(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
 
 
 async def _dedup_by_cosine(chunks: list[EvidenceChunk], threshold: float) -> list[EvidenceChunk]:
-    """Семантическая дедупликация через OpenAI embeddings."""
-    settings = get_settings()
-    client = make_embedding_client(settings)
-    if not client:
-        return chunks
+    """Семантическая дедупликация через BGE-M3 (локально) или OpenAI embeddings."""
+    import asyncio
+    from zerde.utils.cache import CacheManager
 
     active = [c for c in chunks if not c.is_duplicate]
     if len(active) < 2:
         return chunks
 
-    logger.info(f"[S4/Cosine] Getting embeddings for {len(active)} chunks…")
+    logger.info(f"[S4/Cosine] Getting embeddings for {len(active)} chunks (preferring local BGE-M3)...")
 
+    embeddings = None
     try:
-        embeddings = await _get_embeddings_batched(client, active, settings.embedding_model)
+        cache = CacheManager()
+        # Use asyncio.to_thread to run sync embedding computation in a thread pool
+        embeddings = await asyncio.to_thread(cache.get_embeddings, active)
+        logger.info(f"[S4/Cosine] Generated {len(embeddings)} local BGE-M3 embeddings successfully.")
     except Exception as e:
-        logger.warning(f"[S4/Cosine] Embedding failed: {e}. Skipping cosine dedup.")
+        logger.warning(f"[S4/Cosine] Local BGE-M3 embeddings failed: {e}. Trying OpenAI fallback...")
+        
+        settings = get_settings()
+        client = make_embedding_client(settings)
+        if client:
+            try:
+                embeddings = await _get_embeddings_batched(client, active, settings.embedding_model)
+            except Exception as ex:
+                logger.warning(f"[S4/Cosine] OpenAI embedding failed: {ex}. Skipping cosine dedup.")
+                return chunks
+        else:
+            logger.warning("[S4/Cosine] OpenAI client not available. Skipping cosine dedup.")
+            return chunks
+
+    if not embeddings:
         return chunks
 
     # Сохраняем embeddings в чанки (exclude=True — не попадут в JSON)

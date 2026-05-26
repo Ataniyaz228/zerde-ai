@@ -29,6 +29,8 @@ dependencies = [
     # Dedup / NLP
     "numpy>=1.26.0",           # Cosine similarity
     "rank-bm25>=0.2.2",        # BM25 scoring (Auditor)
+    "sentence-transformers>=3.0.1", # Local Vector embeddings (BGE-M3)
+    "torch>=2.2.0",            # PyTorch backend for sentence-transformers
 
     # Math validation
     "sympy>=1.12",             # Arithmetic verification

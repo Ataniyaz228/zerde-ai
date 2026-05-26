@@ -25,7 +25,7 @@ from zerde.models import EvidenceChunk
 from zerde.utils.cache import CacheManager
 
 async def embed_existing():
-    print("🚀 Initializing CacheManager and loading all cached chunks...")
+    print("Initializing CacheManager and loading all cached chunks...")
     cache = CacheManager("zerde_cache.db")
     
     # 1. Query all chunks
@@ -46,10 +46,10 @@ async def embed_existing():
         return
         
     device_name = "GPU (CUDA)" if os.getenv("ZERDE_USE_CUDA") == "1" else "CPU (limited to 2 threads)"
-    print(f"\n🧠 Generating BGE-M3 vector embeddings for all chunks on {device_name}...")
+    print(f"\nGenerating BGE-M3 vector embeddings for all chunks on {device_name}...")
     
     is_cuda = os.getenv("ZERDE_USE_CUDA") == "1"
-    chunk_size = 1000 if is_cuda else 50
+    chunk_size = 100 if is_cuda else 50
     sleep_time = 0.1 if is_cuda else 1.0
     
     loop = asyncio.get_running_loop()
@@ -64,7 +64,7 @@ async def embed_existing():
         gc.collect()
         await asyncio.sleep(sleep_time) # Rest between batches (minimal for GPU, longer for CPU)
         
-    print("\n🎉 All chunks successfully embedded and stored in database!")
+    print("\nAll chunks successfully embedded and stored in database!")
     
     # Verify
     with cache._conn() as conn:

@@ -30,6 +30,7 @@ from zerde.stages.s2_planner import build_query_plan
 from zerde.stages.s3_gather import gather_evidence
 from zerde.stages.s4_fusion import fuse_and_validate
 from zerde.stages.s5_5_analyst import run_policy_analyst
+from zerde.stages.s5_5_verifier import verify_contradictions
 from zerde.stages.s5_analyst import run_auditor
 from zerde.stages.s6_auditor import audit_analysis
 from zerde.stages.s7_render import render_report
@@ -157,6 +158,14 @@ async def run_pipeline(
         f"verdicts={len(analysis.verdicts)} contradicted={contradicted} "
         f"structural={len(claims.structural_claims)}"
     )
+
+    # ─── ЭТАП 5.2: Contradiction Verifier (Anti-Hallucination Layer) ──────
+    t5_2 = time.perf_counter()
+    logger.info("[Pipeline] ► Stage 5.2: Contradiction Verifier")
+    analysis = await verify_contradictions(analysis, active_chunks)
+    # Recalculate contradicted count after verification
+    contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
+    logger.info(f"[Pipeline] ✓ Stage 5.2 done ({time.perf_counter() - t5_2:.2f}s) — remaining contradicted={contradicted}")
 
     # ─── ЭТАП 5.5 + 6: Policy Analyst и BM25 Audit (ПАРАЛЛЕЛЬНО) ──────
     t56 = time.perf_counter()

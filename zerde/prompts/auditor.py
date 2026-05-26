@@ -47,8 +47,7 @@ _AUDITOR_USER_TEMPLATE = """
 Ты — аудитор юридических документов РК. Проверь каждое утверждение документа против корпуса доказательств.
 
 ## ⚠️ РЕЖИМ: АУДИТ, НЕ ПЕРЕСКАЗ
-Твоя задача — НАЙТИ ОШИБКИ, а не описать что говорит корпус.
-Для каждого claim дай вердикт: CONFIRMED, CONTRADICTED, или UNVERIFIED.
+Ты должен строго выявить любые несоответствия действующему законодательству РК. 
 Оставить claim без вердикта ЗАПРЕЩЕНО.
 
 ## Анализируемый документ (проект):
@@ -111,6 +110,11 @@ __CORPUS_TEXT__
 - Числа в корпусе явно расходятся с claim → **CONTRADICTED**
 - Внутреннее противоречие документа (п.1 vs п.2) → **CONTRADICTED**
 
+⛔ **ПРАВИЛО ЦИТИРОВАНИЯ (CITE-OR-ABSTAIN):**
+- Вердикт **CONTRADICTED** допускается **ТОЛЬКО** если ты приводишь **ТОЧНУЮ, дословную цитату** из корпуса доказательств (в `contradiction_detail`) с указанием его `source_ids`.
+- Если ты не можешь привести дословную цитату из текста источника, которая опровергает claim — ты **ОБЯЗАН** поставить **UNVERIFIED**, а не CONTRADICTED.
+- Галлюцинировать противоречия и ставить CONTRADICTED без точной цитаты — категорически запрещено!
+
 ### Общие правила:
 - НЕ используй знания вне корпуса для вынесения вердикта CONFIRMED
 - Используй знания вне корпуса ТОЛЬКО для пометки CONTRADICTED (ты знаешь что 87-IV не существует, ст.207 УК — это лжепредпринимательство, МРП 2025 = 3932 тг)
@@ -143,12 +147,10 @@ def build_auditor_prompt(
     Returns:
         Готовый промпт-строка.
     """
-    # 1. Корпус — приоритет: конфликтные → совпадение языка → rank
-    # Определяем язык документа (ru/kz) для приоритизации
+    # 1. Корпус — приоритет: язык документа
     doc_lang_is_ru = not doc_text or any(c in doc_text[:500] for c in "абвгдежзиклмнопрстуфхцчшщ")
 
     def _lang_penalty(c: EvidenceChunk) -> int:
-        """0 = язык совпадает с документом, 1 = не совпадает."""
         url = (c.source_url or "").lower()
         is_kaz = "/kaz/" in url or "/kk/" in url
         if doc_lang_is_ru:
@@ -198,6 +200,7 @@ def build_auditor_prompt(
         doc_excerpt = "(текст документа не предоставлен)"
 
     # Reference data — детерминированные факты для LLM
+    from zerde.reference_data import build_reference_corpus_text
     ref_text = build_reference_corpus_text()
 
     # .replace() вместо str.format(): JSON-схема и юр.тексты содержат {} скобки
@@ -217,10 +220,7 @@ def build_auditor_prompt(
 def _format_chunk(chunk: EvidenceChunk) -> str:
     """
     ID-формат чанка: [AD|law_id|article|status] или [WB|tier|domain|status]
-    Экономия: ~32 токена метаданных на чанк vs полный Markdown-формат.
-    ID сохраняется как SOURCE_ID для цитирования в verdicts.
     """
-    # Определяем источник и тип
     if chunk.law_id:
         src_type = "AD"  # Adilet
         law_part = chunk.law_id

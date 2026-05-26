@@ -1,69 +1,20 @@
-"""
-SQLite Cache Manager
-Кэш для чанков Адилет/Web и LLM-ответов (токен-экономия).
-Ключ чанков: SHA256 контента. Ключ LLM: SHA256(model:prompt).
-"""
-
-from __future__ import annotations
-
-import os
-import sys
-
-# Crucial CPU thread limits set at the absolute top BEFORE any numpy/torch imports
-os.environ["OMP_NUM_THREADS"] = "2"
-os.environ["MKL_NUM_THREADS"] = "2"
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
-os.environ["NUMEXPR_NUM_THREADS"] = "2"
-
-# Force SentenceTransformers to CPU to completely bypass GPU VRAM crashes on 6GB VRAM GPUs (like RTX 4050),
-# unless ZERDE_USE_CUDA=1 is explicitly set.
-if os.getenv("ZERDE_USE_CUDA") != "1":
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
-import asyncio
-import hashlib
 import json
 import logging
 import sqlite3
-from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, UTC
 from pathlib import Path
+from typing import Generator
 
-_db_lock = asyncio.Lock()
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import torch
 
-from zerde.models import EvidenceChunk
+from zerde.models import EvidenceChunk, LegalRank, WebTier
 
 logger = logging.getLogger(__name__)
 
-
-def _heal_chunk_rank(chunk: EvidenceChunk) -> EvidenceChunk:
-    """Dynamically re-evaluates the legal_rank of a cached chunk to prevent outdated ranks."""
-    if not chunk.source_url:
-        return chunk
-    try:
-        from zerde.models import WebTier
-        from zerde.utils.legal_scorer import infer_legal_rank_from_web_content
-        tier = chunk.web_tier or WebTier.TIER_2
-        new_rank, conf, reason = infer_legal_rank_from_web_content(
-            tier=tier,
-            title=chunk.source_title or "",
-            content=chunk.content or "",
-            url=chunk.source_url,
-        )
-        if chunk.legal_rank != new_rank:
-            logger.info(
-                f"[Cache/healing] Healed legal_rank of chunk {chunk.chunk_id[:12]}… "
-                f"from {chunk.legal_rank} to {new_rank} (URL: {chunk.source_url})"
-            )
-            chunk.legal_rank = new_rank
-            chunk.inferred_rank = new_rank
-            chunk.inferred_rank_confidence = conf
-            chunk.inference_reason = reason
-    except Exception as e:
-        logger.warning(f"[Cache/healing] Failed to heal chunk {chunk.chunk_id[:12]}…: {e}")
-    return chunk
+_db_lock = asyncio.Lock()
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS evidence_cache (
@@ -74,11 +25,9 @@ CREATE TABLE IF NOT EXISTS evidence_cache (
     cached_at    TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_content_hash ON evidence_cache(content_hash);
-
 CREATE TABLE IF NOT EXISTS evidence_embeddings (
-    chunk_id   TEXT PRIMARY KEY,
-    embedding  BLOB NOT NULL,
+    chunk_id  TEXT PRIMARY KEY,
+    embedding BLOB NOT NULL,
     FOREIGN KEY(chunk_id) REFERENCES evidence_cache(chunk_id) ON DELETE CASCADE
 );
 
@@ -105,6 +54,9 @@ class CacheManager:
         env_db_path = os.getenv("ZERDE_CACHE_DB")
         self.db_path = Path(env_db_path if env_db_path else db_path)
         self._init_db()
+        self._morph = None
+        self._reranker = None
+        self.deserialization_failures = 0
 
     def _init_db(self) -> None:
         """Инициализирует БД и создаёт таблицы если не существуют."""
@@ -163,7 +115,10 @@ class CacheManager:
             logger.debug(f"[Cache] HIT: {chunk_id[:12]}…")
             return chunk
         except Exception as e:
-            logger.warning(f"[Cache] Failed to deserialize chunk {chunk_id[:12]}…: {e}")
+            self.deserialization_failures += 1
+            logger.error(
+                f"[Cache] Failed to deserialize chunk {chunk_id[:12]}… (total failures: {self.deserialization_failures}): {e}. Potential DB corruption!"
+            )
             return None
 
     async def put(self, chunk: EvidenceChunk) -> None:
@@ -220,49 +175,77 @@ class CacheManager:
                         ),
                     )
                     stored += result.rowcount
-
-        logger.info(f"[Cache] Batch stored {stored}/{len(chunks)} chunks")
         if stored > 0:
+            logger.info(f"[Cache] Batch stored {stored} new chunks.")
             self._sync_new_chunks(chunks)
         return stored
 
-    async def has(self, chunk_id: str) -> bool:
-        """Быстрая проверка наличия чанка в кэше."""
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM evidence_cache WHERE chunk_id = ? LIMIT 1",
-                (chunk_id,),
-            ).fetchone()
-        return row is not None
+    def embed_chunks(self, chunks: list[EvidenceChunk]) -> None:
+        """
+        Pre-computes and stores vector embeddings for EvidenceChunks in batch.
+        Uses SentenceTransformer BGE-M3 model on configured hardware (GPU/CPU).
+        
+        Args:
+            chunks: List of EvidenceChunk objects to embed.
+        """
+        if not chunks:
+            return
 
-    async def stats(self) -> dict:
-        """Возвращает статистику кэша."""
-        with self._conn() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM evidence_cache").fetchone()[0]
-            db_size = self.db_path.stat().st_size if self.db_path.exists() else 0
+        self._lazy_init_embeddings()
+        import numpy as np
 
-        return {
-            "total_chunks": total,
-            "db_size_bytes": db_size,
-            "db_path": str(self.db_path),
-        }
+        chunk_ids = [c.chunk_id for c in chunks]
+        # Concat content and title to maximize context retrieval representation
+        texts = [(c.content or "") + " " + (c.source_title or "") for c in chunks]
 
-    async def clear(self) -> int:
-        """Очищает весь кэш. Используй с осторожностью."""
-        async with _db_lock:
+        logger.info(f"[Cache/Vector] Running BGE-M3 batch embedding for {len(chunks)} chunks...")
+        try:
+            embeddings = self._embed_model.encode(
+                texts,
+                batch_size=32,
+                show_progress_bar=True,
+                normalize_embeddings=True
+            )
+            embeddings = np.array(embeddings, dtype=np.float32)
+
+            # Store in SQLite database
             with self._conn() as conn:
-                result = conn.execute("DELETE FROM evidence_cache")
-                deleted = result.rowcount
-        logger.warning(f"[Cache] CLEARED: {deleted} chunks deleted")
-        return deleted
+                for cid, emb in zip(chunk_ids, embeddings):
+                    conn.execute(
+                        "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
+                        (cid, emb.tobytes()),
+                    )
+            logger.info(f"[Cache/Vector] Stored {len(chunks)} embeddings in DB.")
+        except Exception as e:
+            logger.error(f"[Cache/Vector] Batch embedding generation failed: {e}")
+            raise
 
-    def _stem_russian_word(self, w: str) -> str:
+    def _stem_word(self, w: str) -> str:
+        # Lazy load pymorphy3 analyzer
+        if self._morph is None:
+            try:
+                import pymorphy3
+                self._morph = pymorphy3.MorphAnalyzer()
+            except ImportError:
+                pass
+
+        # Check if contains Russian letters
+        if self._morph is not None and any(c in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for c in w):
+            parsed = self._morph.parse(w)
+            if parsed:
+                return str(parsed[0].normal_form)
+
         if len(w) <= 4:
             return w
         endings = [
             "ями", "ами", "ому", "ему", "ого", "его", "ыми", "ими", "ых", "их", "ею", "ою",
             "ом", "ем", "ой", "ей", "ию", "ую", "яя", "ая", "ое", "ее", "ые", "ие", "ия", "ый", "ий", "ам", "ям", "ов", "ев", "ях", "ах",
-            "а", "я", "о", "e", "и", "ы", "у", "ю", "ь"
+            "а", "я", "о", "е", "и", "ы", "у", "ю", "ь",
+            # Казахские агглютинативные окончания
+            "ға", "ге", "ғе", "да", "де", "на", "ні", "ның", "нің",
+            "ды", "ді", "ты", "ті", "лар", "лер", "дар", "дер",
+            "мен", "сен", "оны", "оні", "біз", "сіз",
+            "ған", "ген", "ке", "қа", "ші", "шы",
         ]
         for end in endings:
             if w.endswith(end):
@@ -277,12 +260,17 @@ class CacheManager:
         text_clean = re.sub(r"[^\w\s\-]", " ", text_lower)
         words = [w.strip() for w in text_clean.split() if len(w.strip()) > 2]
         LEGAL_STOP_WORDS = {
+            # Русские
             "закон", "кодекс", "статья", "статье", "статьи", "республики", "казахстан",
             "утратил", "силу", "вводится", "действие", "постановление", "правительства",
-            "республика", "закона", "кодекса", "об", "о", "и", "в", "на", "для", "рк"
+            "республика", "закона", "кодекса", "об", "о", "и", "в", "на", "для", "рк",
+            # Казахские
+            "заң", "кодексі", "бап", "баптың", "туралы", "және", "қазақстан",
+            "республикасы", "заңы", "үкіметі", "заңда", "үшін", "жәнінде",
+            "болады", "емес", "және", "немесе", "қорған", "рәсімі",
         }
-        filtered = [self._stem_russian_word(w) for w in words if w not in LEGAL_STOP_WORDS]
-        return filtered if filtered else [self._stem_russian_word(w) for w in words]
+        filtered = [self._stem_word(w) for w in words if w not in LEGAL_STOP_WORDS]
+        return filtered if filtered else [self._stem_word(w) for w in words]
 
     def _lazy_init_embeddings(self) -> None:
         """Lazy loads BGE-M3 model and pre-loads all embeddings/BM25 index in memory."""
@@ -296,62 +284,46 @@ class CacheManager:
         with self._init_lock:
             if getattr(self, "_embeddings_loaded", False):
                 return
-
+            
             logger.info("[Cache/Vector] Initializing BGE-M3 model and pre-loading embeddings...")
-
-            import numpy as np
-
-            # 1. Lazy load SentenceTransformers
-            try:
-                import torch
-                torch.set_num_threads(2)
-
-                from sentence_transformers import SentenceTransformer
-            except ImportError as e:
-                logger.error(f"[Cache/Vector] Failed to import sentence-transformers/torch: {e}")
-                raise e
-
-            # Use GPU only if ZERDE_USE_CUDA=1 and CUDA is available
-            use_cuda = os.getenv("ZERDE_USE_CUDA") == "1"
-            device = "cuda" if (use_cuda and torch.cuda.is_available()) else "cpu"
-            logger.info(f"[Cache/Vector] Using device: {device} (Thread limit: {torch.get_num_threads()})")
-
-            # Load BGE-M3 in FP16 if on CUDA to save VRAM, else FP32 on CPU
+            device = "cuda" if (torch.cuda.is_available() and os.getenv("ZERDE_USE_CUDA") == "1") else "cpu"
+            logger.info(f"[Cache/Vector] UsingSentenceTransformer device: {device}")
+            
             model_kwargs = {}
             if device == "cuda":
                 model_kwargs["torch_dtype"] = torch.float16
-
+            
             self._embed_model = SentenceTransformer(
                 "BAAI/bge-m3",
                 device=device,
                 model_kwargs=model_kwargs if model_kwargs else None
             )
             self._device_type = device
-            self._embed_model.max_seq_length = 512
-
+            self._embed_model.max_seq_length = 2048  # 512 truncated most legal chunks; 2048 safe on 6GB VRAM
+            
             # 2. Pre-load all embeddings from SQLite
             self._embeddings_keys = []
             embeddings_list = []
-
+            
             with self._conn() as conn:
                 rows = conn.execute("SELECT chunk_id, embedding FROM evidence_embeddings").fetchall()
                 for row in rows:
                     self._embeddings_keys.append(row["chunk_id"])
                     vec = np.frombuffer(row["embedding"], dtype=np.float32)
                     embeddings_list.append(vec)
-
+                    
             if embeddings_list:
                 self._embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
                 self._embeddings_norms = np.linalg.norm(self._embeddings_matrix, axis=1)
             else:
                 self._embeddings_matrix = np.empty((0, 1024), dtype=np.float32)
                 self._embeddings_norms = np.empty((0,), dtype=np.float32)
-
+                
             # 3. Pre-load and construct BM25 index for all cached chunks
             logger.info("[Cache/Vector] Constructing BM25 index for all chunks...")
             self._bm25_keys = []
             tokenized_corpus = []
-
+            
             with self._conn() as conn:
                 rows = conn.execute("SELECT chunk_id, chunk_json FROM evidence_cache").fetchall()
                 for row in rows:
@@ -365,7 +337,7 @@ class CacheManager:
                             tokenized_corpus.append(tokens)
                     except Exception as ex:
                         pass
-
+                        
             if tokenized_corpus:
                 from rank_bm25 import BM25Okapi
                 self._bm25_index = BM25Okapi(tokenized_corpus)
@@ -373,7 +345,7 @@ class CacheManager:
             else:
                 self._bm25_index = None
                 self._bm25_tokens = []
-
+                
             self._embeddings_loaded = True
             logger.info(f"[Cache/Vector] Initialized successfully. Loaded {len(self._embeddings_keys)} embeddings and {len(self._bm25_keys)} BM25 documents.")
 
@@ -383,10 +355,10 @@ class CacheManager:
             return
 
         import numpy as np
-
+        
         new_chunk_ids = []
         new_texts = []
-
+        
         for c in chunks:
             if c.chunk_id not in self._embeddings_keys:
                 new_chunk_ids.append(c.chunk_id)
@@ -400,13 +372,13 @@ class CacheManager:
         try:
             # Generate normalized BGE-M3 embeddings
             embeddings = self._embed_model.encode(
-                new_texts,
-                batch_size=8,
-                show_progress_bar=False,
+                new_texts, 
+                batch_size=8, 
+                show_progress_bar=False, 
                 normalize_embeddings=True
             )
             embeddings = np.array(embeddings, dtype=np.float32)
-
+            
             # Store in SQLite evidence_embeddings
             with self._conn() as conn:
                 for cid, emb in zip(new_chunk_ids, embeddings):
@@ -414,7 +386,7 @@ class CacheManager:
                         "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
                         (cid, emb.tobytes()),
                     )
-
+            
             # Append to in-memory matrix
             self._embeddings_keys.extend(new_chunk_ids)
             if self._embeddings_matrix.shape[0] == 0:
@@ -423,130 +395,55 @@ class CacheManager:
                 self._embeddings_matrix = np.vstack([self._embeddings_matrix, embeddings])
             self._embeddings_norms = np.linalg.norm(self._embeddings_matrix, axis=1)
 
-            # Rebuild BM25 index
-            logger.info("[Cache/Vector] Rebuilding in-memory BM25 index...")
-            tokenized_corpus = []
-            self._bm25_keys = []
-            with self._conn() as conn:
-                rows = conn.execute("SELECT chunk_id, chunk_json FROM evidence_cache").fetchall()
-                for row in rows:
-                    try:
-                        data = json.loads(row["chunk_json"])
-                        content = data.get("content", "")
-                        title = data.get("source_title", "")
-                        tokens = self._tokenize_for_bm25(content + " " + title)
-                        if tokens:
-                            self._bm25_keys.append(row["chunk_id"])
-                            tokenized_corpus.append(tokens)
-                    except Exception:
-                        pass
-
-            if tokenized_corpus:
+            # Sync in-memory BM25 index dynamically
+            for c in chunks:
+                tokens = self._tokenize_for_bm25((c.content or "") + " " + (c.source_title or ""))
+                if tokens:
+                    self._bm25_keys.append(c.chunk_id)
+                    self._bm25_tokens.append(tokens)
+            
+            if self._bm25_tokens:
                 from rank_bm25 import BM25Okapi
-                self._bm25_index = BM25Okapi(tokenized_corpus)
-                self._bm25_tokens = tokenized_corpus
-
+                self._bm25_index = BM25Okapi(self._bm25_tokens)
+                
+            logger.info(f"[Cache/Vector] Dynamic sync complete. New active keys count: {len(self._embeddings_keys)}")
         except Exception as e:
-            logger.error(f"[Cache/Vector] Failed to dynamically sync new chunks: {e}")
+            logger.error(f"[Cache/Vector] Dynamic sync failed: {e}")
 
-    def embed_chunks(self, chunks: list[EvidenceChunk]) -> None:
-        """Pre-computes and stores embeddings for a list of chunks in SQLite. Optimized for RTX 4050."""
-        if not chunks:
+    def _lazy_init_reranker(self) -> None:
+        """Lazy loads the BAAI/bge-reranker-v2-m3 Cross-Encoder model in memory."""
+        if getattr(self, "_reranker_loaded", False):
             return
 
-        import numpy as np
-        self._lazy_init_embeddings()
+        import threading
+        if not hasattr(self, "_reranker_lock"):
+            self._reranker_lock = threading.Lock()
 
-        logger.info(f"[Cache/Vector] Encoding {len(chunks)} chunks in batches of 8 using BGE-M3...")
-        texts = [(c.content or "") + " " + (c.source_title or "") for c in chunks]
+        with self._reranker_lock:
+            if getattr(self, "_reranker_loaded", False):
+                return
 
-        try:
-            embeddings = self._embed_model.encode(
-                texts,
-                batch_size=8,
-                show_progress_bar=True,
-                normalize_embeddings=True
-            )
-            embeddings = np.array(embeddings, dtype=np.float32)
-            if "cuda" in self._device_type:
-                try:
-                    import torch
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
+            logger.info("[Cache/Reranker] Initializing BAAI/bge-reranker-v2-m3 cross-encoder model...")
+            device = "cuda" if (torch.cuda.is_available() and os.getenv("ZERDE_USE_CUDA") == "1") else "cpu"
+            logger.info(f"[Cache/Reranker] Using Cross-Encoder device: {device}")
 
-            logger.info(f"[Cache/Vector] Storing {len(chunks)} embeddings in SQLite...")
-            with self._conn() as conn:
-                for chunk, emb in zip(chunks, embeddings):
-                    conn.execute(
-                        "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
-                        (chunk.chunk_id, emb.tobytes()),
-                    )
-            logger.info("[Cache/Vector] Finished storing embeddings successfully.")
+            try:
+                from sentence_transformers import CrossEncoder
+                model_kwargs = {}
+                if device == "cuda":
+                    model_kwargs["torch_dtype"] = torch.float16
 
-            # If loaded, sync in-memory matrix as well
-            if getattr(self, "_embeddings_loaded", False):
-                self._sync_new_chunks(chunks)
-        except Exception as e:
-            logger.error(f"[Cache/Vector] Failed to generate/store embeddings: {e}")
-            raise e
-
-    def get_embeddings(self, chunks: list[EvidenceChunk]) -> list[list[float]]:
-        """Retrieves cached embeddings from SQLite or computes them locally via BGE-M3."""
-        import numpy as np
-
-        # Check cache first
-        chunk_ids = [c.chunk_id for c in chunks]
-        embeddings_map = {}
-
-        with self._conn() as conn:
-            # Batch queries by 999 (SQLite limit)
-            for idx in range(0, len(chunk_ids), 999):
-                batch_ids = chunk_ids[idx:idx+999]
-                placeholders = ",".join(["?"] * len(batch_ids))
-                rows = conn.execute(
-                    f"SELECT chunk_id, embedding FROM evidence_embeddings WHERE chunk_id IN ({placeholders})",
-                    tuple(batch_ids)
-                ).fetchall()
-                for row in rows:
-                    vec = np.frombuffer(row["embedding"], dtype=np.float32)
-                    embeddings_map[row["chunk_id"]] = vec.tolist()
-
-        # Identify missing chunks
-        missing_chunks = [c for c in chunks if c.chunk_id not in embeddings_map]
-
-        if missing_chunks:
-            logger.info(f"[Cache/Vector] Computing embeddings for {len(missing_chunks)} chunks using BGE-M3...")
-            self._lazy_init_embeddings()
-            texts = [(c.content or "") + " " + (c.source_title or "") for c in missing_chunks]
-            computed = self._embed_model.encode(
-                texts,
-                batch_size=8,
-                show_progress_bar=False,
-                normalize_embeddings=True
-            )
-            if "cuda" in self._device_type:
-                try:
-                    import torch
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
-
-            # Store in DB and populate map
-            with self._conn() as conn:
-                for chunk, emb in zip(missing_chunks, computed):
-                    emb_float32 = emb.astype(np.float32)
-                    conn.execute(
-                        "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
-                        (chunk.chunk_id, emb_float32.tobytes()),
-                    )
-                    embeddings_map[chunk.chunk_id] = emb_float32.tolist()
-
-            # Update RAM representation if initialized
-            if getattr(self, "_embeddings_loaded", False):
-                self._sync_new_chunks(missing_chunks)
-        # Return in original order
-        return [embeddings_map[c.chunk_id] for c in chunks]
+                self._reranker = CrossEncoder(
+                    "BAAI/bge-reranker-v2-m3",
+                    device=device,
+                    automodel_args=model_kwargs if model_kwargs else None
+                )
+                self._reranker_loaded = True
+                logger.info("[Cache/Reranker] Cross-Encoder initialized successfully!")
+            except Exception as e:
+                logger.error(f"[Cache/Reranker] Cross-Encoder initialization failed: {e}")
+                self._reranker = None
+                self._reranker_loaded = False
 
     async def search_local(
         self,
@@ -556,8 +453,8 @@ class CacheManager:
         limit: int = 10,
     ) -> list[EvidenceChunk]:
         """
-        Parallel Hybrid Search (SQL Strategy 0 + BM25 + BGE-M3 Semantic)
-        fused via Reciprocal Rank Fusion (RRF k=60).
+        Parallel Hybrid Search (SQL Strategy 0 + BM25 + BGE-M3 Semantic) 
+        fused via Weighted Linear Combination (WLC) and reranked using BAAI/bge-reranker-v2-m3.
         """
         import json
         import re
@@ -597,11 +494,11 @@ class CacheManager:
                     law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
                     art_conds = " OR ".join(["json_extract(chunk_json, '$.article') = ?" for _ in normalized_articles])
                     sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({art_conds}) LIMIT ?"
-                    params = [f"%{lid}%" for lid in normalized_law_ids] + list(normalized_articles) + [limit * 2]
+                    params = [f"%{lid}%" for lid in normalized_law_ids] + list(normalized_articles) + [limit * 3]
                 else:
                     law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
                     sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) LIMIT ?"
-                    params = [f"%{lid}%" for lid in normalized_law_ids] + [limit * 2]
+                    params = [f"%{lid}%" for lid in normalized_law_ids] + [limit * 3]
                 try:
                     rows = conn.execute(sql, tuple(params)).fetchall()
                     for r in rows:
@@ -615,6 +512,7 @@ class CacheManager:
         # BRANCH B: Parallel Search 2 — Lexical BM25 Search
         # ----------------------------------------------------
         bm25_candidates = []
+        bm25_raw_scores = {}
         query_tokens = self._tokenize_for_bm25(query_text)
 
         # Ensure BM25 index is lazy loaded
@@ -623,10 +521,11 @@ class CacheManager:
         if self._bm25_index and query_tokens:
             try:
                 bm25_scores = self._bm25_index.get_scores(query_tokens)
-                top_indices = np.argsort(bm25_scores)[::-1][:limit * 3]
-                for idx in top_indices:
-                    if idx < len(self._bm25_tokens) and (set(query_tokens) & set(self._bm25_tokens[idx])):
-                        bm25_candidates.append(self._bm25_keys[idx])
+                for idx, score in enumerate(bm25_scores):
+                    cid = self._bm25_keys[idx]
+                    if set(query_tokens) & set(self._bm25_tokens[idx]):
+                        bm25_raw_scores[cid] = float(score)
+                bm25_candidates = sorted(bm25_raw_scores.keys(), key=lambda k: bm25_raw_scores[k], reverse=True)[:limit * 3]
             except Exception as e:
                 logger.warning(f"[Cache/search_local] BM25 scoring failed: {e}")
 
@@ -634,115 +533,136 @@ class CacheManager:
         # BRANCH C: Parallel Search 3 — Semantic Vector Search (BGE-M3)
         # ----------------------------------------------------
         semantic_candidates = []
+        semantic_raw_scores = {}
         if self._embeddings_matrix.shape[0] > 0:
             try:
                 # 1. Embed query
                 query_vector = self._embed_model.encode(
-                    query_text,
-                    show_progress_bar=False,
+                    query_text, 
+                    show_progress_bar=False, 
                     normalize_embeddings=True
                 ).astype(np.float32)
 
                 # 2. Vectorized Cosine Similarities calculation
                 similarities = np.dot(self._embeddings_matrix, query_vector)
 
-                # 3. Sort indices descending
-                top_indices = np.argsort(similarities)[::-1][:limit * 3]
-                for idx in top_indices:
-                    if similarities[idx] > 0.45:
-                        semantic_candidates.append(self._embeddings_keys[idx])
+                # 3. Collect candidates above cosine threshold
+                for idx, score in enumerate(similarities):
+                    cid = self._embeddings_keys[idx]
+                    if score > 0.35:  # 0.45 was too strict for cross-lingual KK/RU queries
+                        semantic_raw_scores[cid] = float(score)
+                semantic_candidates = sorted(semantic_raw_scores.keys(), key=lambda k: semantic_raw_scores[k], reverse=True)[:limit * 3]
             except Exception as e:
                 logger.error(f"[Cache/search_local] Semantic search failed: {e}")
 
-        # Law ID priority boost
-        law_id_boost = {}
-        if normalized_law_ids:
-            candidate_ids = set(sql_candidates + bm25_candidates + semantic_candidates)
-            for cid in candidate_ids:
-                chunk_obj = await self.get(cid)
-                if chunk_obj and chunk_obj.law_id:
-                    cid_law = chunk_obj.law_id.strip().upper()
-                    if any(lid in cid_law for lid in normalized_law_ids):
-                        law_id_boost[cid] = 5.0
-
         # ----------------------------------------------------
-        # Strict AND Boost
+        # WLC Score Fusion
         # ----------------------------------------------------
-        strict_and_boost = {}
-        query_set = set(query_tokens)
-        if query_set:
-            candidate_ids = set(sql_candidates + bm25_candidates + semantic_candidates)
-            for cid in candidate_ids:
-                chunk_obj = await self.get(cid)
-                if chunk_obj:
-                    chunk_tokens = set(self._tokenize_for_bm25((chunk_obj.content or "") + " " + (chunk_obj.source_title or "")))
-                    if query_set.issubset(chunk_tokens):
-                        strict_and_boost[cid] = 10.0
+        candidate_ids = set(sql_candidates + bm25_candidates + semantic_candidates)
+        if not candidate_ids:
+            return []
 
-        # ----------------------------------------------------
-        # Reciprocal Rank Fusion (RRF k=60)
-        # ----------------------------------------------------
-        rrf_scores = {}
-        k = 60
+        # MinMax normalize BM25 scores
+        bm25_vals = list(bm25_raw_scores.values())
+        if bm25_vals:
+            min_bm25 = min(bm25_vals)
+            max_bm25 = max(bm25_vals)
+            bm25_range = max_bm25 - min_bm25
+        else:
+            min_bm25, bm25_range = 0.0, 1.0
 
-        # SQL Exact Search gets very high priority
-        for rank, cid in enumerate(sql_candidates):
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.5 / (k + rank))
+        # MinMax normalize Semantic scores
+        semantic_vals = list(semantic_raw_scores.values())
+        if semantic_vals:
+            min_sem = min(semantic_vals)
+            max_sem = max(semantic_vals)
+            sem_range = max_sem - min_sem
+        else:
+            min_sem, sem_range = 0.0, 1.0
 
-        for rank, cid in enumerate(bm25_candidates):
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k + rank))
+        # Compute combined WLC score for each candidate
+        wlc_scores = {}
+        for cid in candidate_ids:
+            # 1. SQL match score (binary 0 or 1)
+            sql_score = 1.0 if cid in sql_candidates else 0.0
 
-        for rank, cid in enumerate(semantic_candidates):
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k + rank))
+            # 2. BM25 score normalized
+            bm25_raw = bm25_raw_scores.get(cid, 0.0)
+            bm25_norm = (bm25_raw - min_bm25) / bm25_range if bm25_range > 0 else 0.0
+            if bm25_raw <= 0:
+                bm25_norm = 0.0
 
-        # Add strict AND boost
-        for cid, boost in strict_and_boost.items():
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + boost
+            # 3. Semantic score normalized
+            sem_raw = semantic_raw_scores.get(cid, 0.0)
+            sem_norm = (sem_raw - min_sem) / sem_range if sem_range > 0 else 0.0
+            if sem_raw <= 0.35:
+                sem_norm = 0.0
 
-        # Add law ID boost
-        for cid, boost in law_id_boost.items():
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + boost
+            # Weighted Linear Combination: 35% Semantic, 50% BM25, 15% SQL match (Calibrated weights)
+            wlc_scores[cid] = 0.35 * sem_norm + 0.50 * bm25_norm + 0.15 * sql_score
 
-        # Sort combined chunk_ids by RRF score descending
-        sorted_rrf = sorted(rrf_scores.items(), key=lambda item: item[1], reverse=True)[:limit]
+        # Sort combined chunk_ids by WLC score descending and take top 30
+        sorted_wlc = sorted(wlc_scores.items(), key=lambda item: item[1], reverse=True)[:30]
 
         # Load full EvidenceChunk objects for the winners
-        final_chunks = []
-        for cid, score in sorted_rrf:
+        top_candidates = []
+        for cid, score in sorted_wlc:
             chunk_obj = await self.get(cid)
             if chunk_obj:
-                final_chunks.append(chunk_obj)
+                top_candidates.append(chunk_obj)
 
-        logger.debug(f"[Cache] Local parallel hybrid search query='{query_text}' found={len(final_chunks)} chunks via RRF")
+        # ----------------------------------------------------
+        # Cross-Encoder Reranking (BAAI/bge-reranker-v2-m3)
+        # ----------------------------------------------------
+        self._lazy_init_reranker()
+
+        if getattr(self, "_reranker", None) and top_candidates:
+            try:
+                logger.info(f"[Cache/search_local] Reranking {len(top_candidates)} candidates using BAAI/bge-reranker-v2-m3...")
+                # Format pairs: [query, passage]
+                pairs = []
+                for chunk in top_candidates:
+                    passage = (chunk.content or "") + " " + (chunk.source_title or "")
+                    pairs.append([query_text, passage])
+
+                # Compute scores using normalize=True to get [0, 1] range
+                rerank_scores = self._reranker.compute_score(pairs, normalize=True)
+
+                if isinstance(rerank_scores, float):
+                    rerank_scores = [rerank_scores]
+
+                # Combine candidates and their scores
+                candidate_scored = list(zip(top_candidates, rerank_scores))
+                candidate_scored.sort(key=lambda x: x[1], reverse=True)
+
+                # Log top-3 reranker scores for debugging
+                for i, (chunk, score) in enumerate(candidate_scored[:3]):
+                    logger.debug(f"[Cache/Reranker] Top-{i+1} chunk={chunk.chunk_id[:12]} score={score:.4f} content={chunk.content[:100]}…")
+
+                final_chunks = [chunk for chunk, _ in candidate_scored[:limit]]
+            except Exception as e:
+                logger.error(f"[Cache/search_local] Reranking failed: {e}. Falling back to WLC sorting.")
+                final_chunks = top_candidates[:limit]
+        else:
+            final_chunks = top_candidates[:limit]
+
         return final_chunks
 
 
-# ---------------------------------------------------------------------------
-# LLM Response Cache
-# ---------------------------------------------------------------------------
-
-
 class LLMCache:
-    """
-    Кэш LLM-ответов по SHA256(model:prompt).
-    Одна SQLite БД с CacheManager (llm_response_cache таблица).
-
-    TTL политика:
-      - None   = permanent (Planner, Claim Extractor — детерминированы)
-      - 86400  = 24 часа   (Auditor — корпус может обновиться)
-    """
+    """Кэш ответов LLM (SQLite)."""
 
     def __init__(self, db_path: str = "zerde_cache.db") -> None:
-        self.db_path = Path(db_path)
-        # Убеждаемся что таблица создана
-        with self._conn() as conn:
-            conn.executescript(_CREATE_TABLE_SQL)
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(_CREATE_TABLE_SQL)
 
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
+        conn = sqlite3.connect(self.db_path)
         try:
             yield conn
             conn.commit()
@@ -752,130 +672,89 @@ class LLMCache:
         finally:
             conn.close()
 
-    @staticmethod
-    def _make_key(model: str, prompt: str) -> str:
-        """SHA256(model:prompt) — детерминированный ключ кэша."""
-        raw = f"{model}:{prompt}"
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-    async def get(self, model: str, prompt: str) -> dict | None:
-        """
-        Возвращает кэшированный JSON-ответ или None.
-        Автоматически проверяет TTL (Lazy Deletion).
-        """
-        key = self._make_key(model, prompt)
-        now_iso = datetime.now(UTC).isoformat()
-
+    async def get(self, model: str, prompt_key: str) -> dict | None:
+        cache_key = self._make_key(model, prompt_key)
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT response_json, expires_at FROM llm_response_cache WHERE cache_key = ?",
-                (key,),
+                (cache_key,),
             ).fetchone()
 
         if row is None:
             return None
 
-        # Проверяем истечение TTL
-        if row["expires_at"] and row["expires_at"] < now_iso:
-            logger.debug(f"[LLMCache] EXPIRED (Lazy Deletion): {key[:12]}…")
-            # Lazy Deletion: не удаляем физически во время get, а просто отдаем None
-            return None
+        # Проверка истечения TTL
+        expires_at = row["expires_at"]
+        if expires_at:
+            expires_dt = datetime.fromisoformat(expires_at)
+            if datetime.now(UTC) > expires_dt:
+                async with _db_lock:
+                    with self._conn() as conn:
+                        conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (cache_key,))
+                return None
 
-        try:
-            data = json.loads(row["response_json"])
-            logger.info(f"[LLMCache] HIT: {key[:12]}… (model={model.split('/')[-1]})")
-            return data
-        except Exception as e:
-            logger.warning(f"[LLMCache] Deserialize error {key[:12]}…: {e}")
-            return None
+        return json.loads(row["response_json"])
 
-    async def put(
-        self,
-        model: str,
-        prompt: str,
-        response: dict,
-        ttl_seconds: int | None = None,
-    ) -> None:
-        """
-        Сохраняет LLM-ответ в кэш.
-
-        Args:
-            model: ID модели (для ключа и дебага).
-            prompt: Полный промпт (все сообщения сериализованы).
-            response: Parsed JSON dict от LLM.
-            ttl_seconds: None = постоянный, int = TTL в секундах.
-        """
-        key = self._make_key(model, prompt)
-        now = datetime.now(UTC).replace(tzinfo=None)
-        expires = (
-            (now + timedelta(seconds=ttl_seconds)).isoformat()
-            if ttl_seconds
-            else None
-        )
-        now_iso = datetime.now(UTC).isoformat()
+    async def put(self, model: str, prompt_key: str, response: dict, ttl_seconds: int | None = None) -> None:
+        cache_key = self._make_key(model, prompt_key)
+        response_json = json.dumps(response, ensure_ascii=False)
+        cached_at = datetime.now(UTC).isoformat()
+        
+        expires_at = None
+        if ttl_seconds is not None:
+            expires_at = (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat()
 
         async with _db_lock:
             with self._conn() as conn:
-                # Purge expired entries under the write lock
-                conn.execute(
-                    "DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
-                    (now_iso,),
-                )
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO llm_response_cache
                         (cache_key, model, response_json, cached_at, expires_at)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (
-                        key,
-                        model,
-                        json.dumps(response, ensure_ascii=False),
-                        now.isoformat(),
-                        expires,
-                    ),
+                    (cache_key, model, response_json, cached_at, expires_at),
                 )
-        logger.info(
-            f"[LLMCache] STORED: {key[:12]}… "
-            f"model={model.split('/')[-1]} ttl={ttl_seconds or 'permanent'}"
-        )
 
-    async def _delete(self, key: str) -> None:
+    async def invalidate_expired(self) -> None:
+        now_str = datetime.now(UTC).isoformat()
         async with _db_lock:
             with self._conn() as conn:
-                conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (key,))
+                conn.execute("DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?", (now_str,))
 
-    async def invalidate_expired(self) -> int:
-        """Удаляет все истёкшие записи. Вызывай при старте пайплайна."""
-        now_iso = datetime.now(UTC).isoformat()
-        async with _db_lock:
-            with self._conn() as conn:
-                result = conn.execute(
-                    "DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
-                    (now_iso,),
-                )
-            deleted = result.rowcount
-        if deleted:
-            logger.info(f"[LLMCache] Purged {deleted} expired entries")
-        return deleted
+    def _make_key(self, model: str, prompt_key: str) -> str:
+        raw = f"{model}:{prompt_key}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    async def stats(self) -> dict:
-        """Статистика LLM кэша."""
-        with self._conn() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM llm_response_cache").fetchone()[0]
-            permanent = conn.execute(
-                "SELECT COUNT(*) FROM llm_response_cache WHERE expires_at IS NULL"
-            ).fetchone()[0]
-        return {
-            "total_llm_entries": total,
-            "permanent": permanent,
-            "with_ttl": total - permanent,
-        }
 
-    async def clear_llm(self) -> int:
-        """Очищает только LLM кэш (не трогает evidence_cache)."""
-        async with _db_lock:
-            with self._conn() as conn:
-                result = conn.execute("DELETE FROM llm_response_cache")
-            logger.warning(f"[LLMCache] LLM cache cleared: {result.rowcount} entries")
-            return result.rowcount
+# ---------------------------------------------------------------------------
+# Dynamic Cache Healing (v9.5)
+# ---------------------------------------------------------------------------
+
+
+def _heal_chunk_rank(chunk: EvidenceChunk) -> EvidenceChunk:
+    """
+    Динамически исцеляет устаревшие (outdated) legal_rank при чтении из кэша.
+    Например, КоАП РК (закон 235-V) должен быть CODE (ранг 2), но в кэше старых версий
+    он мог быть сохранен как MINISTERIAL_ORDER или LAW_RK (ранг 7).
+    """
+    if not chunk.law_id:
+        return chunk
+
+    lid = chunk.law_id.strip().upper()
+    current_rank = chunk.legal_rank
+
+    # Кодексы РК
+    if lid in ("235-V", "226-V", "350-VI", "212-IV", "1000-XIII", "409-I", "442-II", "414-I", "414-I-NEW"):
+        if current_rank != LegalRank.CODE:
+            logger.info(f"[Cache/Healing] Healed chunk {chunk.chunk_id[:12]}… rank: {current_rank} -> CODE")
+            chunk.legal_rank = LegalRank.CODE
+            chunk.inferred_rank = LegalRank.CODE
+
+    # Конституция
+    elif lid in ("K950001000_", "K2600000000_"):
+        if current_rank != LegalRank.CONSTITUTIONAL_LAW:
+            logger.info(f"[Cache/Healing] Healed chunk {chunk.chunk_id[:12]}… rank: {current_rank} -> CONSTITUTIONAL_LAW")
+            chunk.legal_rank = LegalRank.CONSTITUTIONAL_LAW
+            chunk.inferred_rank = LegalRank.CONSTITUTIONAL_LAW
+
+    return chunk

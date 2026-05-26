@@ -7,9 +7,6 @@ Stage 2.5: Claim Extractor
   1. Детерминированный regex-этап — ловит числовые/ссылочные claims без LLM
   2. LLM-этап — ловит контекстные утверждения (биометрия обязательна с 2026)
   3. Reference Injector — проверяет entities по reference_data.py без LLM
-
-Ключевой принцип: claim ≠ факт. Claim — это утверждение из документа.
-Аналитик потом проверит каждый claim против корпуса.
 """
 
 from __future__ import annotations
@@ -132,15 +129,10 @@ _NORMATIVE_UNITS_RE = re.compile(
 
 
 def _is_structural_claim(claim: DocumentClaim) -> bool:
-    """V7.0: Определяет, является ли claim чисто структурным (не идёт в Auditor).
-
-    Structural = нет модальных глаголов И нет числовых норм (штрафов/сроков/МРП).
-    Severity не участвует в решении (regex-claims тоже могут быть structural).
-    """
+    """V7.0: Определяет, является ли claim чисто структурным (не идёт в Auditor)."""
     text_lower = claim.claim_text.lower()
 
     # 0. Исключаем переходные/вступительные положения самого законопроекта (commencement clauses)
-    # Например: "Настоящий Закон вводится в действие по истечении...", "по истечении шести месяцев со дня..."
     commencement_markers = [
         "вводится в действие",
         "вступает в силу",
@@ -148,7 +140,6 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
         "по истечении шести месяцев со дня",
         "по истечении десяти календарных дней",
         "по истечении одного года со дня",
-        # Казахские маркеры вступления в силу
         "қолданысқа енгізіледі",
         "қолданысқа енгiзiледi",
         "жарияланған күнінен бастап",
@@ -162,7 +153,6 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
         return False
 
     # 2. Если есть числовые показатели штрафов/сроков/МРП — нормативное
-    #    (Исключение: просто номер закона/статьи без единиц измерения)
     if _NORMATIVE_UNITS_RE.search(text_lower):
         return False
 
@@ -187,7 +177,6 @@ def _dedup_claims(claims: list[DocumentClaim]) -> list[DocumentClaim]:
     groups: dict[str, list[DocumentClaim]] = {}
     for c in claims:
         if c.entities:
-            # Group regex/entity claims using their type and sorted normalized entities
             sorted_ents = sorted(str(e).strip().replace(" ", "").upper() for e in c.entities)
             key = f"regex_{c.claim_type.value}_{'_'.join(sorted_ents)}"
         else:
@@ -198,13 +187,11 @@ def _dedup_claims(claims: list[DocumentClaim]) -> list[DocumentClaim]:
 
     result: list[DocumentClaim] = []
     for group in groups.values():
-        # Выбираем "лучший": с deterministic_verdict > с entities > длиннее текст
         best = max(group, key=lambda c: (
             bool(c.deterministic_verdict),
             len(c.entities),
             len(c.claim_text),
         ))
-        # Собираем альтернативные цитаты
         variants = [c.quote for c in group if c.quote and c.quote != best.quote]
         best.quote_variants = variants
         result.append(best)
@@ -230,7 +217,6 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
             for m in pattern.finditer(line):
                 entity = m.group(1).strip().replace("\u2011", "-").replace("\u2010", "-")
                 entity = entity.replace("\u0406", "I").replace("\u0456", "i")
-                # Нормализуем пробелы в числах (сохраняем пробелы для дат/сроков вступления)
                 if tag in ("enforcement_date", "effective_date"):
                     entity_clean = re.sub(r"\s+", " ", entity).strip()
                 else:
@@ -241,7 +227,6 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
                     continue
                 seen_texts.add(claim_text)
 
-                # Детерминированная проверка по реестру
                 deterministic = _check_entity(tag, entity_clean, text)
 
                 status, msg = None, None
@@ -263,8 +248,7 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
                     )
                 )
 
-    # --- Табличные штрафы: "МСБ | 500 | 3 450 | ..." ---
-    # Ищем строки с pipe-разделителями, где одна из колонок — число (штраф)
+    # --- Табличные штрафы ---
     table_mrp_re = re.compile(r"МРП", re.I)
     if table_mrp_re.search(text):
         for line in lines:
@@ -273,9 +257,7 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
             cells = [c.strip() for c in line.split("|")]
             if len(cells) < 3:
                 continue
-            # Первая ячейка — название категории (не число)
             if cells[0] and not cells[0][0].isdigit():
-                # Вторая ячейка — размер штрафа в МРП
                 val_raw = re.sub(r"\s+", "", cells[1])
                 if val_raw.isdigit():
                     val = int(val_raw)
@@ -309,14 +291,13 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
     entity_normalized = entity.strip().upper().replace(" ", "").replace("\u0406", "I").replace("\u0456", "i")
 
     if tag == "law_id":
-        # Убираем "ЗРК" и пробелы
         law_id_clean = re.sub(r"ЗРК|зрк", "", entity_normalized).strip("-").strip()
         entry = check_law_id(law_id_clean)
         if entry is not None:
             if not entry["valid"]:
                 return (VerdictStatus.CONTRADICTED, f"'{law_id_clean}' — {entry['title']}")
             return (VerdictStatus.CONFIRMED, f"{law_id_clean} = «{entry['title']}» от {entry['date']}")
-        return None  # Неизвестный закон — отдаём LLM
+        return None
 
     if tag == "koap_article":
         art = get_koap_article(entity_normalized)
@@ -327,7 +308,6 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
     if tag == "uk_article":
         art = get_uk_article(entity_normalized)
         if art:
-            # Возвращаем информацию о статье — LLM решит, соответствует ли контексту
             return (VerdictStatus.UNVERIFIED, f"УК РК ст.{entity_normalized} = «{art['title']}». {art['notes']}")
         return None
 
@@ -346,7 +326,6 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
             val = int(val_clean)
         except ValueError:
             return None
-        # Определяем год из контекста
         years_in_text = _YEAR_RE.findall(full_text)
         year = int(years_in_text[-1]) if years_in_text else 2025
         real_mrp = get_mrp(year)
@@ -354,11 +333,6 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
             return (VerdictStatus.CONTRADICTED, f"документ указывает МРП={val} тг, реальный МРП {year}={real_mrp} тг")
         if real_mrp and val == real_mrp:
             return (VerdictStatus.CONFIRMED, f"МРП {year} = {val} тг — верно")
-        return None
-
-    if tag == "hours_deadline":
-        # Не делаем детерминированный вердикт — LLM проверит по корпусу
-        # (24ч, 72ч и другие сроки зависят от конкретного закона)
         return None
 
     if tag == "fine_mrp":
@@ -371,7 +345,6 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
         if val > absolute_max:
             return (VerdictStatus.CONTRADICTED,
                     f"Штраф {val} МРП превышает абсолютный максимум КоАП ({absolute_max} МРП). Требует проверки.")
-        # Если штраф в пределах максимума — нужен контекст LLM
         return None
 
     return None
@@ -410,32 +383,30 @@ _LLM_CLAIM_PROMPT = """
 1. FACTUAL claims — конкретные факты о применении законов:
    - "Биометрическая идентификация станет обязательной с 2026 года" → factual, critical
    - "Локализация серверов обязательна для всех операторов" → factual, high
-   - "Закон РК №[X] утрачивает силу с [дата]" → temporal, high
 
 2. NORMATIVE claims — что закон/норма разрешает/запрещает/требует:
    - "Оператор обязан уведомить субъекта в течение X часов" → temporal, critical
-   - "Штраф составляет X МРП за нарушение Y" → financial, critical
 
 3. НЕ извлекай:
    - Общие рассуждения: "Закон защищает права граждан"
-   - Описания без конкретных значений: "Предусмотрена ответственность"
+   - Описания без конкретных значений
    - Дубли уже найденных утверждений
 
 {schema}
 """
 
 
-async def _llm_extract(
+async def _llm_extract_chunk(
     text: str,
     already_found: list[DocumentClaim],
     client: AsyncOpenAI,
     settings,
+    start_idx: int,
 ) -> list[DocumentClaim]:
-    """LLM-экстрактор для контекстных утверждений которые не поймал regex. Кэшируется."""
-
-    already_str = "\n".join(f"- {c.claim_text[:100]}" for c in already_found[:20])
+    """LLM-экстрактор для отдельного окна/чанка текста."""
+    already_str = "\n".join(f"- {c.claim_text[:120]}" for c in already_found[:30])
     prompt = _LLM_CLAIM_PROMPT.format(
-        document_text=text[:32000],  # deepseek-v4-flash поддерживает большой контекст
+        document_text=text,
         already_found=already_str or "(ничего)",
         schema=_LLM_CLAIM_SCHEMA,
     )
@@ -447,7 +418,6 @@ async def _llm_extract(
     ]
 
     try:
-        # TTL=None: один документ = одинаковые claims, постоянное кэширование
         parsed = await cached_llm_call(
             client=client,
             model=settings.llm_model_extractor,
@@ -456,7 +426,6 @@ async def _llm_extract(
             ttl_seconds=None,
             max_tokens=3000,
         )
-        # Поддерживаем как массив напрямую так и {"claims": [...]} и {"_raw": [...]}
         if isinstance(parsed, list):
             raw_claims = parsed
         elif "_raw" in parsed and isinstance(parsed["_raw"], list):
@@ -464,14 +433,11 @@ async def _llm_extract(
         else:
             raw_claims = parsed.get("claims", [])
     except Exception as e:
-        logger.warning(f"[S2.5/LLM] Failed to extract contextual claims: {e}")
+        logger.warning(f"[S2.5/LLM] Failed to extract contextual claims from window: {e}")
         return []
 
-    # Маппинг в модели
     result: list[DocumentClaim] = []
-    start_idx = len(already_found)
     for i, raw in enumerate(raw_claims):
-        # LLM может вернуть строки вместо объектов — конвертируем
         if isinstance(raw, str) and len(raw) > 10:
             raw = {"claim_text": raw, "claim_type": "factual", "severity": "medium"}
         if not isinstance(raw, dict):
@@ -495,6 +461,48 @@ async def _llm_extract(
     return result
 
 
+async def _llm_extract(
+    text: str,
+    already_found: list[DocumentClaim],
+    client: AsyncOpenAI,
+    settings,
+) -> list[DocumentClaim]:
+    """LLM-экстрактор для контекстных утверждений, использующий скользящее окно (sliding window)."""
+    window_size = 8000
+    overlap = 1500
+
+    if len(text) <= window_size:
+        return await _llm_extract_chunk(text, already_found, client, settings, start_idx=len(already_found))
+
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + window_size
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start += window_size - overlap
+
+    logger.info(f"[S2.5/SlidingWindow] Splitting text of length {len(text)} into {len(chunks)} windows.")
+
+    all_contextual_claims = []
+    current_already_found = list(already_found)
+
+    for idx, chunk_text in enumerate(chunks):
+        logger.info(f"[S2.5/SlidingWindow] Processing window {idx+1}/{len(chunks)}")
+        window_claims = await _llm_extract_chunk(
+            chunk_text,
+            current_already_found,
+            client,
+            settings,
+            start_idx=len(already_found) + len(all_contextual_claims)
+        )
+        all_contextual_claims.extend(window_claims)
+        current_already_found.extend(window_claims)
+
+    return all_contextual_claims
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -503,10 +511,6 @@ async def _llm_extract(
 async def extract_claims(doc_state: DocumentState) -> ClaimExtractionResult:
     """
     Stage 2.5: Извлекает все проверяемые утверждения из документа.
-
-    Гибридный подход:
-    1. Regex → детерминированные claims + reference_data вердикты
-    2. LLM → контекстные claims (биометрия, локализация, etc.)
     """
     settings = get_settings()
     client = make_llm_client(settings)
@@ -524,7 +528,7 @@ async def extract_claims(doc_state: DocumentState) -> ClaimExtractionResult:
 
     all_claims = regex_claims + llm_claims
 
-    # V7.0: Детерминированная дедупликация по нормализованному тексту
+    # V7.0: Детерминированная дедупликация
     deduped = _dedup_claims(all_claims)
     logger.info(f"[S2.5] Dedup: {len(all_claims)} → {len(deduped)} unique claims")
 
@@ -547,14 +551,5 @@ async def extract_claims(doc_state: DocumentState) -> ClaimExtractionResult:
         claims=analytical,
         structural_claims=structural,
     )
-
-    # Логируем критические (только аналитические)
-    critical = result.critical_claims
-    logger.info(
-        f"[S2.5] Done. total={result.total_count} critical={len(critical)}"
-    )
-    for c in critical:
-        verdict_str = f" → {c.deterministic_verdict}" if c.deterministic_verdict else ""
-        logger.info(f"[S2.5/CRITICAL] {c.claim_id}: {c.claim_text[:100]}{verdict_str}")
 
     return result

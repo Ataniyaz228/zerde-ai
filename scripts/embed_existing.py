@@ -1,80 +1,64 @@
-import asyncio
 import os
-
-# Limit CPU threads to 2 to prevent system lagging and IDE crashes on user's machine
-os.environ["OMP_NUM_THREADS"] = "2"
-os.environ["MKL_NUM_THREADS"] = "2"
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
-os.environ["NUMEXPR_NUM_THREADS"] = "2"
-
-# Force PyTorch to use CPU to completely bypass CUDA Out Of Memory errors on 6GB VRAM GPU,
-# unless ZERDE_USE_CUDA=1 is explicitly requested.
-if os.getenv("ZERDE_USE_CUDA") != "1":
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
 import sys
-import json
-import gc
+import asyncio
 from pathlib import Path
 
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from zerde.models import EvidenceChunk
 from zerde.utils.cache import CacheManager
+from zerde.models import EvidenceChunk
 
-async def embed_existing():
-    print("Initializing CacheManager and loading all cached chunks...")
-    cache = CacheManager("zerde_cache.db")
+async def embed_existing_cache():
+    """
+    Pre-computes and stores BGE-M3 vector embeddings for all ingested chunks in the DB.
+    Ensures zero runtime embedding overhead on query execution.
+    """
+    db_path = "zerde_cache.db"
+    print(f"🧠 Checking SQLite Cache database: {db_path}...")
     
-    # 1. Query all chunks
-    chunks = []
+    if not os.path.exists(db_path):
+        print(f"❌ Error: Database file {db_path} not found. Please run ingest_docs.py first.")
+        return
+        
+    cache = CacheManager(db_path)
+    
+    # Load all chunks that don't have embeddings yet
+    all_chunks = []
     with cache._conn() as conn:
         rows = conn.execute("SELECT chunk_json FROM evidence_cache").fetchall()
+        print(f"Found {len(rows)} total reference chunks in cache database.")
+        
+        # Check how many already have embeddings
+        emb_rows = conn.execute("SELECT chunk_id FROM evidence_embeddings").fetchall()
+        embedded_ids = {r["chunk_id"] for r in emb_rows}
+        print(f"Found {len(embedded_ids)} pre-existing embeddings in database.")
+        
+        import json
         for r in rows:
             try:
                 data = json.loads(r["chunk_json"])
-                chunks.append(EvidenceChunk.model_validate(data))
-            except Exception:
-                pass
+                chunk = EvidenceChunk.model_validate(data)
+                if chunk.chunk_id not in embedded_ids:
+                    all_chunks.append(chunk)
+            except Exception as e:
+                print(f"⚠️ Error parsing chunk json: {e}")
                 
-    print(f"Loaded {len(chunks)} chunks from database.")
-    
-    if not chunks:
-        print("No chunks found to embed.")
+    if not all_chunks:
+        print("🎉 All reference chunks are already fully embedded! Nothing to do.")
         return
         
-    device_name = "GPU (CUDA)" if os.getenv("ZERDE_USE_CUDA") == "1" else "CPU (limited to 2 threads)"
-    print(f"\nGenerating BGE-M3 vector embeddings for all chunks on {device_name}...")
+    print(f"🧠 Generating BGE-M3 vector embeddings for {len(all_chunks)} remaining chunks...")
     
-    chunk_size = 50
-    sleep_time = 0.1
-    
-    loop = asyncio.get_running_loop()
-    
-    for idx in range(0, len(chunks), chunk_size):
-        batch = chunks[idx : idx + chunk_size]
-        print(f"Processing chunk batch {idx // chunk_size + 1}/{(len(chunks) - 1) // chunk_size + 1} (items {idx} to {idx + len(batch)})...")
-        
-        # Run in thread pool to prevent blocking event loop
-        await loop.run_in_executor(None, cache.embed_chunks, batch)
-        
-        gc.collect()
-        await asyncio.sleep(sleep_time) # Rest between batches (minimal for GPU, longer for CPU)
-        
-    print("\nAll chunks successfully embedded and stored in database!")
-    
-    # Verify
-    with cache._conn() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM evidence_embeddings").fetchone()[0]
-        print(f"Total stored embeddings in DB: {count}")
+    # SentenceTransformer BGE-M3 uses ZERDE_USE_CUDA=1 or CUDA execution if available
+    # Run embed_chunks (it lazy-inits SentenceTransformer model and pre-computes embeddings)
+    try:
+        cache.embed_chunks(all_chunks)
+        print("🎉 Successfully generated and stored BGE-M3 vector embeddings in SQLite!")
+    except Exception as e:
+        print(f"❌ Error generating embeddings: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    # Explicitly set PyTorch threads before importing
-    try:
-        import torch
-        torch.set_num_threads(2)
-    except ImportError:
-        pass
-    asyncio.run(embed_existing())
+    asyncio.run(embed_existing_cache())

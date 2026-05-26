@@ -308,16 +308,40 @@ def audit_analysis(
     # LLM может обрезать ID, поэтому проверяем по началу строки ("reference_")
     VIRTUAL_SOURCES = {"UNLINKED", "reference_data"}
 
+    # FIX 1: Resolve LLM-truncated source_ids to full corpus IDs via prefix_index
+    # LLM gets chunk_ids truncated to 16 chars in the prompt (_format_chunk),
+    # so it returns those truncated IDs. We must resolve them before any checks.
+    for v in analysis.verdicts:
+        resolved_ids = []
+        for sid in v.source_ids:
+            if sid in VIRTUAL_SOURCES or sid.startswith("reference_"):
+                resolved_ids.append(sid)
+                continue
+            # Try exact match first, then prefix resolution
+            if sid in corpus_index:
+                resolved_ids.append(sid)
+            elif sid in prefix_index:
+                full_id = prefix_index[sid]
+                resolved_ids.append(full_id)
+                logger.debug(f"[S6/Resolve] Resolved truncated source_id '{sid}' → '{full_id}'")
+            else:
+                resolved_ids.append(sid)  # keep as-is, might be invalid
+        v.source_ids = resolved_ids
+
     # Downgrade "UNLINKED -> HIGH" loophole:
     # Any CONFIRMED LLM verdict with no real sources (i.e. only UNLINKED or empty source_ids, and not is_deterministic)
     # must be downgraded to UNVERIFIED and confidence to LOW.
     for v in analysis.verdicts:
         if v.status == VerdictStatus.CONFIRMED and not v.is_deterministic:
-            real_sources = [sid for sid in v.source_ids if sid and sid != "UNLINKED" and not sid.startswith("reference_")]
+            real_sources = [
+                sid for sid in v.source_ids
+                if sid and sid not in VIRTUAL_SOURCES and not sid.startswith("reference_")
+                and sid in corpus_index  # Only count IDs that actually exist in corpus
+            ]
             if not real_sources:
                 logger.warning(
                     f"[S6/Downgrade] Downgrading verdict for claim '{v.claim_id}' from CONFIRMED to UNVERIFIED "
-                    f"due to lack of real source links."
+                    f"due to lack of real source links. source_ids={v.source_ids}"
                 )
                 v.status = VerdictStatus.UNVERIFIED
                 v.confidence = "LOW"
@@ -579,7 +603,20 @@ def audit_analysis(
         # Compile and attach AnalysisStats (v9.4 Immutable Stage)
         from zerde.models import AnalysisStats
         
-        pros_list = [f"Подтверждено {n_confirmed} из {n_total} анализируемых утверждений законопроекта."]
+        # FIX 3: Conditional pros — don't claim "Confirmed 0" as a positive
+        pros_list = []
+        if n_confirmed > 0:
+            pros_list.append(f"Подтверждено {n_confirmed} из {n_total} анализируемых утверждений законопроекта.")
+        if n_contradicted == 0:
+            pros_list.append("Противоречий с действующим законодательством РК не обнаружено.")
+        if n_confirmed > 0 and n_contradicted == 0:
+            pros_list.append("Все проверенные утверждения соответствуют нормативно-правовой базе.")
+        if not pros_list:
+            # Fallback: nothing confirmed, but also nothing contradicted — neutral
+            if n_unverified == n_total:
+                pros_list.append("Документ не содержит фактических ошибок в проверяемой части (недостаточно источников для полной верификации).")
+            else:
+                pros_list.append(f"Проанализировано {n_total} утверждений законопроекта.")
         
         # Наполняем cons список в AnalysisJSON для рендеринга
         analysis.cons = []
@@ -742,7 +779,15 @@ def _corpus_wide_bm25_search(
     if not bm25._bm25 or not bm25._ids:
         return None
 
-    query_tokens = _tokenize(fact.claim)
+    # FIX 4: Use raw claim text from DocumentClaim for BM25, not the formatted
+    # fact.claim string which contains metadata like '[claim_0001]: ...' that
+    # pollutes token matching. Fall back to fact.claim if no claim object.
+    if claim:
+        raw_query = claim.claim_text + " " + claim.quote
+    else:
+        # Strip formatting artifacts from fact.claim
+        raw_query = re.sub(r"\[claim_\d{4}\]:\s*['\"]?", "", fact.claim).rstrip("'\"")
+    query_tokens = _tokenize(raw_query)
     if not query_tokens:
         return None
 

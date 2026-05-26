@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, UTC
@@ -50,7 +52,6 @@ class CacheManager:
     """
 
     def __init__(self, db_path: str = "zerde_cache.db") -> None:
-        import os
         env_db_path = os.getenv("ZERDE_CACHE_DB")
         self.db_path = Path(env_db_path if env_db_path else db_path)
         self._init_db()

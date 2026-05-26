@@ -29,6 +29,13 @@ _TIER_2_DOMAINS = frozenset([
 _TIER_3_DOMAINS = frozenset([
     "linkedin.com", "vc.ru", "medium.com", "habr.com", "dtf.ru",
     "tjournal.ru",
+    # Encyclopedias and non-KZ legal sites: useful for context, NOT authoritative
+    "wikipedia.org", "ru.wikipedia.org", "en.wikipedia.org",
+    "kk.wikipedia.org",
+    "wikiwand.com",
+    "pravo163.ru",   # Russian law advisory, not KZ jurisdiction
+    "consultant.ru", # Russian legal DB, not KZ jurisdiction
+    "garant.ru",     # Russian legal DB, not KZ jurisdiction
 ])
 
 _BLACKLIST_PATTERNS = frozenset([
@@ -85,8 +92,9 @@ def classify_web_tier(url: str) -> WebTier:
         if _domain_matches(domain, tier_domains):
             return tier
 
-    # Default: TIER_2 для неизвестных (conservative)
-    return WebTier.TIER_2
+    # Default: TIER_3 для неизвестных (conservative)
+    # Unknown domains shouldn't be elevated to TIER_2 (expert) status
+    return WebTier.TIER_3
 
 
 def infer_legal_rank_from_web_content(

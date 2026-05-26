@@ -192,19 +192,33 @@ def _render_header(analysis: AnalysisJSON) -> str:
 
 def _render_executive_summary(analysis: AnalysisJSON) -> str:
     """Executive Summary секция."""
-    reliability_bar = _reliability_bar(analysis.overall_reliability)
     confirmed = sum(1 for v in analysis.verdicts if v.status.value == "CONFIRMED")
     contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
     unverified = sum(1 for v in analysis.verdicts if v.status.value == "UNVERIFIED")
     structural_cnt = len(analysis.structural_claims)
+    total = confirmed + contradicted + unverified
+
+    # FIX 7: Compact reliability label for summary (full bar in footer)
+    score = analysis.overall_reliability
+    if score is not None:
+        percent = int(score * 100)
+        icon = "🟢" if score >= 0.75 else ("🟡" if score >= 0.50 else "🔴")
+        reliability_line = f"> **Надёжность анализа:** {icon} {percent}%"
+    elif total > 0 and confirmed == 0:
+        reliability_line = "> **Надёжность анализа:** ⚫ Не рассчитана (ни одно утверждение не подтверждено источниками из корпуса)"
+    else:
+        reliability_line = "> **Надёжность анализа:** ⚫ Не рассчитана"
 
     lines = [
         "## 📋 Executive Summary\n",
-        f"{reliability_bar}\n",
+        f"{reliability_line}\n",
         f"- **Подтверждено (✅):** {confirmed}",
         f"- **Опровергнуто (❌):** {contradicted}",
         f"- **Не проверено (⚠️):** {unverified}",
     ]
+    if total > 0:
+        coverage = int((confirmed + contradicted) / total * 100)
+        lines.append(f"- **Покрытие верификацией:** {coverage}%")
     if structural_cnt:
         lines.append(f"- **Структурных элементов:** {structural_cnt}")
     lines.extend([
@@ -324,9 +338,13 @@ def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
     if not active_chunks:
         return "## 📚 Нормативная База\n\n*Источники не найдены.*"
 
+    # FIX 6: Separate authoritative sources from informational ones
+    authoritative = [c for c in active_chunks if c.legal_rank != LegalRank.MEDIA_UNKNOWN]
+    informational = [c for c in active_chunks if c.legal_rank == LegalRank.MEDIA_UNKNOWN]
+
     # Группируем по рангу → law_id → chunks
     by_rank: dict[LegalRank, dict[str, list[EvidenceChunk]]] = {}
-    for chunk in sorted(active_chunks, key=lambda c: int(c.legal_rank)):
+    for chunk in sorted(authoritative, key=lambda c: int(c.legal_rank)):
         rank = chunk.legal_rank
         law_key = chunk.law_id or chunk.source_title
         by_rank.setdefault(rank, {}).setdefault(law_key, []).append(chunk)
@@ -348,6 +366,13 @@ def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
                     f"  - [{c.source_title}]({c.source_url}){art_ref}{conflict_flag}"
                 )
 
+    # Informational sources in a separate subsection (not part of normative hierarchy)
+    if informational:
+        lines.append("\n### 📌 Дополнительные источники (информационные)")
+        lines.append("> Не являются частью нормативной иерархии РК.\n")
+        for c in informational:
+            lines.append(f"- [{c.source_title}]({c.source_url})")
+
     return "\n".join(lines)
 
 
@@ -356,7 +381,13 @@ def _render_conflicts(
     bridge_conflicts: list[ConflictRecord],
 ) -> str:
     """V7.0: Единая секция конфликтов: S4 (chunks) + S6 (bridge)."""
-    total = len(conflict_chunks) + len(bridge_conflicts)
+    # FIX 5: Filter out non-authoritative sources from conflict list
+    # MEDIA_UNKNOWN (rank 11) sources like Wikipedia should not appear as legal conflicts
+    authoritative_conflicts = [
+        c for c in conflict_chunks
+        if c.legal_rank != LegalRank.MEDIA_UNKNOWN
+    ]
+    total = len(authoritative_conflicts) + len(bridge_conflicts)
     if not total:
         return "## ⚖️ Конфликты и Коллизии\n\n*Конфликтов не выявлено.*"
 
@@ -366,14 +397,21 @@ def _render_conflicts(
         "> Ниже перечислены юридические коллизии, требующие правовой оценки.\n",
     ]
 
-    if conflict_chunks:
+    if authoritative_conflicts:
         lines.append("### Конфликты источников (S4)\n")
-        for chunk in conflict_chunks:
+        for chunk in authoritative_conflicts:
             conflict_str = ", ".join(ct.value for ct in chunk.conflict_types)
+            rank_label = _RANK_LABELS.get(chunk.legal_rank, str(chunk.legal_rank))
             lines.append(f"**{chunk.source_title}** — `{chunk.chunk_id[:12]}…`")
-            lines.append(f"- Тип: {conflict_str} | Ранг: {_RANK_LABELS.get(chunk.legal_rank, str(chunk.legal_rank))}")
+            lines.append(f"- Тип: {conflict_str} | Ранг: {rank_label}")
             if chunk.conflict_with_ids:
                 lines.append(f"- Конфликтует с: {', '.join(c[:12] for c in chunk.conflict_with_ids)}")
+            # FIX 5: Add content snippet so users can see what actually conflicts
+            if chunk.content:
+                snippet = chunk.content[:200].replace("\n", " ").strip()
+                if len(chunk.content) > 200:
+                    snippet += "…"
+                lines.append(f"- Содержание: *{snippet}*")
             lines.append("")
 
     if bridge_conflicts:
@@ -562,7 +600,7 @@ def _render_reliability_footer(analysis: AnalysisJSON) -> str:
 def _reliability_bar(score: float | None) -> str:
     """Генерирует текстовый progress bar для reliability score."""
     if score is None:
-        return "> **Reliability:** N/A (анализ не завершён)"
+        return "> **Reliability:** N/A — недостаточно данных для расчёта (корпус не содержит подтверждающих источников)"
 
     filled = int(score * 10)
     bar = "█" * filled + "░" * (10 - filled)

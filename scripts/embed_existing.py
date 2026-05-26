@@ -48,9 +48,8 @@ async def embed_existing():
     device_name = "GPU (CUDA)" if os.getenv("ZERDE_USE_CUDA") == "1" else "CPU (limited to 2 threads)"
     print(f"\nGenerating BGE-M3 vector embeddings for all chunks on {device_name}...")
     
-    is_cuda = os.getenv("ZERDE_USE_CUDA") == "1"
-    chunk_size = 100 if is_cuda else 50
-    sleep_time = 0.1 if is_cuda else 1.0
+    chunk_size = 50
+    sleep_time = 0.1
     
     loop = asyncio.get_running_loop()
     

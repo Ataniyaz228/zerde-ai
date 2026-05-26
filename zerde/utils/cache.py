@@ -470,6 +470,12 @@ class CacheManager:
                 normalize_embeddings=True
             )
             embeddings = np.array(embeddings, dtype=np.float32)
+            if "cuda" in device_type:
+                try:
+                    import torch
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
             
             logger.info(f"[Cache/Vector] Storing {len(chunks)} embeddings in SQLite...")
             with self._conn() as conn:
@@ -523,6 +529,12 @@ class CacheManager:
                 show_progress_bar=False,
                 normalize_embeddings=True
             )
+            if "cuda" in device_type:
+                try:
+                    import torch
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
             
             # Store in DB and populate map
             with self._conn() as conn:

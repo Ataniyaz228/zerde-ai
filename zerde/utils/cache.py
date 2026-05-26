@@ -262,7 +262,7 @@ class CacheManager:
         endings = [
             "ями", "ами", "ому", "ему", "ого", "его", "ыми", "ими", "ых", "их", "ею", "ою",
             "ом", "ем", "ой", "ей", "ию", "ую", "яя", "ая", "ое", "ее", "ые", "ие", "ия", "ый", "ий", "ам", "ям", "ов", "ев", "ях", "ах",
-            "а", "я", "о", "е", "и", "ы", "у", "ю", "ь"
+            "а", "я", "о", "e", "и", "ы", "у", "ю", "ь"
         ]
         for end in endings:
             if w.endswith(end):
@@ -296,16 +296,16 @@ class CacheManager:
         with self._init_lock:
             if getattr(self, "_embeddings_loaded", False):
                 return
-            
+
             logger.info("[Cache/Vector] Initializing BGE-M3 model and pre-loading embeddings...")
-            
+
             import numpy as np
-            
+
             # 1. Lazy load SentenceTransformers
             try:
                 import torch
                 torch.set_num_threads(2)
-                
+
                 from sentence_transformers import SentenceTransformer
             except ImportError as e:
                 logger.error(f"[Cache/Vector] Failed to import sentence-transformers/torch: {e}")
@@ -315,41 +315,43 @@ class CacheManager:
             use_cuda = os.getenv("ZERDE_USE_CUDA") == "1"
             device = "cuda" if (use_cuda and torch.cuda.is_available()) else "cpu"
             logger.info(f"[Cache/Vector] Using device: {device} (Thread limit: {torch.get_num_threads()})")
-            
+
             # Load BGE-M3 in FP16 if on CUDA to save VRAM, else FP32 on CPU
             model_kwargs = {}
             if device == "cuda":
                 model_kwargs["torch_dtype"] = torch.float16
-            
+
             self._embed_model = SentenceTransformer(
                 "BAAI/bge-m3",
                 device=device,
                 model_kwargs=model_kwargs if model_kwargs else None
             )
-            
+            self._device_type = device
+            self._embed_model.max_seq_length = 512
+
             # 2. Pre-load all embeddings from SQLite
             self._embeddings_keys = []
             embeddings_list = []
-            
+
             with self._conn() as conn:
                 rows = conn.execute("SELECT chunk_id, embedding FROM evidence_embeddings").fetchall()
                 for row in rows:
                     self._embeddings_keys.append(row["chunk_id"])
                     vec = np.frombuffer(row["embedding"], dtype=np.float32)
                     embeddings_list.append(vec)
-                    
+
             if embeddings_list:
                 self._embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
                 self._embeddings_norms = np.linalg.norm(self._embeddings_matrix, axis=1)
             else:
                 self._embeddings_matrix = np.empty((0, 1024), dtype=np.float32)
                 self._embeddings_norms = np.empty((0,), dtype=np.float32)
-                
+
             # 3. Pre-load and construct BM25 index for all cached chunks
             logger.info("[Cache/Vector] Constructing BM25 index for all chunks...")
             self._bm25_keys = []
             tokenized_corpus = []
-            
+
             with self._conn() as conn:
                 rows = conn.execute("SELECT chunk_id, chunk_json FROM evidence_cache").fetchall()
                 for row in rows:
@@ -363,7 +365,7 @@ class CacheManager:
                             tokenized_corpus.append(tokens)
                     except Exception as ex:
                         pass
-                        
+
             if tokenized_corpus:
                 from rank_bm25 import BM25Okapi
                 self._bm25_index = BM25Okapi(tokenized_corpus)
@@ -371,7 +373,7 @@ class CacheManager:
             else:
                 self._bm25_index = None
                 self._bm25_tokens = []
-                
+
             self._embeddings_loaded = True
             logger.info(f"[Cache/Vector] Initialized successfully. Loaded {len(self._embeddings_keys)} embeddings and {len(self._bm25_keys)} BM25 documents.")
 
@@ -381,10 +383,10 @@ class CacheManager:
             return
 
         import numpy as np
-        
+
         new_chunk_ids = []
         new_texts = []
-        
+
         for c in chunks:
             if c.chunk_id not in self._embeddings_keys:
                 new_chunk_ids.append(c.chunk_id)
@@ -398,13 +400,13 @@ class CacheManager:
         try:
             # Generate normalized BGE-M3 embeddings
             embeddings = self._embed_model.encode(
-                new_texts, 
-                batch_size=8, 
-                show_progress_bar=False, 
+                new_texts,
+                batch_size=8,
+                show_progress_bar=False,
                 normalize_embeddings=True
             )
             embeddings = np.array(embeddings, dtype=np.float32)
-            
+
             # Store in SQLite evidence_embeddings
             with self._conn() as conn:
                 for cid, emb in zip(new_chunk_ids, embeddings):
@@ -412,7 +414,7 @@ class CacheManager:
                         "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
                         (cid, emb.tobytes()),
                     )
-            
+
             # Append to in-memory matrix
             self._embeddings_keys.extend(new_chunk_ids)
             if self._embeddings_matrix.shape[0] == 0:
@@ -420,7 +422,7 @@ class CacheManager:
             else:
                 self._embeddings_matrix = np.vstack([self._embeddings_matrix, embeddings])
             self._embeddings_norms = np.linalg.norm(self._embeddings_matrix, axis=1)
-            
+
             # Rebuild BM25 index
             logger.info("[Cache/Vector] Rebuilding in-memory BM25 index...")
             tokenized_corpus = []
@@ -438,12 +440,12 @@ class CacheManager:
                             tokenized_corpus.append(tokens)
                     except Exception:
                         pass
-            
+
             if tokenized_corpus:
                 from rank_bm25 import BM25Okapi
                 self._bm25_index = BM25Okapi(tokenized_corpus)
                 self._bm25_tokens = tokenized_corpus
-                
+
         except Exception as e:
             logger.error(f"[Cache/Vector] Failed to dynamically sync new chunks: {e}")
 
@@ -454,11 +456,10 @@ class CacheManager:
 
         import numpy as np
         self._lazy_init_embeddings()
-        
-        device_type = str(getattr(self._embed_model, "device", "cpu"))
+
         logger.info(f"[Cache/Vector] Encoding {len(chunks)} chunks in batches of 8 using BGE-M3...")
         texts = [(c.content or "") + " " + (c.source_title or "") for c in chunks]
-        
+
         try:
             embeddings = self._embed_model.encode(
                 texts,
@@ -467,13 +468,13 @@ class CacheManager:
                 normalize_embeddings=True
             )
             embeddings = np.array(embeddings, dtype=np.float32)
-            if "cuda" in device_type:
+            if "cuda" in self._device_type:
                 try:
                     import torch
                     torch.cuda.empty_cache()
                 except Exception:
                     pass
-            
+
             logger.info(f"[Cache/Vector] Storing {len(chunks)} embeddings in SQLite...")
             with self._conn() as conn:
                 for chunk, emb in zip(chunks, embeddings):
@@ -482,7 +483,7 @@ class CacheManager:
                         (chunk.chunk_id, emb.tobytes()),
                     )
             logger.info("[Cache/Vector] Finished storing embeddings successfully.")
-            
+
             # If loaded, sync in-memory matrix as well
             if getattr(self, "_embeddings_loaded", False):
                 self._sync_new_chunks(chunks)
@@ -493,11 +494,11 @@ class CacheManager:
     def get_embeddings(self, chunks: list[EvidenceChunk]) -> list[list[float]]:
         """Retrieves cached embeddings from SQLite or computes them locally via BGE-M3."""
         import numpy as np
-        
+
         # Check cache first
         chunk_ids = [c.chunk_id for c in chunks]
         embeddings_map = {}
-        
+
         with self._conn() as conn:
             # Batch queries by 999 (SQLite limit)
             for idx in range(0, len(chunk_ids), 999):
@@ -510,28 +511,27 @@ class CacheManager:
                 for row in rows:
                     vec = np.frombuffer(row["embedding"], dtype=np.float32)
                     embeddings_map[row["chunk_id"]] = vec.tolist()
-                    
+
         # Identify missing chunks
         missing_chunks = [c for c in chunks if c.chunk_id not in embeddings_map]
-        
+
         if missing_chunks:
             logger.info(f"[Cache/Vector] Computing embeddings for {len(missing_chunks)} chunks using BGE-M3...")
             self._lazy_init_embeddings()
             texts = [(c.content or "") + " " + (c.source_title or "") for c in missing_chunks]
-            device_type = str(getattr(self._embed_model, "device", "cpu"))
             computed = self._embed_model.encode(
                 texts,
                 batch_size=8,
                 show_progress_bar=False,
                 normalize_embeddings=True
             )
-            if "cuda" in device_type:
+            if "cuda" in self._device_type:
                 try:
                     import torch
                     torch.cuda.empty_cache()
                 except Exception:
                     pass
-            
+
             # Store in DB and populate map
             with self._conn() as conn:
                 for chunk, emb in zip(missing_chunks, computed):
@@ -541,11 +541,10 @@ class CacheManager:
                         (chunk.chunk_id, emb_float32.tobytes()),
                     )
                     embeddings_map[chunk.chunk_id] = emb_float32.tolist()
-                    
+
             # Update RAM representation if initialized
             if getattr(self, "_embeddings_loaded", False):
                 self._sync_new_chunks(missing_chunks)
-                
         # Return in original order
         return [embeddings_map[c.chunk_id] for c in chunks]
 
@@ -557,13 +556,13 @@ class CacheManager:
         limit: int = 10,
     ) -> list[EvidenceChunk]:
         """
-        Parallel Hybrid Search (SQL Strategy 0 + BM25 + BGE-M3 Semantic) 
+        Parallel Hybrid Search (SQL Strategy 0 + BM25 + BGE-M3 Semantic)
         fused via Reciprocal Rank Fusion (RRF k=60).
         """
         import json
         import re
         import numpy as np
-        
+
         # 1. Normalize law_ids
         normalized_law_ids = []
         if law_ids:
@@ -617,10 +616,10 @@ class CacheManager:
         # ----------------------------------------------------
         bm25_candidates = []
         query_tokens = self._tokenize_for_bm25(query_text)
-        
+
         # Ensure BM25 index is lazy loaded
         self._lazy_init_embeddings()
-        
+
         if self._bm25_index and query_tokens:
             try:
                 bm25_scores = self._bm25_index.get_scores(query_tokens)
@@ -639,14 +638,14 @@ class CacheManager:
             try:
                 # 1. Embed query
                 query_vector = self._embed_model.encode(
-                    query_text, 
-                    show_progress_bar=False, 
+                    query_text,
+                    show_progress_bar=False,
                     normalize_embeddings=True
                 ).astype(np.float32)
-                
+
                 # 2. Vectorized Cosine Similarities calculation
                 similarities = np.dot(self._embeddings_matrix, query_vector)
-                
+
                 # 3. Sort indices descending
                 top_indices = np.argsort(similarities)[::-1][:limit * 3]
                 for idx in top_indices:
@@ -685,14 +684,14 @@ class CacheManager:
         # ----------------------------------------------------
         rrf_scores = {}
         k = 60
-        
+
         # SQL Exact Search gets very high priority
         for rank, cid in enumerate(sql_candidates):
             rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.5 / (k + rank))
-            
+
         for rank, cid in enumerate(bm25_candidates):
             rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k + rank))
-            
+
         for rank, cid in enumerate(semantic_candidates):
             rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k + rank))
 
@@ -706,7 +705,7 @@ class CacheManager:
 
         # Sort combined chunk_ids by RRF score descending
         sorted_rrf = sorted(rrf_scores.items(), key=lambda item: item[1], reverse=True)[:limit]
-        
+
         # Load full EvidenceChunk objects for the winners
         final_chunks = []
         for cid, score in sorted_rrf:
@@ -716,8 +715,6 @@ class CacheManager:
 
         logger.debug(f"[Cache] Local parallel hybrid search query='{query_text}' found={len(final_chunks)} chunks via RRF")
         return final_chunks
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -731,7 +728,7 @@ class LLMCache:
     Одна SQLite БД с CacheManager (llm_response_cache таблица).
 
     TTL политика:
-      - None   = постоянный (Planner, Claim Extractor — детерминированы)
+      - None   = permanent (Planner, Claim Extractor — детерминированы)
       - 86400  = 24 часа   (Auditor — корпус может обновиться)
     """
 

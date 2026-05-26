@@ -21,7 +21,7 @@ from zerde.models import (
     VerdictStatus,
 )
 from zerde.prompts.auditor import build_auditor_prompt
-from zerde.utils.llm_client import LLMParseError, cached_llm_call, make_llm_client
+from zerde.utils.llm_client import cached_llm_call, make_llm_client
 
 logger = logging.getLogger(__name__)
 

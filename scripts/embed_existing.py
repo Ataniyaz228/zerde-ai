@@ -45,7 +45,7 @@ async def embed_existing():
         
     print("\n🧠 Generating BGE-M3 vector embeddings for all chunks on CPU (limited to 2 threads to prevent system lag)...")
     
-    chunk_size = 500
+    chunk_size = 50
     loop = asyncio.get_running_loop()
     
     for idx in range(0, len(chunks), chunk_size):
@@ -56,6 +56,7 @@ async def embed_existing():
         await loop.run_in_executor(None, cache.embed_chunks, batch)
         
         gc.collect()
+        await asyncio.sleep(1.0) # Rest between batches to allow memory reclamation and OS CPU cooling
         
     print("\n🎉 All chunks successfully embedded and stored in database!")
     

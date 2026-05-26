@@ -399,7 +399,7 @@ class CacheManager:
             # Generate normalized BGE-M3 embeddings
             embeddings = self._embed_model.encode(
                 new_texts, 
-                batch_size=32, 
+                batch_size=8, 
                 show_progress_bar=False, 
                 normalize_embeddings=True
             )
@@ -455,13 +455,13 @@ class CacheManager:
         import numpy as np
         self._lazy_init_embeddings()
         
-        logger.info(f"[Cache/Vector] Encoding {len(chunks)} chunks in batches of 32 using BGE-M3...")
+        logger.info(f"[Cache/Vector] Encoding {len(chunks)} chunks in batches of 8 using BGE-M3...")
         texts = [(c.content or "") + " " + (c.source_title or "") for c in chunks]
         
         try:
             embeddings = self._embed_model.encode(
                 texts,
-                batch_size=32,
+                batch_size=8,
                 show_progress_bar=True,
                 normalize_embeddings=True
             )
@@ -513,7 +513,7 @@ class CacheManager:
             texts = [(c.content or "") + " " + (c.source_title or "") for c in missing_chunks]
             computed = self._embed_model.encode(
                 texts,
-                batch_size=32,
+                batch_size=8,
                 show_progress_bar=False,
                 normalize_embeddings=True
             )

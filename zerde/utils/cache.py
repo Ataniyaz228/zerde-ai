@@ -230,7 +230,13 @@ class CacheManager:
         logger.warning(f"[Cache] CLEARED: {deleted} chunks deleted")
         return deleted
 
-    async def search_local(self, query_text: str, law_ids: list[str] | None = None, limit: int = 10) -> list[EvidenceChunk]:
+    async def search_local(
+        self,
+        query_text: str,
+        law_ids: list[str] | None = None,
+        articles: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[EvidenceChunk]:
         """
         Ищет чанки в локальном кэше по ключевым словам в content и/или по law_ids.
         Полезно как оффлайн-fallback при ошибках сети/лимитах API.
@@ -255,6 +261,14 @@ class CacheManager:
                 # Также добавим без суффикса _ для надежности
                 if known_code and known_code.endswith("_"):
                     normalized_law_ids.append(known_code[:-1].upper())
+
+        # Нормализация articles
+        normalized_articles = []
+        if articles:
+            for art in articles:
+                art_norm = art.strip().lower()
+                if art_norm:
+                    normalized_articles.append(art_norm)
 
         # Вспомогательная функция для стемминга русских слов
         def stem_russian_word(w: str) -> str:
@@ -316,62 +330,109 @@ class CacheManager:
             return added_count
 
         with self._conn() as conn:
+            # СТРАТЕГИЯ 0: Точный поиск по law_ids и конкретным номерам статей (если запрошены)
+            if normalized_law_ids and normalized_articles:
+                law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                art_conds = " OR ".join(["json_extract(chunk_json, '$.article') = ?" for _ in normalized_articles])
+                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({art_conds}) LIMIT ?"
+                
+                params = []
+                for lid in normalized_law_ids:
+                    params.append(f"%{lid}%")
+                for art in normalized_articles:
+                    params.append(art)
+                params.append(limit)
+                
+                try:
+                    rows = conn.execute(sql, tuple(params)).fetchall()
+                    add_rows(rows)
+                except sqlite3.OperationalError:
+                    pass
+
+            if len(chunks) < limit and not normalized_law_ids and normalized_articles:
+                art_conds = " OR ".join(["json_extract(chunk_json, '$.article') = ?" for _ in normalized_articles])
+                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({art_conds}) LIMIT ?"
+                params = list(normalized_articles) + [limit - len(chunks)]
+                try:
+                    rows = conn.execute(sql, tuple(params)).fetchall()
+                    add_rows(rows)
+                except sqlite3.OperationalError:
+                    pass
+
             # СТРАТЕГИЯ 1: Поиск по law_ids + ВСЕМ отфильтрованным словам (AND)
-                if normalized_law_ids and stemmed_words:
-                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
-                    word_conds = " AND ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words])
-                    sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
-                    
-                    params = []
-                    for lid in normalized_law_ids:
-                        params.append(f"%{lid}%")
-                    for w in stemmed_words:
-                        params.extend([f"%{w}%", f"%{w}%"])
-                    params.append(limit)
-                    
-                    try:
-                        rows = conn.execute(sql, tuple(params)).fetchall()
-                        add_rows(rows)
-                    except sqlite3.OperationalError:
-                        pass
+            if normalized_law_ids and stemmed_words:
+                law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                word_conds = " AND ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words])
+                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
+                
+                params = []
+                for lid in normalized_law_ids:
+                    params.append(f"%{lid}%")
+                for w in stemmed_words:
+                    params.extend([f"%{w}%", f"%{w}%"])
+                params.append(limit)
+                
+                try:
+                    rows = conn.execute(sql, tuple(params)).fetchall()
+                    add_rows(rows)
+                except sqlite3.OperationalError:
+                    pass
 
-                # СТРАТЕГИЯ 2: Поиск по law_ids + ХОТЯ БЫ ОДНОМУ слову (OR)
-                if len(chunks) < limit and normalized_law_ids and stemmed_words:
-                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
-                    word_conds = " OR ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words[:3]])
-                    sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
-                    
-                    params = []
-                    for lid in normalized_law_ids:
-                        params.append(f"%{lid}%")
-                    for w in stemmed_words[:3]:
-                        params.extend([f"%{w}%", f"%{w}%"])
-                    params.append(limit - len(chunks))
-                    
-                    try:
-                        rows = conn.execute(sql, tuple(params)).fetchall()
-                        add_rows(rows)
-                    except sqlite3.OperationalError:
-                        pass
+            # СТРАТЕГИЯ 2: Поиск по law_ids + ХОТЯ БЫ ОДНОМУ слову (OR)
+            if len(chunks) < limit and normalized_law_ids and stemmed_words:
+                law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                word_conds = " OR ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words[:3]])
+                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({word_conds}) LIMIT ?"
+                
+                params = []
+                for lid in normalized_law_ids:
+                    params.append(f"%{lid}%")
+                for w in stemmed_words[:3]:
+                    params.extend([f"%{w}%", f"%{w}%"])
+                params.append(limit - len(chunks))
+                
+                try:
+                    rows = conn.execute(sql, tuple(params)).fetchall()
+                    add_rows(rows)
+                except sqlite3.OperationalError:
+                    pass
 
-                # СТРАТЕГИЯ 3: Только по law_ids (если слова не совпали)
-                if len(chunks) < limit and normalized_law_ids:
-                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
-                    sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) LIMIT ?"
-                    params = [f"%{lid}%" for lid in normalized_law_ids] + [limit - len(chunks)]
-                    try:
-                        rows = conn.execute(sql, tuple(params)).fetchall()
-                        add_rows(rows)
-                    except sqlite3.OperationalError:
-                        pass
+            # СТРАТЕГИЯ 3: Только по law_ids (если слова не совпали)
+            if len(chunks) < limit and normalized_law_ids:
+                law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) LIMIT ?"
+                params = [f"%{lid}%" for lid in normalized_law_ids] + [limit - len(chunks)]
+                try:
+                    rows = conn.execute(sql, tuple(params)).fetchall()
+                    add_rows(rows)
+                except sqlite3.OperationalError:
+                    pass
 
-                # СТРАТЕГИЯ 4: Поиск по всем отфильтрованным словам (AND) без привязки к law_ids
-                if len(chunks) < limit and stemmed_words:
-                    word_conds = " AND ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words])
+            # СТРАТЕГИЯ 4: Поиск по всем отфильтрованным словам (AND) без привязки к law_ids
+            if len(chunks) < limit and stemmed_words:
+                word_conds = " AND ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in stemmed_words])
+                sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
+                
+                params = []
+                for w in stemmed_words:
+                    params.extend([f"%{w}%", f"%{w}%"])
+                params.append(limit - len(chunks))
+                
+                try:
+                    rows = conn.execute(sql, tuple(params)).fetchall()
+                    add_rows(rows)
+                except sqlite3.OperationalError:
+                    pass
+
+            # СТРАТЕГИЯ 5: Поиск по любым словам (OR), исключая чисто числовые короткие запросы для исключения утечек
+            if len(chunks) < limit and stemmed_words:
+                safe_words = [w for w in stemmed_words[:3] if not w.isdigit() or len(w) > 3]
+                if safe_words:
+                    word_conds = " OR ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in safe_words])
                     sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
                     
                     params = []
-                    for w in stemmed_words:
+                    for w in safe_words:
                         params.extend([f"%{w}%", f"%{w}%"])
                     params.append(limit - len(chunks))
                     
@@ -380,24 +441,6 @@ class CacheManager:
                         add_rows(rows)
                     except sqlite3.OperationalError:
                         pass
-
-                # СТРАТЕГИЯ 5: Поиск по любым словам (OR), исключая чисто числовые короткие запросы для исключения утечек
-                if len(chunks) < limit and stemmed_words:
-                    safe_words = [w for w in stemmed_words[:3] if not w.isdigit() or len(w) > 3]
-                    if safe_words:
-                        word_conds = " OR ".join(["(json_extract(chunk_json, '$.content') LIKE ? OR json_extract(chunk_json, '$.source_title') LIKE ?)" for _ in safe_words])
-                        sql = f"SELECT chunk_json FROM evidence_cache WHERE {word_conds} LIMIT ?"
-                        
-                        params = []
-                        for w in safe_words:
-                            params.extend([f"%{w}%", f"%{w}%"])
-                        params.append(limit - len(chunks))
-                        
-                        try:
-                            rows = conn.execute(sql, tuple(params)).fetchall()
-                            add_rows(rows)
-                        except sqlite3.OperationalError:
-                            pass
 
         logger.debug(f"[Cache] Local search query='{query_text}' law_ids={law_ids} found={len(chunks)} chunks")
         return chunks

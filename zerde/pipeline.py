@@ -163,7 +163,10 @@ async def run_pipeline(
     logger.info("[Pipeline] ► Stage 5.5 + 6: Policy Analyst ∥ BM25 Audit (параллельно)")
 
     # C2 Fix: Избегаем in-place мутаций разделяемого объекта analysis и chunks.
-    # Мутируем глубокую копию для аудита (S6), а Policy Analyst (S5.5) читает исходную.
+    # Создаем изолированные глубокие копии для обеих параллельных ветвей (S5.5 и S6).
+    analysis_for_policy = analysis.model_copy(deep=True)
+    active_chunks_for_policy = [c.model_copy(deep=True) for c in active_chunks]
+
     analysis_for_audit = analysis.model_copy(deep=True)
     active_chunks_for_audit = [c.model_copy(deep=True) for c in active_chunks]
 
@@ -173,8 +176,8 @@ async def run_pipeline(
     policy_analysis, audited_analysis = await asyncio.gather(
         run_policy_analyst(
             doc_text=doc_state.normalized_text,
-            analysis=analysis,
-            chunks=active_chunks,
+            analysis=analysis_for_policy,
+            chunks=active_chunks_for_policy,
         ),
         _run_s6(),
     )

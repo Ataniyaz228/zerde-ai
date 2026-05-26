@@ -156,7 +156,7 @@ def _resolve_law_name(raw_id: str) -> str:
 
     # 2. Подстрочный поиск ("Закон РК о государственном имуществе" содержит "государственном имуществе")
     for name, short_id in _LAW_NAME_TO_SHORT_ID.items():
-        if name in key or key in name:
+        if name in key:
             return short_id
 
     # Не удалось резолвить — вернуть как есть, as-is fallback обработает
@@ -171,6 +171,9 @@ _LAW_ID_KNOWN: dict[str, str] = {
     "418-V": "Z1500000418",
     "370-II": "Z030000370_",
     "550-IV": "Z1300000550",
+    "274-IV": "Z100000274_",   # О защите прав потребителей (2010)
+    "11-VI": "Z1600000011",    # О платежах и платежных системах (2016)
+    "239-VII": "Z2500000239",  # О республиканском бюджете на 2026-2028
     "401-II": "Z0300000401",
     "73-V": "Z1300000073",
     "223-VIII": "Z1700000223",
@@ -185,6 +188,10 @@ _LAW_ID_KNOWN: dict[str, str] = {
     # Кодексы РК
     "235-V": "K1400000235",     # КоАП
     "226-V": "K1400000226",     # УК
+    "231-V": "K1400000231",     # УПК
+    "377-V": "K1500000377",     # ГПК
+    "214-VII": "K2500000214",   # Налоговый кодекс
+    "414-I-NEW": "K1500000414", # Трудовой кодекс (новые файлы)
     "350-VI": "K2000000350",
     "212-IV": "K070000212_",
     "1000-XIII": "K940001000_", # ГК (Общая часть)
@@ -279,7 +286,13 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
             url_underscore = f"{base}/rus/docs/{code_base}_"
             url_plain = f"{base}/rus/docs/{code_base}"
 
-            if int(yr) < 12 or (int(yr) >= 90):
+            try:
+                yr_val = int(yr)
+                is_legacy_format = yr_val < 12 or yr_val >= 90
+            except ValueError:
+                is_legacy_format = True
+
+            if is_legacy_format:
                 if url_underscore not in urls:
                     urls.append(url_underscore)
                 if url_plain not in urls:
@@ -360,7 +373,7 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
         # Local DB fallback if CSS/PDF/API failed
         logger.warning(f"[S3/Adilet] All strategies failed for: '{query.query_text[:50]}'. Fallback to search_local.")
         try:
-            chunks = await cache.search_local(query.query_text, law_ids=query.law_ids)
+            chunks = await cache.search_local(query.query_text, law_ids=query.law_ids, articles=query.articles)
             if chunks:
                 logger.info(f"[S3/Adilet] search_local found {len(chunks)} chunks for query: '{query.query_text[:50]}'")
                 # Mark strategy
@@ -836,16 +849,18 @@ async def _llm_split_articles(
 
 
 def _regex_split_articles(text: str) -> list[dict]:
-    """Regex fallback для разбивки текста на статьи."""
+    """Regex fallback для разбивки текста на статьи (поддерживает русский, казахский и английский форматы)."""
     pattern = re.compile(
-        r"(?:Статья|Бап|Article)\s+(\d+[\-\d]*)\s*[.\n]([^\n]*)\n(.*?)(?=(?:Статья|Бап|Article)\s+\d|$)",
+        r"(?:(?:Статья|Article)\s+(\d+[\-\d]*)|(\d+[\-\d]*)-(?:бап|бабы|бабының|бапта))\s*[.\n]([^\n]*)\n(.*?)(?=(?:(?:Статья|Article)\s+\d|(?:\d+)-(?:бап|бабы|бабының|бапта))|$)",
         re.DOTALL | re.IGNORECASE,
     )
     articles = []
     for m in pattern.finditer(text):
-        content = (m.group(2).strip() + "\n" + m.group(3).strip()).strip()
-        articles.append({"article_num": m.group(1), "title": "", "content": content[:3000]})
+        art_num = m.group(1) or m.group(2)
+        content = (m.group(3).strip() + "\n" + m.group(4).strip()).strip()
+        articles.append({"article_num": art_num, "title": "", "content": content[:3000]})
     return articles
+
 
 
 # ---------------------------------------------------------------------------
@@ -1065,6 +1080,21 @@ async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[Evidenc
         return chunks
 
 
+def _extract_law_id_from_url(url: str) -> str | None:
+    """Извлекает и нормализует law_id из URL-адреса Adilet/Wayback."""
+    url_lower = url.lower()
+    # Ищем паттерн /docs/[ZKP]\d{8,10}
+    match = re.search(r"/docs/([zkp]\d{8,10}_?)", url_lower)
+    if match:
+        code = match.group(1).upper()
+        # Проверяем известное соответствие короткому ID
+        for short_id, full_code in _LAW_ID_KNOWN.items():
+            if full_code.upper().rstrip("_") == code.rstrip("_"):
+                return short_id
+        return code
+    return None
+
+
 def _extract_law_id_from_text(title: str, content: str) -> str | None:
     """Извлекает закон (law_id) из веб-результатов с помощью регулярных выражений и ключевых слов."""
     text = (title + " " + content).lower()
@@ -1160,7 +1190,7 @@ def _build_web_chunk(result: dict, query: WebQuery, provider: str | None = None)
         legal_rank=inferred_rank,
         web_tier=tier,
         search_provider=provider,
-        law_id=_extract_law_id_from_text(title, content),
+        law_id=_extract_law_id_from_url(url) or _extract_law_id_from_text(title, content),
         inferred_rank=inferred_rank,
         inferred_rank_confidence=confidence,
         inference_reason=reason,

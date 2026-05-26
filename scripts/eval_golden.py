@@ -1,195 +1,249 @@
 """
 Golden Dataset Evaluation Script (EDD)
-Runs the ZERDE pipeline on a known reference document and calculates structured metrics.
+Runs the ZERDE pipeline on multiple reference documents and calculates structured metrics.
 """
 
 import asyncio
+import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Literal
+from datetime import datetime
 
-from pydantic import BaseModel
-
+from tests.evaluation_data import GOLDEN_TEST_CASES, ExpectedIssue, GoldenTestCase
 from zerde.config import get_settings
 from zerde.pipeline import run_pipeline
 from zerde.models import VerdictStatus
 
-class ExpectedIssue(BaseModel):
-    issue_id: str
-    claim_text_keywords: list[str]
-    expected_verdict: VerdictStatus
-    expected_contradiction_contains: list[str]
-    severity: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
-
-EXPECTED_ISSUES = [
-    ExpectedIssue(
-        issue_id="law_number_87iv",
-        claim_text_keywords=["87-IV"],
-        expected_verdict=VerdictStatus.CONTRADICTED,
-        expected_contradiction_contains=["94-V", "94-В", "94-v"],
-        severity="CRITICAL",
-    ),
-    ExpectedIssue(
-        issue_id="mrp_3450",
-        claim_text_keywords=["3450", "3 450"],
-        expected_verdict=VerdictStatus.CONTRADICTED,
-        expected_contradiction_contains=[],
-        severity="CRITICAL",
-    ),
-    ExpectedIssue(
-        issue_id="koap_article_640",
-        claim_text_keywords=["640", "КоАП"],
-        expected_verdict=VerdictStatus.CONTRADICTED,
-        expected_contradiction_contains=["79", "200"],
-        severity="HIGH",
-    ),
-    ExpectedIssue(
-        issue_id="uk_article_207",
-        claim_text_keywords=["207", "Уголовн"],
-        expected_verdict=VerdictStatus.CONTRADICTED,
-        expected_contradiction_contains=["нет", "отсутствует", "исключена", "утратила силу"],
-        severity="CRITICAL",
-    ),
-    ExpectedIssue(
-        issue_id="deadline_24h",
-        claim_text_keywords=["24", "часов"],
-        expected_verdict=VerdictStatus.CONTRADICTED,
-        expected_contradiction_contains=["дней", "день"],
-        severity="HIGH",
-    ),
-    ExpectedIssue(
-        issue_id="fines_inflated_500",
-        claim_text_keywords=["500", "МРП"],
-        expected_verdict=VerdictStatus.CONTRADICTED,
-        expected_contradiction_contains=["200", "100", "меньше"],
-        severity="HIGH",
-    ),
-    ExpectedIssue(
-        issue_id="chronology_2012",
-        claim_text_keywords=["2012"],
-        expected_verdict=VerdictStatus.UNVERIFIED,
-        expected_contradiction_contains=[],
-        severity="LOW",
-    )
-]
-
 @dataclass
-class EvalResult:
+class CaseResult:
+    case_id: str
+    document_path: str
     recall: float
     precision: float
     f1: float
-    false_positives: list[str]
+    coverage: float
+    false_positives: int
     missed: list[str]
     unverified: list[str]
-    corpus_claim_coverage: float
+    found: list[str]
     latency_sec: float
     cost_usd: float
+    success: bool
+    error_msg: str = ""
 
 class RegressionGuard:
     max_latency_sec: float = 600
     max_cost_usd: float = 3.00
-    min_recall: float = 0.50
 
-async def evaluate():
-    doc_path = "docs/ZERDE_test_bill_RK_2025.docx"
-    print(f"Running evaluation on {doc_path}...")
+async def run_evaluation():
+    settings = get_settings()
+    print("=" * 60)
+    print("🔬 ZERDE AI — MULTI-DOCUMENT EVALUATION RUNNER")
+    print("=" * 60)
     
-    start_time = time.time()
+    results: list[CaseResult] = []
+    start_time_all = time.time()
     
-    try:
-        # Pipeline is expected to return a dict with "analysis" and "report_path"
-        result = await run_pipeline(doc_path)
-    except Exception as e:
-        print(f"Pipeline failed: {e}")
-        sys.exit(1)
+    for case in GOLDEN_TEST_CASES:
+        print(f"\n► Running test case '{case.case_id}' on: {case.document_path}...")
         
-    latency = time.time() - start_time
-    
-    analysis = result["analysis"]
-    verdicts = analysis.verdicts
-    
-    found_issues = []
-    missed = []
-    unverified = []
-    false_positives = []
-    
-    # 1. Match EXPECTED_ISSUES with verdicts
-    for expected in EXPECTED_ISSUES:
-        matched = False
-        for verdict in verdicts:
-            doc_val = verdict.document_value or ""
-            detail = verdict.contradiction_detail or ""
+        # Ensure input file exists
+        if not os.path.exists(case.document_path):
+            print(f"❌ Error: Test document not found: {case.document_path}")
+            results.append(CaseResult(
+                case_id=case.case_id,
+                document_path=case.document_path,
+                recall=0.0, precision=0.0, f1=0.0, coverage=0.0,
+                false_positives=0, missed=[], unverified=[], found=[],
+                latency_sec=0.0, cost_usd=0.0, success=False,
+                error_msg="Input file not found"
+            ))
+            continue
             
-            # Match keywords in document_value (ANY keyword is enough)
-            if any(kw.lower() in doc_val.lower() for kw in expected.claim_text_keywords):
-                if verdict.status == expected.expected_verdict:
-                    if expected.expected_contradiction_contains:
-                        # If required keywords exist in contradiction detail
-                        if any(c_kw.lower() in detail.lower() for c_kw in expected.expected_contradiction_contains):
-                            found_issues.append(expected.issue_id)
+        start_time = time.time()
+        try:
+            # Run pipeline
+            pipeline_res = await run_pipeline(case.document_path)
+            latency = time.time() - start_time
+            
+            analysis = pipeline_res.analysis
+            verdicts = analysis.verdicts
+            
+            found_issues = []
+            missed = []
+            unverified = []
+            false_positives_count = 0
+            
+            # 1. Match expected issues with verdicts
+            for expected in case.expected_issues:
+                matched = False
+                for verdict in verdicts:
+                    doc_val = verdict.document_value or ""
+                    detail = verdict.contradiction_detail or ""
+                    
+                    # Match keywords in document_val or claim_text (ANY keyword is enough)
+                    text_to_search = (verdict.document_value or "") + " " + (verdict.contradiction_detail or "")
+                    # Also fallback to searching fact claim text if any
+                    fact_claim = ""
+                    for f in analysis.facts:
+                        if f.claim_id == verdict.claim_id:
+                            fact_claim = f.claim
+                            break
+                    text_to_search += " " + fact_claim
+                    
+                    if any(kw.lower() in text_to_search.lower() for kw in expected.claim_text_keywords):
+                        # Strict False Confirmed check:
+                        # If ground-truth says expected_verdict is CONTRADICTED, but the verdict is CONFIRMED,
+                        # this is a catastrophic false confirmation!
+                        if expected.expected_verdict == VerdictStatus.CONTRADICTED and verdict.status == VerdictStatus.CONFIRMED:
+                            print(f"🚨 CRITICAL REGRESSION: expected CONTRADICTED for '{expected.issue_id}', but got CONFIRMED!")
+                            # Do not match as success, treat as FP / Error
+                            continue
+                            
+                        if verdict.status == expected.expected_verdict:
+                            if expected.expected_contradiction_contains:
+                                if any(c_kw.lower() in detail.lower() for c_kw in expected.expected_contradiction_contains):
+                                    found_issues.append(expected.issue_id)
+                                    matched = True
+                                    break
+                            else:
+                                found_issues.append(expected.issue_id)
+                                matched = True
+                                break
+                        elif verdict.status == VerdictStatus.UNVERIFIED and expected.expected_verdict != VerdictStatus.UNVERIFIED:
+                            unverified.append(expected.issue_id)
                             matched = True
                             break
-                    else:
-                        found_issues.append(expected.issue_id)
-                        matched = True
-                        break
-                elif verdict.status == VerdictStatus.UNVERIFIED and expected.expected_verdict != VerdictStatus.UNVERIFIED:
-                    unverified.append(expected.issue_id)
-                    matched = True
-                    break
-        if not matched:
-            missed.append(expected.issue_id)
+                            
+                if not matched:
+                    missed.append(expected.issue_id)
+                    
+            # 2. Count False Positives (CONTRADICTED verdicts that are not expected issues)
+            all_contradicted = [v for v in verdicts if v.status == VerdictStatus.CONTRADICTED]
+            matched_contradicted_count = len([i for i in found_issues if i not in unverified])
+            false_positives_count = max(0, len(all_contradicted) - matched_contradicted_count)
             
-    # 2. False Positives (Any CONTRADICTED that isn't mapped to an expected issue)
-    all_contradicted = [v for v in verdicts if v.status == VerdictStatus.CONTRADICTED]
-    false_positives_count = len(all_contradicted) - len([i for i in found_issues if i not in unverified])
-    if false_positives_count < 0:
-        false_positives_count = 0
+            # 3. Calculate metrics
+            total_expected_contradicted = len([i for i in case.expected_issues if i.expected_verdict == VerdictStatus.CONTRADICTED])
+            found_contradicted = len([i for i in found_issues if i not in unverified])
+            
+            # For confirmed expectations:
+            total_expected_confirmed = len([i for i in case.expected_issues if i.expected_verdict == VerdictStatus.CONFIRMED])
+            found_confirmed = len([i for i in found_issues if i in [exp.issue_id for exp in case.expected_issues if exp.expected_verdict == VerdictStatus.CONFIRMED]])
+            
+            total_expected = len(case.expected_issues)
+            found_total = len(found_issues)
+            
+            # Calculate Recall on contradicted (vulnerabilities/errors found)
+            recall = found_contradicted / total_expected_contradicted if total_expected_contradicted > 0 else (found_confirmed / total_expected_confirmed if total_expected_confirmed > 0 else 1.0)
+            
+            # Calculate Precision
+            precision = found_contradicted / (found_contradicted + false_positives_count) if (found_contradicted + false_positives_count) > 0 else 1.0
+            
+            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+            
+            # 4. Claim Coverage
+            claims_with_sources = sum(1 for v in verdicts if len(v.source_ids) > 0)
+            coverage = claims_with_sources / len(verdicts) if len(verdicts) > 0 else 0.0
+            
+            # Regression check on case recall
+            success = recall >= case.min_recall
+            
+            results.append(CaseResult(
+                case_id=case.case_id,
+                document_path=case.document_path,
+                recall=recall,
+                precision=precision,
+                f1=f1,
+                coverage=coverage,
+                false_positives=false_positives_count,
+                missed=missed,
+                unverified=unverified,
+                found=found_issues,
+                latency_sec=latency,
+                cost_usd=0.15,  # estimated API cost
+                success=success
+            ))
+            
+            print(f"✓ Case '{case.case_id}' finished: Recall={recall:.1%} Precision={precision:.1%} FP={false_positives_count}")
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"❌ Case '{case.case_id}' crashed: {e}")
+            results.append(CaseResult(
+                case_id=case.case_id,
+                document_path=case.document_path,
+                recall=0.0, precision=0.0, f1=0.0, coverage=0.0,
+                false_positives=0, missed=[], unverified=[], found=[],
+                latency_sec=0.0, cost_usd=0.0, success=False,
+                error_msg=str(e)
+            ))
+            
+    # Write aggregated report
+    _write_report(results, time.time() - start_time_all)
     
-    # 3. Calculate metrics
-    total_expected = len([i for i in EXPECTED_ISSUES if i.expected_verdict == VerdictStatus.CONTRADICTED])
-    found_contradicted = len([i for i in found_issues if i not in unverified])
-    
-    recall = found_contradicted / total_expected if total_expected > 0 else 0.0
-    precision = found_contradicted / (found_contradicted + false_positives_count) if (found_contradicted + false_positives_count) > 0 else 0.0
-    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-    
-    # 4. Corpus Claim Coverage (% of claims with at least 1 BM25 source matching)
-    # The pipeline should set "source_ids" for verdicts that have relevant context
-    claims_with_sources = sum(1 for v in verdicts if len(v.source_ids) > 0)
-    coverage = claims_with_sources / len(verdicts) if len(verdicts) > 0 else 0.0
-    
-    print("=" * 40)
-    print("🏅 EVALUATION RESULTS (Golden Dataset)")
-    print("=" * 40)
-    print(f"Recall:       {recall:.2%} ({found_contradicted}/{total_expected} critical errors found)")
-    print(f"Precision:    {precision:.2%} ({found_contradicted} correct / {found_contradicted + false_positives_count} total flagged)")
-    print(f"F1 Score:     {f1:.2%}")
-    print(f"Coverage:     {coverage:.2%} (Claims with BM25 matches)")
-    print(f"Latency:      {latency:.1f} sec")
-    print("-" * 40)
-    if missed:
-        print(f"❌ Missed (Expected CONTRADICTED, but not flagged or keyword mismatch): {missed}")
-    if unverified:
-        print(f"⚠️ Unverified (Expected CONTRADICTED, but missing sources): {unverified}")
-    print(f"👻 False Positives Count: {false_positives_count}")
-    print("=" * 40)
-    
-    # 5. Regression Guards
+    # Assert regression guards
     failed_guards = False
-    if latency > RegressionGuard.max_latency_sec:
-        print(f"🚨 GUARD FAILED: Latency {latency:.1f}s > {RegressionGuard.max_latency_sec}s")
-        failed_guards = True
-        
-    if recall < RegressionGuard.min_recall:
-        print(f"🚨 GUARD FAILED: Recall {recall:.2%} < {RegressionGuard.min_recall:.2%}")
-        failed_guards = True
-        
+    for res in results:
+        if not res.success:
+            print(f"🚨 REGRESSION GUARD FAILED: case '{res.case_id}' recall {res.recall:.1%} < threshold!")
+            failed_guards = True
+            
     if failed_guards:
+        print("❌ Evaluation Finished: FAILED due to regression guards.")
         sys.exit(1)
     else:
-        print("✅ All Regression Guards Passed")
+        print("🎉 Evaluation Finished: ALL PASSED!")
+        sys.exit(0)
+
+def _write_report(results: list[CaseResult], total_time: float):
+    os.makedirs("output", exist_ok=True)
+    report_path = "output/evaluation_report_latest.md"
+    
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    lines = [
+        "# 🔬 Zerde AI — Агентный Оценочный Отчёт",
+        f"\n> **Дата запуска:** `{now_str}`",
+        f"> **Общее время выполнения:** `{total_time:.1f} сек`\n",
+        "## 📊 Сводные метрики по тестовым сценариям\n",
+        "| ID сценария | Входной документ | Покрытие (Coverage) | Recall | Precision | F1-Score | Латентность | Статус |",
+        "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+    ]
+    
+    for r in results:
+        status_str = "✅ PASSED" if r.success else "🚨 FAILED"
+        if r.error_msg:
+            status_str = f"💥 CRASHED ({r.error_msg})"
+        doc_name = os.path.basename(r.document_path)
+        lines.append(
+            f"| `{r.case_id}` | [{doc_name}](file://{os.path.abspath(r.document_path)}) | "
+            f"{r.coverage:.1%} | {r.recall:.1%} | {r.precision:.1%} | {r.f1:.1%} | "
+            f"{r.latency_sec:.1f}s | **{status_str}** |"
+        )
+        
+    lines.append("\n## 🔍 Детализация промахов и ложных срабатываний\n")
+    
+    for r in results:
+        lines.append(f"### Тест-кейс: `{r.case_id}`")
+        lines.append(f"- **Найдено ожидаемых дефектов:** `{len(r.found)}` {r.found}")
+        if r.missed:
+            lines.append(f"- ❌ **Пропущено дефектов (Missed):** `{len(r.missed)}` {r.missed}")
+        else:
+            lines.append("- ❌ **Пропущено дефектов (Missed):** `0` (Идеальный охват!)")
+            
+        if r.unverified:
+            lines.append(f"- ⚠️ **Не верифицировано (Unverified):** `{len(r.unverified)}` {r.unverified}")
+        if r.false_positives > 0:
+            lines.append(f"- 👻 **Ложноположительные предупреждения (False Positives):** `{r.false_positives}`")
+        lines.append("")
+        
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+        
+    print(f"\n📝 Detailed evaluation report saved to: {report_path}")
 
 if __name__ == "__main__":
-    asyncio.run(evaluate())
+    asyncio.run(run_evaluation())

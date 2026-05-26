@@ -318,20 +318,20 @@ def test_computed_fields_in_analysis_json():
 
 
 def test_boilerplate_stopwords_tokenization():
-    """Проверяет, что юридический канцелярит фильтруется в _tokenize."""
+    """Проверяет, что юридический канцелярит фильтруется в _tokenize, а ключевые слова сохраняются."""
     from zerde.stages.s6_auditor import _tokenize
     
-    # Чистый канцелярит должен превращаться в пустой список токенов
-    cliche_text = "Настоящий Закон вводится в действие по истечении"
+    # Чистый бесполезный канцелярит (без "закон" / "кодекс") должен превращаться в пустой список
+    cliche_text = "Настоящий вводится в действие по истечении"
     tokens = _tokenize(cliche_text)
     assert not tokens, f"Boilerplate clichés should yield empty tokens, got {tokens}"
     
-    # Смешанный текст должен сохранять только содержательные слова
+    # Смешанный текст должен сохранять содержательные слова и ключевые юридические термины (закон/кодекс)
     mixed_text = "Настоящий Закон вводится в действие по истечении шести месяцев"
     tokens_mixed = _tokenize(mixed_text)
     assert "шести" in tokens_mixed
     assert "месяцев" in tokens_mixed
-    assert "закон" not in tokens_mixed
+    assert "закон" in tokens_mixed, "закон should be preserved for high BM25 recall"
 
 
 def test_check_topology_metadata_filtering():

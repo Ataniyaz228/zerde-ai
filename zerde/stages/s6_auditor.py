@@ -93,22 +93,14 @@ _STOP_WORDS = frozenset([
     "негізінде",    # на основании
     "орай",          # в связи с
     # --- Казахский юридический канцелярит ---
-    "заң",           # закон
-    "кодекс",        # кодекс (уже есть в русских, но дублируем для единообразия)
-    "кодексі",       # кодекс (с аффиксом)
-    "бап",           # статья
-    "бабы",          # статья (притяжательная форма)
-    "тармақ",        # пункт
-    "тармағы",       # пункт (притяжательная форма)
     "республикасы",  # республика (притяжательная форма)
     "қазақстан",     # казахстан
-    "қр",            # РК (Қазақстан Республикасы)
     "қолданысқа",   # в действие (о вступлении закона)
     "енгізіледі",   # вводится
     "жарияланған",  # опубликованный
     # --- Русский юридический канцелярит (казахстанский контекст) ---
-    "настоящий", "закон", "вводится", "действие", "истечении", "официального",
-    "опубликования", "статья", "республика", "казахстан", "рк",
+    "настоящий", "вводится", "действие", "истечении", "официального",
+    "опубликования", "республика", "казахстан",
     "внести", "изменения", "дополнения", "некоторые", "законодательные",
     "акты", "вопросам",
 ])
@@ -222,7 +214,17 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
     # 2. Search text and entities for common aliases
     text_lower = (claim.claim_text + " " + claim.quote).lower()
     for alias, resolved in _COMMON_LAW_NAME_MAP.items():
-        if alias in text_lower:
+        clean_alias = alias.strip()
+        if not clean_alias:
+            continue
+        # Используем границы слов для коротких аббревиатур (длиной <= 3 символа),
+        # чтобы избежать ложных совпадений внутри слов (например, "ак" в "акт", "актісі", "жақсы").
+        if len(clean_alias) <= 3:
+            pattern = rf"\b{re.escape(clean_alias)}\b"
+        else:
+            pattern = re.escape(clean_alias)
+            
+        if re.search(pattern, text_lower, re.I | re.U):
             law_ids.extend(resolved)
             
     # 3. Regex match standard law formats in text (e.g. № 413-IV or 1000-XIII)
@@ -579,6 +581,17 @@ def audit_analysis(
         
         pros_list = [f"Подтверждено {n_confirmed} из {n_total} анализируемых утверждений законопроекта."]
         
+        # Наполняем cons список в AnalysisJSON для рендеринга
+        analysis.cons = []
+        if n_contradicted > 0:
+            analysis.cons.append(f"Выявлено {n_contradicted} противоречий с действующим законодательством Республики Казахстан.")
+        if n_unverified_risks > 0:
+            analysis.cons.append(f"Не удалось верифицировать {n_unverified_risks} критических/высоких утверждений из-за отсутствия необходимых источников в собранном корпусе.")
+        if analysis.negative_space:
+            analysis.cons.append(f"Выявлено {len(analysis.negative_space)} регуляторных пробелов или коллизий в законопроекте.")
+        if not analysis.cons:
+            analysis.cons.append("Критических коллизий или неустраненных противоречий не обнаружено.")
+
         confirmed_list = [v for v in analytical_verdicts if v.status == VerdictStatus.CONFIRMED]
         contradictions_list = [v for v in analytical_verdicts if v.status == VerdictStatus.CONTRADICTED]
         unverified_list = [v for v in analytical_verdicts if v.status == VerdictStatus.UNVERIFIED]
@@ -660,11 +673,17 @@ class ZerdeBM25:
         ]
         self._bm25 = BM25Okapi(tokenized_corpus)
 
-        # Нормализационный фактор: max score по корпусу
-        # Используем первый документ как запрос для оценки масштаба
-        sample_query = _tokenize(corpus_index[self._ids[0]].content[:200])
-        raw_scores = self._bm25.get_scores(sample_query)
-        self._max_score = float(np.max(raw_scores)) if len(raw_scores) > 0 else 1.0
+        # Стабильный нормализационный фактор: вычисляем self-scores для всех документов корпуса
+        self_scores = []
+        for cid in self._ids:
+            tokens = _tokenize(corpus_index[cid].content[:200])
+            if tokens:
+                raw_scores = self._bm25.get_scores(tokens)
+                if len(raw_scores) > 0:
+                    self_scores.append(float(np.max(raw_scores)))
+        
+        # Берем медиану self-scores для стабильной шкалы, с минимумом 1.0
+        self._max_score = float(np.median(self_scores)) if self_scores else 1.0
         if self._max_score < 0.001:
             self._max_score = 1.0
 
@@ -981,10 +1000,26 @@ def _check_topology(
     if claim:
         referenced_law_ids = _extract_referenced_law_ids(claim)
 
+    # Strict Cross-Domain Check: Предотвращает ложное подтверждение статей разных доменов
+    text_lower = (fact.claim + " " + (claim.claim_text if claim else "")).lower()
+    is_koap_claim = "коап" in text_lower or "әқбтк" in text_lower or "административ" in text_lower
+    is_gk_claim = "гражданск" in text_lower or " гк" in text_lower or "азаматтық" in text_lower or "акрк" in text_lower
+
     found = []
     for sid in valid_ids:
         if sid in corpus_index:
             chunk = corpus_index[sid]
+            chunk_law = (chunk.law_id or "").upper()
+            
+            # Если claim про КоАП, а чанк из Гражданского кодекса -> отсекаем (C1 Fix)
+            if is_koap_claim and any(_are_law_ids_synonymous(chunk_law, gk_id) for gk_id in ["1000-XIII", "309-II", "K940001000"]):
+                logger.warning(f"[S6/Cross-Domain] Rejected Civil Code chunk '{sid[:12]}' for KoAP claim '{fact.fact_id}'")
+                continue
+            # Если claim про ГК, а чанк из КоАП -> отсекаем
+            if is_gk_claim and _are_law_ids_synonymous(chunk_law, "235-V"):
+                logger.warning(f"[S6/Cross-Domain] Rejected KoAP chunk '{sid[:12]}' for Civil Code claim '{fact.fact_id}'")
+                continue
+
             # Enforce law_id matching if claim explicitly references specific laws
             if referenced_law_ids and chunk.law_id:
                 if not any(_are_law_ids_synonymous(chunk.law_id, ref_id) for ref_id in referenced_law_ids):

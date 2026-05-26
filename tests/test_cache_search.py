@@ -77,3 +77,35 @@ async def test_cache_search_local(tmp_path):
     results = await manager.search_local("закон кодекс информационная система", limit=1)
     assert len(results) == 1
     assert results[0].chunk_id == "chunk2"
+
+
+@pytest.mark.asyncio
+async def test_cache_dynamic_healing(tmp_path):
+    """Проверяет динамическое исправление устаревших/неверных legal_rank из кэша (Dynamic Cache Healing)."""
+    db_file = tmp_path / "test_cache_healing.db"
+    manager = CacheManager(db_path=str(db_file))
+
+    # Создаем чанк с неверным legal_rank (MINISTERIAL_ORDER = Rank 7)
+    # Но с URL, который по новым правилам v9.5 должен быть CODE (Rank 2)
+    outdated_chunk = EvidenceChunk(
+        chunk_id="chunk_healing_test",
+        source_url="https://adilet.zan.kz/rus/docs/K1400000235",
+        source_title="КоАП РК статья 235",
+        content="Нарушение законодательства о персональных данных",
+        legal_rank=LegalRank.MINISTERIAL_ORDER,  # Rank 7 (outdated cache entry)
+        law_id="235-V",
+        article="235"
+    )
+
+    await manager.put(outdated_chunk)
+
+    # При загрузке чанк должен динамически исцелиться до LegalRank.CODE (Rank 2)
+    healed_chunk = await manager.get("chunk_healing_test")
+    assert healed_chunk is not None
+    assert healed_chunk.legal_rank == LegalRank.CODE
+    assert healed_chunk.inferred_rank == LegalRank.CODE
+
+    # Также проверим, что в search_local чанки тоже исцеляются
+    results = await manager.search_local("персональных данных")
+    assert len(results) == 1
+    assert results[0].legal_rank == LegalRank.CODE

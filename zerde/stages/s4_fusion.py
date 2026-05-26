@@ -390,6 +390,8 @@ def _detect_temporal_conflicts(chunks: list[EvidenceChunk]) -> None:
                     )
 
     # Text-based temporal detection (для web-источников без метаданных effective_date)
+    # Сравниваем только чанки из РАЗНЫХ источников (разные base URL).
+    # Статьи одного закона из одного источника — это одна редакция, не конфликт.
     law_map: dict[str, list[EvidenceChunk]] = {}
     for chunk in chunks:
         if chunk.law_id and not chunk.effective_date:
@@ -404,6 +406,12 @@ def _detect_temporal_conflicts(chunks: list[EvidenceChunk]) -> None:
             chunk_years.append(years)
         for (i, years_a), (j, years_b) in combinations(enumerate(chunk_years), 2):
             if not years_a or not years_b:
+                continue
+            # Skip: chunks from the same source document (same base URL)
+            # e.g. different articles of the same law fetched in one batch
+            base_i = group[i].source_url.split("#")[0].split("?")[0]
+            base_j = group[j].source_url.split("#")[0].split("?")[0]
+            if base_i == base_j:
                 continue
             min_gap = min(abs(ya - yb) for ya in years_a for yb in years_b)
             if min_gap > 2:

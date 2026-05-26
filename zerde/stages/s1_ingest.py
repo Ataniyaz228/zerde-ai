@@ -259,6 +259,13 @@ def _detect_language(text: str) -> str:
     Определяет язык через langdetect.
     Fallback: эвристика по кириллице если langdetect упадёт.
     """
+    # 0. Эвристика по уникальным казахским кириллическим буквам
+    sample = text[:3000]
+    sample_lower = sample.lower()
+    kk_cyrillic_chars = set("әіңғүұқөһ")
+    if any(c in kk_cyrillic_chars for c in sample_lower):
+        return "kk"
+
     try:
         from langdetect import DetectorFactory, detect
         DetectorFactory.seed = 0  # Детерминированность

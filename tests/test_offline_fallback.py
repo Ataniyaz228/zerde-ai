@@ -272,3 +272,395 @@ class TestResolveLawName:
         assert _resolve_law_name("Гражданский Кодекс РК (Общая Часть)") == "1000-XIII"
         assert _resolve_law_name("КоАП") == "235-V"
         assert _resolve_law_name("коап") == "235-V"
+
+
+# ===========================================================================
+# Тесты V9.3: Вычисляемые поля, иерархический поиск и фильтрация по метаданным
+# ===========================================================================
+
+def test_computed_fields_in_analysis_json():
+    """Проверяет динамическое вычисление pros и recommendation в AnalysisJSON."""
+    from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus
+    
+    # 1. С дефолтными пустыми значениями
+    verdicts = [
+        ClaimVerdict(claim_id="claim_0001", status=VerdictStatus.CONFIRMED),
+        ClaimVerdict(claim_id="claim_0002", status=VerdictStatus.UNVERIFIED),
+        ClaimVerdict(claim_id="claim_0003", status=VerdictStatus.CONTRADICTED),
+    ]
+    analysis = AnalysisJSON(
+        analysis_id="test_id",
+        source_doc_id="test_doc",
+        plan_id="test_plan",
+        verdicts=verdicts,
+    )
+    
+    # Должен вычисляться динамически
+    assert "Подтверждено 1 из 3" in analysis.pros[0]
+    assert "1 подтверждено" in analysis.recommendation
+    assert "1 опровергнуто" in analysis.recommendation
+    assert "1 не верифицировано" in analysis.recommendation
+    
+    # 2. При мутации verdicts (вручную меняем статус одного вердикта)
+    verdicts[1].status = VerdictStatus.CONFIRMED
+    # И свойства pros / recommendation мгновенно отражают изменения!
+    assert "Подтверждено 2 из 3" in analysis.pros[0]
+    assert "2 подтверждено" in analysis.recommendation
+    assert "1 опровергнуто" in analysis.recommendation
+    assert "0 не верифицировано" in analysis.recommendation
+    
+    # 3. При задании пользовательских custom значений
+    analysis.custom_pros = ["Мой кастомный про"]
+    analysis.custom_recommendation = "Моя кастомная рекомендация"
+    
+    assert analysis.pros == ["Мой кастомный про"]
+    assert analysis.recommendation == "Моя кастомная рекомендация"
+
+
+def test_boilerplate_stopwords_tokenization():
+    """Проверяет, что юридический канцелярит фильтруется в _tokenize."""
+    from zerde.stages.s6_auditor import _tokenize
+    
+    # Чистый канцелярит должен превращаться в пустой список токенов
+    cliche_text = "Настоящий Закон вводится в действие по истечении"
+    tokens = _tokenize(cliche_text)
+    assert not tokens, f"Boilerplate clichés should yield empty tokens, got {tokens}"
+    
+    # Смешанный текст должен сохранять только содержательные слова
+    mixed_text = "Настоящий Закон вводится в действие по истечении шести месяцев"
+    tokens_mixed = _tokenize(mixed_text)
+    assert "шести" in tokens_mixed
+    assert "месяцев" in tokens_mixed
+    assert "закон" not in tokens_mixed
+
+
+def test_check_topology_metadata_filtering():
+    """Проверяет фильтрацию по law_id в _check_topology."""
+    from zerde.models import DocumentClaim, ClaimType, ClaimSeverity, Fact, ValidationStatus
+    from zerde.stages.s6_auditor import _check_topology
+    
+    claim = DocumentClaim(
+        claim_id="claim_0001",
+        claim_text="Изменения в Гражданский кодекс статьи 207",
+        claim_type=ClaimType.LEGAL_REF,
+        severity=ClaimSeverity.CRITICAL,
+        entities=["1000-XIII"],
+    )
+    
+    fact = Fact(
+        fact_id="fact_0001",
+        claim_id="claim_0001",
+        claim=claim.claim_text,
+        source_ids=["gk_chunk_1"],
+    )
+    
+    # 1. Корректный law_id -> Проходит проверку
+    corpus_index = {
+        "gk_chunk_1": EvidenceChunk(
+            chunk_id="gk_chunk_1",
+            source_url="http://adilet.zan.kz/rus/docs/K940001000_",
+            source_title="ГК РК",
+            content="Статья 207. Ответственность учредителя...",
+            legal_rank=LegalRank.CODE,
+            web_tier=WebTier.TIER_1,
+            law_id="1000-XIII",
+        )
+    }
+    
+    assert _check_topology(fact, ["gk_chunk_1"], corpus_index, claim) is True
+    
+    # 2. Неверный law_id (Закон о политических партиях) -> Отклоняется
+    corpus_index_mismatch = {
+        "gk_chunk_1": EvidenceChunk(
+            chunk_id="gk_chunk_1",
+            source_url="http://adilet.zan.kz/rus/docs/Z090000122_",
+            source_title="Закон о партиях",
+            content="Статья 2. Настоящий закон вводится...",
+            legal_rank=LegalRank.LAW_RK,
+            web_tier=WebTier.TIER_1,
+            law_id="Z090000122_",
+        )
+    }
+    
+    assert _check_topology(fact, ["gk_chunk_1"], corpus_index_mismatch, claim) is False
+
+
+def test_v9_3_bugfixes():
+    """Проверяет новые исправления v9.3: обратную совместимость кэша, парсинг law_id веб-чанков, reliability и косвенные ссылки."""
+    from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus, ClaimSeverity
+    from zerde.stages.s3_gather import _extract_law_id_from_text
+    from zerde.stages.s6_auditor import audit_analysis, _extract_referenced_law_ids, _COMMON_LAW_NAME_MAP
+    from zerde.models import DocumentClaim, ClaimType
+    
+    # 1. Проверяем обратную совместимость десериализации (BUG-5)
+    legacy_data = {
+        "analysis_id": "test_legacy",
+        "source_doc_id": "doc_123",
+        "plan_id": "plan_456",
+        "pros": ["Старый плюс 1", "Старый плюс 2"],
+        "recommendation": "Старая общая рекомендация",
+        "verdicts": [],
+        "facts": []
+    }
+    # Должно пройти валидацию без ValidationError и перенести значения в custom_*
+    model = AnalysisJSON.model_validate(legacy_data)
+    assert model.custom_pros == ["Старый плюс 1", "Старый плюс 2"]
+    assert model.custom_recommendation == "Старая общая рекомендация"
+    assert model.pros == ["Старый плюс 1", "Старый плюс 2"]
+    assert model.recommendation == "Старая общая рекомендация"
+    
+    # 2. Проверяем извлечение law_id из веб-результатов (BUG-4)
+    assert _extract_law_id_from_text("О внесении изменений в Гражданский Кодекс РК", "нормы статьи 207...") == "1000-XIII"
+    assert _extract_law_id_from_text("Нарушения по КоАП РК штрафы", "согласно статье 79...") == "235-V"
+    assert _extract_law_id_from_text("Уголовный кодекс РК", "статья 207...") == "226-V"
+    assert _extract_law_id_from_text("закон о персональных данных 94-V", "согласие субъекта...") == "94-V"
+    
+    # 3. Проверяем, что reliability = None, если 0 реальных подтверждений (BUG-1)
+    analysis = AnalysisJSON(
+        analysis_id="test_rel",
+        source_doc_id="doc_123",
+        plan_id="plan_456",
+        verdicts=[
+            # Только виртуальные/неподтвержденные или пустые источники
+            ClaimVerdict(claim_id="claim_0001", status=VerdictStatus.CONFIRMED, source_ids=["UNLINKED"], severity=ClaimSeverity.MEDIUM),
+            ClaimVerdict(claim_id="claim_0002", status=VerdictStatus.UNVERIFIED, source_ids=[], severity=ClaimSeverity.MEDIUM),
+        ],
+    )
+    audited = audit_analysis(analysis, [])
+    assert audited.overall_reliability is None, "Надежность должна быть None, если нет реальных подтверждений физическим корпусом."
+    
+    # 4. Проверяем расширенные косвенные ссылки (BUG-6)
+    claim_tax = DocumentClaim(
+        claim_id="c_tax",
+        claim_text="в соответствии с налоговым законодательством",
+        claim_type=ClaimType.NORMATIVE,
+        severity=ClaimSeverity.HIGH
+    )
+    claim_budget = DocumentClaim(
+        claim_id="c_budget",
+        claim_text="согласно нормам бюджетного законодательства Республики Казахстан",
+        claim_type=ClaimType.NORMATIVE,
+        severity=ClaimSeverity.HIGH
+    )
+    assert "Налоговый кодекс" in _extract_referenced_law_ids(claim_tax)
+    assert "Бюджетный кодекс" in _extract_referenced_law_ids(claim_budget)
+
+
+@pytest.mark.asyncio
+async def test_v9_4_metadata_first_search():
+    """
+    Проверяет, что Metadata-first поиск (Шаг 1) точно сопоставляет
+    утверждение и чанк по law_id и номеру статьи, минуя BM25.
+    """
+    from zerde.models import DocumentClaim, ClaimType, ClaimSeverity
+    from zerde.stages.s6_auditor import _exact_metadata_search, _extract_article_from_claim
+    
+    claim = DocumentClaim(
+        claim_id="claim_m1",
+        claim_text="В соответствии со статьей 44 Гражданского кодекса",
+        quote="статья 44 Гражданского кодекса",
+        claim_type=ClaimType.LEGAL_REF,
+        severity=ClaimSeverity.HIGH
+    )
+    
+    # 1. Извлечение статьи
+    assert _extract_article_from_claim(claim) == "44"
+    
+    # 2. Прямой metadata-поиск
+    chunk_1 = EvidenceChunk(
+        chunk_id="chunk_m1",
+        source_url="http://adilet.zan.kz/rus/docs/K940001000_",
+        source_title="Гражданский кодекс",
+        content="Текст статьи 44 о юридических лицах...",
+        legal_rank=LegalRank.CODE,
+        law_id="1000-XIII",
+        article="44"
+    )
+    chunk_2 = EvidenceChunk(
+        chunk_id="chunk_m2",
+        source_url="http://adilet.zan.kz/rus/docs/K940001000_",
+        source_title="Гражданский кодекс",
+        content="Текст статьи 45...",
+        legal_rank=LegalRank.CODE,
+        law_id="1000-XIII",
+        article="45"
+    )
+    
+    corpus = {"chunk_m1": chunk_1, "chunk_m2": chunk_2}
+    candidates = _exact_metadata_search(claim, corpus)
+    assert candidates == ["chunk_m1"]
+
+
+def test_v9_4_multi_signal_ranking():
+    """
+    Проверяет многофакторный LegalRank классификатор для веб-страниц.
+    """
+    from zerde.utils.legal_scorer import infer_legal_rank_from_web_content
+    
+    # 1. Точное совпадение Кодекса на Expert домене -> CODE (Rank 2)
+    rank, conf, reason = infer_legal_rank_from_web_content(
+        tier=WebTier.TIER_2,
+        title="Гражданский кодекс Республики Казахстан (Общая часть)",
+        content="Статья 1. Отношения, регулируемые гражданским законодательством",
+        url="http://zakon.kz/docs/civil_code"
+    )
+    assert rank == LegalRank.CODE
+    assert conf >= 0.8
+    assert "Strict Code pattern match" in reason
+    
+    # 2. Блог с упоминанием «этического кодекса» -> Fallback к TIER_3 rank (MEDIA_UNKNOWN)
+    rank_fp, conf_fp, reason_fp = infer_legal_rank_from_web_content(
+        tier=WebTier.TIER_3,
+        title="Новый этический кодекс компании",
+        content="Мы приняли этический кодекс поведения для сотрудников.",
+        url="https://medium.com/@user/ethics"
+    )
+    assert rank_fp == LegalRank.MEDIA_UNKNOWN
+    assert "Fallback to WebTier TIER_3" in reason_fp
+
+
+def test_v9_4_mathematical_reliability_and_stats():
+    """
+    Проверяет математическую модель калибрации надежности и stats_builder.
+    """
+    from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus, ClaimSeverity, Fact, ValidationStatus
+    from zerde.stages.s6_auditor import audit_analysis
+    
+    chunk = EvidenceChunk(
+        chunk_id="real_c1",
+        source_url="http://adilet.zan.kz/docs",
+        source_title="Закон РК",
+        content="Утверждение 1 Действующая норма права",
+        legal_rank=LegalRank.LAW_RK,
+        law_id="50-V"
+    )
+    dummy = [
+        EvidenceChunk(
+            chunk_id=f"dummy_{i}",
+            source_url="http://adilet.zan.kz/docs",
+            source_title="Закон РК",
+            content="Совершенно другой текст и слова для наполнения базы",
+            legal_rank=LegalRank.LAW_RK
+        )
+        for i in range(4)
+    ]
+    
+    # Создаем тестовый анализ с:
+    # - 1 CONFIRMED (CRITICAL, с реальным источником)
+    # - 1 CONTRADICTED (MEDIUM)
+    analysis = AnalysisJSON(
+        analysis_id="test_m94",
+        source_doc_id="doc_123",
+        plan_id="plan_456",
+        facts=[
+            Fact(fact_id="f1", claim_id="claim_1", claim="Утверждение 1", source_ids=["real_c1"], confidence=1.0, validation_status=ValidationStatus.HIGH, bm25_score=0.9),
+            Fact(fact_id="f2", claim_id="claim_2", claim="Утверждение 2", source_ids=["real_c1"], confidence=0.8, validation_status=ValidationStatus.LOW, bm25_score=0.3),
+        ],
+        verdicts=[
+            ClaimVerdict(claim_id="claim_1", status=VerdictStatus.CONFIRMED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+            ClaimVerdict(claim_id="claim_2", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.MEDIUM),
+        ]
+    )
+    
+    audited = audit_analysis(analysis, [chunk] + dummy)
+    
+    # 1. Проверяем наличие stats
+    assert audited.stats is not None
+    assert audited.stats.n_total == 2
+    assert audited.stats.n_confirmed == 1
+    assert audited.stats.n_contradicted == 1
+    
+    # 2. Проверяем динамические свойства-делегаты
+    assert "Подтверждено 1 из 2" in audited.pros[0]
+    assert "1 подтверждено" in audited.recommendation
+    assert "1 опровергнуто" in audited.recommendation
+    
+    # 3. Проверяем надежность (не должна быть None, так как есть реальный подтвержденный источник)
+    assert audited.overall_reliability is not None
+    assert 0.0 <= audited.overall_reliability <= 1.0
+
+
+def test_v9_5_new_features():
+    """
+    Проверяет:
+    1. Синонимичный маппинг law_id (_are_law_ids_synonymous) с регистронезависимостью.
+    2. Детерминированное определение ранга по URL-паттернам Әділет.
+    3. Ограничение снизу для Reliability Score (min 5% при n_real_confirmed > 0).
+    4. Сохранение пробелов в датах/сроках вступления в силу.
+    """
+    # 1. Синонимы
+    from zerde.stages.s6_auditor import _are_law_ids_synonymous
+    assert _are_law_ids_synonymous("k940001000", "1000-XIII")
+    assert _are_law_ids_synonymous("K940001000", "1000-xiii")
+    assert _are_law_ids_synonymous("235-V", "k1400000235")
+    assert _are_law_ids_synonymous("350-vi", "K2000000350")
+    assert not _are_law_ids_synonymous("1000-XIII", "235-V")
+
+    # 2. Ранг по URL-паттернам
+    from zerde.utils.legal_scorer import infer_legal_rank_from_web_content
+    # Кодекс (k)
+    r_code, _, _ = infer_legal_rank_from_web_content(
+        tier=WebTier.TIER_1, title="КоАП", content="штрафы", url="https://adilet.zan.kz/rus/docs/K1400000235"
+    )
+    assert r_code == LegalRank.CODE
+
+    # Закон (z)
+    r_law, _, _ = infer_legal_rank_from_web_content(
+        tier=WebTier.TIER_1, title="Закон о госимуществе", content="имущество", url="https://adilet.zan.kz/rus/docs/Z1100000413"
+    )
+    assert r_law == LegalRank.LAW_RK
+
+    # Приказ министерства (v)
+    r_order, _, _ = infer_legal_rank_from_web_content(
+        tier=WebTier.TIER_1, title="Приказ Минздрава", content="нормативы", url="https://adilet.zan.kz/rus/docs/V2400000155"
+    )
+    assert r_order == LegalRank.MINISTERIAL_ORDER
+
+    # 3. Лимит Reliability 5% при тяжелых коллизиях
+    from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus, ClaimSeverity, Fact, ValidationStatus
+    from zerde.stages.s6_auditor import audit_analysis
+    
+    chunk = EvidenceChunk(
+        chunk_id="real_c1",
+        source_url="http://adilet.zan.kz/docs",
+        source_title="Закон РК",
+        content="Норма права",
+        legal_rank=LegalRank.LAW_RK,
+        law_id="50-V"
+    )
+    
+    # Конфигурируем экстремальный случай:
+    # 1 подтвержденный факт, но ОЧЕНЬ много критических противоречий (p_conflict > 1.0)
+    analysis = AnalysisJSON(
+        analysis_id="test_m95_rel",
+        source_doc_id="doc_123",
+        plan_id="plan_456",
+        facts=[
+            Fact(fact_id="f1", claim_id="claim_1", claim="Норма права", source_ids=["real_c1"], confidence=1.0, validation_status=ValidationStatus.HIGH, bm25_score=0.9),
+        ],
+        verdicts=[
+            ClaimVerdict(claim_id="claim_1", status=VerdictStatus.CONFIRMED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+            ClaimVerdict(claim_id="claim_2", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+            ClaimVerdict(claim_id="claim_3", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+            ClaimVerdict(claim_id="claim_4", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+            ClaimVerdict(claim_id="claim_5", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+            ClaimVerdict(claim_id="claim_6", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+            ClaimVerdict(claim_id="claim_7", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+            ClaimVerdict(claim_id="claim_8", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
+        ]
+    )
+    
+    dummy = [
+        EvidenceChunk(chunk_id=f"dummy_{i}", source_url="http://adilet.zan.kz/docs", source_title="Закон", content="Текст", legal_rank=LegalRank.LAW_RK)
+        for i in range(4)
+    ]
+    
+    audited = audit_analysis(analysis, [chunk] + dummy)
+    # Должно быть строго 0.05 (5%), а не 0.0 из-за лимита надежности снизу
+    assert audited.overall_reliability == 0.05
+
+    # 4. Сохранение пробелов в датах/сроках
+    from zerde.stages.s2_5_claim_extractor import _regex_extract
+    claims = _regex_extract("вводится в действие по истечении шести месяцев со дня его опубликования")
+    # Проверяем, что в сущностях пробелы сохранились!
+    assert any(any("шести месяцев со дня" in e for e in c.entities) for c in claims)

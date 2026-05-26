@@ -47,30 +47,45 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
-    # Номера законов: "Закон № 94-V", "№ 87-IV ЗРК", "Закона РК от ... № 235-VII"
-    # НЕ ловим номера выпусков: "№ 13-14, ст. 205" (Ведомости Парламента)
-    (re.compile(r"(?:Закон\w*|Кодекс\w*|ЗРК)\s+[^№]*?№\s*(\d{2,4}[-‐–]\w{1,5}(?:\s*ЗРК)?)", re.I | re.U), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
-    (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx\u0406\u0456]{1,5}(?:\s*ЗРК)?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
-    # Ссылки на статьи КоАП: ст. 79 КоАП, статье 640 КоАП
+    # Номера законов: "Закон № 94-V", "№ 87-IV ЗРК", "Законы / ҚРЗ"
+    (re.compile(r"(?:Закон\w*|Кодекс\w*|ЗРК|Заңы*|ҚРЗ)\s+[^№]*?№\s*(\d{2,4}[-‐–]\w{1,5}(?:\s*(?:ЗРК|ҚРЗ))?)", re.I | re.U), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
+    (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx\u0406\u0456]{1,5}(?:\s*(?:ЗРК|ҚРЗ))?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
+    
+    # Ссылки на статьи КоАП (RU + KK)
     (re.compile(r"стать[яиею]\s*(\d+(?:[-.]?\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
-    # Ссылки на статьи УК: "статьей 207 Уголовного кодекса", "ст. 207 УК"
+    (re.compile(r"ӘҚБтК\w*\s*(?:-\s*)?(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
+    (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)(?:[^0-9\n]*?)ӘҚБтК", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
+    
+    # Ссылки на статьи УК (RU + KK)
     (re.compile(r"стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\s+(?:Уголовн\w+\s+[Кк]одекс\w*|УК)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
-    # Ссылки на статьи любого Кодекса: "в статье 196", "статью 105 изложить"
-    (re.compile(r"(?:в\s+)?стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\b(?!\s*КоАП|\s*УК|\s*,\s*ст)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
+    (re.compile(r"ҚК\w*\s*(?:-\s*)?(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
+    (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)(?:[^0-9\n]*?)ҚК", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
+    
+    # Ссылки на статьи любого Кодекса (RU + KK)
+    (re.compile(r"(?:в\s+)?стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
+    (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
+    
     # Ссылки на ППРК: Постановление Правительства №142, ППРК №909
     (re.compile(r"(?:ППРК|Постановлени[яею]\s+Правительства)[^№]*№?\s*(\d+)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "pprkz_num"),
-    # Штрафы в МРП: 500 МРП, "10 000 (десяти тысяч) МРП"
-    (re.compile(r"(\d[\d\s]*)\s*(?:\([^)]*\)\s*)?МРП", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.CRITICAL, "fine_mrp"),
-    # Размер МРП в тенге: МРП составляет 3 450 тенге
-    (re.compile(r"МРП[^.]*?(\d[\d\s]+)\s*тенге", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.HIGH, "mrp_value"),
-    # Сроки уведомлений в часах: "не позднее 24 (двадцати четырех) часов", "в течение 72 часов"
+    
+    # Штрафы в МРП / АЕК (RU + KK)
+    (re.compile(r"(\d[\d\s]*)\s*(?:\([^)]*\)\s*)?(?:МРП|АЕК)", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.CRITICAL, "fine_mrp"),
+    (re.compile(r"айлық\s+есептік\s+көрсеткіш\w*\s*(?:дегеніміз\s*)?(\d[\d\s]*)\s*(?:\([^)]*\)\s*)?(?:еселенген|еселі|мөлшер)", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.CRITICAL, "fine_mrp"),
+    # Размер МРП / АЕК в тенге (RU + KK)
+    (re.compile(r"(?:МРП|АЕК)[^.]*?(\d[\d\s]+)\s*тенге", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.HIGH, "mrp_value"),
+    
+    # Сроки уведомлений в часах: "не позднее 24 часов", "в течение 72 часов"
     (re.compile(r"(?:в\s*течени[ие]|не\s*позднее)\s*(\d+)\s*(?:\([^)]*\)\s*)?час", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "hours_deadline"),
-    # Сроки в рабочих днях: в течение 10 рабочих дней
+    # Сроки в рабочих днях (RU + KK)
     (re.compile(r"в\s*течени[ие]\s*(\d+)\s*рабочих\s*дн", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "workdays_deadline"),
+    (re.compile(r"(\d+)\s*жұмыс\s*күні\s*ішінде", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "workdays_deadline"),
+    
     # Даты вступления в силу: с 1 января 2025 года, с 1 июля 2026
     (re.compile(r"с\s+(\d{1,2}\s+\w+\s+\d{4})\s*года", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "effective_date"),
-    # Вводится в действие: "по истечении шести месяцев со дня", "по истечении десяти дней"
+    # Вводится в действие / қолданысқа енгізіледі (RU + KK)
     (re.compile(r"вводится\s+в\s+действие\s+(.*?(?:дня|после))", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "enforcement_date"),
+    (re.compile(r"қолданысқа\s+енгізіледі\s+(.*?(?:бастап|кейін))", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "enforcement_date"),
+    (re.compile(r"қолданысқа\s+енгiзiледi\s+(.*?(?:бастап|кейін))", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "enforcement_date"),
 ]
 
 # Паттерн для извлечения года в контексте
@@ -84,12 +99,15 @@ _STOP_WORDS_CLAIM = frozenset([
     "ст", "стат", "номер", "присутствует", "существует",
 ])
 
-# V7.0: Модальные глаголы — если есть, claim НЕ структурный
+# V7.0: Модальные глаголы — если есть, claim НЕ структурный (RU + KK)
 _MODAL_VERBS = frozenset([
     "обязан", "должен", "запрещается", "влечет", "устанавливается",
     "предусмотрено", "установлено", "нарушение", "ответственность", "штраф",
     "вводится", "приостанавливается", "прекращается", "возобновляется",
     "подлежит", "является", "несет", "вправе", "может", "должны",
+    # Kazakh modal verbs / terms
+    "міндетті", "тиіс", "салынады", "әкеп", "соғады", "белгіленеді", "айқындалады",
+    "көзделген", "жауаптылық", "айыппұл", "тоқтатылады", "құқылы", "болады",
 ])
 
 
@@ -106,10 +124,10 @@ def _normalize_claim_text(text: str) -> str:
     return " ".join(tokens)
 
 
-# V7.0: Числовые показатели норм — если есть, claim НЕ структурный
+# V7.0: Числовые показатели норм — если есть, claim НЕ структурный (RU + KK)
 _NORMATIVE_UNITS_RE = re.compile(
-    r"\b\d+[\s\xa0]*(?:мрп|мзп|тенге|часов?|дней?|месяц|лет|процент|%)",
-    re.I,
+    r"\b\d+[\s\xa0]*(?:мрп|аек|мзп|тәм|тенге|теңге|часов?|сағат|дней?|күн|күні|месяц|ай|лет|жыл|процент|пайыз|%)",
+    re.I | re.U,
 )
 
 
@@ -120,6 +138,24 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
     Severity не участвует в решении (regex-claims тоже могут быть structural).
     """
     text_lower = claim.claim_text.lower()
+
+    # 0. Исключаем переходные/вступительные положения самого законопроекта (commencement clauses)
+    # Например: "Настоящий Закон вводится в действие по истечении...", "по истечении шести месяцев со дня..."
+    commencement_markers = [
+        "вводится в действие",
+        "вступает в силу",
+        "вступлении в силу",
+        "по истечении шести месяцев со дня",
+        "по истечении десяти календарных дней",
+        "по истечении одного года со дня",
+        # Казахские маркеры вступления в силу
+        "қолданысқа енгізіледі",
+        "қолданысқа енгiзiледi",
+        "жарияланған күнінен бастап",
+        "алғашқы ресми жарияланған",
+    ]
+    if any(m in text_lower for m in commencement_markers):
+        return True
 
     # 1. Если есть модальные глаголы — всегда нормативное, не структурное
     if any(v in text_lower for v in _MODAL_VERBS):
@@ -194,8 +230,11 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
             for m in pattern.finditer(line):
                 entity = m.group(1).strip().replace("\u2011", "-").replace("\u2010", "-")
                 entity = entity.replace("\u0406", "I").replace("\u0456", "i")
-                # Нормализуем пробелы в числах
-                entity_clean = re.sub(r"\s+", "", entity)
+                # Нормализуем пробелы в числах (сохраняем пробелы для дат/сроков вступления)
+                if tag in ("enforcement_date", "effective_date"):
+                    entity_clean = re.sub(r"\s+", " ", entity).strip()
+                else:
+                    entity_clean = re.sub(r"\s+", "", entity)
 
                 claim_text = f"Документ утверждает: {tag}={entity_clean} (строка: «{line.strip()[:120]}»)"
                 if claim_text in seen_texts:

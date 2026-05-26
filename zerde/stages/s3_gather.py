@@ -39,7 +39,11 @@ from zerde.models import (
     WebTier,
 )
 from zerde.utils.cache import CacheManager
-from zerde.utils.legal_scorer import classify_web_tier, infer_legal_rank_from_tier
+from zerde.utils.legal_scorer import (
+    classify_web_tier,
+    infer_legal_rank_from_tier,
+    infer_legal_rank_from_web_content,
+)
 from zerde.utils.llm_client import make_llm_client
 
 logger = logging.getLogger(__name__)
@@ -388,7 +392,6 @@ async def _try_adilet_xhr(query: AdiletQuery, cache: CacheManager) -> list[Evide
     async with httpx.AsyncClient(
         timeout=settings.adilet_timeout_seconds,
         follow_redirects=True,
-        verify=False,
         headers={"Accept": "application/json", "User-Agent": "ZERDE/6.2"},
     ) as client:
         for law_id in query.law_ids:
@@ -480,7 +483,6 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> 
     async with httpx.AsyncClient(
         timeout=settings.adilet_timeout_seconds,
         follow_redirects=True,
-        verify=False,
         headers={
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
             "Accept-Language": "ru-RU,ru;q=0.9",
@@ -537,7 +539,7 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> 
 async def _search_adilet_for_query(query: AdiletQuery, base: str) -> list[str]:
     """Поиск на adilet.zan.kz по query_text."""
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(
                 f"{base}/rus/search",
                 params={"q": query.query_text, "type": "docs"},
@@ -715,7 +717,7 @@ async def _try_adilet_pdf_ocr(query: AdiletQuery, cache: CacheManager) -> list[E
     client = make_llm_client(settings)
     chunks: list[EvidenceChunk] = []
 
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True, verify=False) as http:
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as http:
         for law_id in query.law_ids[:2]:  # Максимум 2 PDF
             candidate_urls = _normalize_law_id_to_adilet_urls(law_id, base)
 
@@ -1063,6 +1065,63 @@ async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[Evidenc
         return chunks
 
 
+def _extract_law_id_from_text(title: str, content: str) -> str | None:
+    """Извлекает закон (law_id) из веб-результатов с помощью регулярных выражений и ключевых слов."""
+    text = (title + " " + content).lower()
+    
+    # 1. Regex match for standard law formats in Kazakhstan (e.g. 94-V, 226-V, 413-IV)
+    import re
+    match = re.search(r"\b\d+[-‐–][IVXivx\u0406\u0456]{1,5}\b", text)
+    if match:
+        return match.group(0).upper().replace(" ", "").replace("\u0406", "I").replace("\u0456", "i")
+        
+    # 2. Common code / major law mappings — Russian
+    if "гражданск" in text or " гк" in text:
+        return "1000-XIII" # Гражданский кодекс РК
+    if "уголовн" in text or " ук рк" in text:
+        return "226-V" # Уголовный кодекс РК
+    if "коап" in text or "об административных правонарушениях" in text:
+        return "235-V" # КоАП РК
+    if "земельн" in text or " зк" in text:
+        return "442-II" # Земельный кодекс РК
+    if "предпринимательск" in text or " пк" in text:
+        return "Предпринимательский кодекс"
+    if "налогов" in text or " нк" in text:
+        return "Налоговый кодекс"
+    if "бюджетн" in text or " бк" in text:
+        return "Бюджетный кодекс"
+    if "трудов" in text or " тк" in text:
+        return "Трудовой кодекс"
+    if "экологическ" in text or " эк" in text:
+        return "Экологический кодекс"
+    if "персональных данных" in text or "закон о пд" in text or " 94-v" in text:
+        return "94-V" # Закон о персональных данных
+
+    # 3. Common code / major law mappings — Kazakh
+    if "әқбтк" in text or "әкімшілік құқық бұзушылық" in text:
+        return "235-V"  # КоАП РК (ӘҚБтК)
+    if "қылмыстық кодекс" in text or " ққ" in text:
+        return "226-V"  # УК РК (ҚК)
+    if "азаматтық кодекс" in text or " ак" in text:
+        return "1000-XIII"  # ГК РК (АК)
+    if "жер кодексі" in text or " жк" in text:
+        return "442-II"  # ЗК РК (ЖК)
+    if "кәсіпкерлік кодекс" in text:
+        return "Предпринимательский кодекс"  # ПК (Кәсіпкерлік кодексі)
+    if "салық кодексі" in text:
+        return "Налоговый кодекс"  # НК (Салық кодексі)
+    if "еңбек кодексі" in text:
+        return "Трудовой кодекс"  # ТК (Еңбек кодексі)
+    if "экологиялық кодекс" in text:
+        return "Экологический кодекс"  # ЭК (Экологиялық кодекс)
+    if "дербес деректер" in text:
+        return "94-V"  # Закон о персональных данных (Дербес деректер туралы)
+    if "рақымшылық" in text or "амнистия" in text:
+        return "235-V"  # Амнистия = КоАП/УК context
+        
+    return None
+
+
 def _build_web_chunk(result: dict, query: WebQuery, provider: str | None = None) -> EvidenceChunk | None:
     """Конвертирует результат поиска → EvidenceChunk. None для BLACKLIST."""
     url: str = result.get("url", "")
@@ -1087,15 +1146,24 @@ def _build_web_chunk(result: dict, query: WebQuery, provider: str | None = None)
 
     chunk_id = hashlib.sha256(content.encode()).hexdigest()
 
+    title = result.get("title", "")
+    inferred_rank, confidence, reason = infer_legal_rank_from_web_content(
+        tier, title, content, url
+    )
+
     return EvidenceChunk(
         chunk_id=chunk_id,
         source_url=url,
-        source_title=result.get("title", urlparse(url).netloc),
+        source_title=title or urlparse(url).netloc,
         content=content,
         content_summary=content[:300],
-        legal_rank=infer_legal_rank_from_tier(tier),
+        legal_rank=inferred_rank,
         web_tier=tier,
         search_provider=provider,
+        law_id=_extract_law_id_from_text(title, content),
+        inferred_rank=inferred_rank,
+        inferred_rank_confidence=confidence,
+        inference_reason=reason,
     )
 
 
@@ -1105,19 +1173,19 @@ def _build_web_chunk(result: dict, query: WebQuery, provider: str | None = None)
 
 
 def _infer_adilet_rank(law_title: str) -> LegalRank:
-    """Определяет LegalRank по названию НПА."""
+    """Определяет LegalRank по названию НПА (русский + казахский)."""
     title_lower = law_title.lower()
-    if any(w in title_lower for w in ["кодекс", "kodeks"]):
+    if any(w in title_lower for w in ["кодекс", "kodeks", "кодексі"]):
         return LegalRank.CODE
-    if any(w in title_lower for w in ["конституционный закон"]):
+    if any(w in title_lower for w in ["конституционный закон", "конституциялық заң"]):
         return LegalRank.CONSTITUTIONAL_LAW
-    if any(w in title_lower for w in ["международный", "конвенция", "договор"]):
+    if any(w in title_lower for w in ["международный", "конвенция", "договор", "халықаралық", "конвенция", "шарт"]):
         return LegalRank.INTERNATIONAL_TREATY
-    if any(w in title_lower for w in ["указ президента"]):
+    if any(w in title_lower for w in ["указ президента", "президент жарлығы"]):
         return LegalRank.PRESIDENTIAL_DECREE
-    if any(w in title_lower for w in ["постановление правительства", "ппрк"]):
+    if any(w in title_lower for w in ["постановление правительства", "ппрк", "үкімет қаулысы"]):
         return LegalRank.GOVERNMENT_RESOLUTION
-    if any(w in title_lower for w in ["приказ", "инструкция"]):
+    if any(w in title_lower for w in ["приказ", "инструкция", "бұйрық", "нұсқаулық"]):
         return LegalRank.MINISTERIAL_ORDER
     return LegalRank.LAW_RK
 

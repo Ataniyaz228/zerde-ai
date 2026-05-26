@@ -58,3 +58,27 @@ def test_extract_year_context():
     # Year is extracted as part of contextual claims if needed, but _regex_extract returns DocumentClaim objects.
     # We mainly care that it doesn't crash and returns the correct claims.
     assert True
+
+
+def test_is_structural_claim_commencement():
+    from zerde.stages.s2_5_claim_extractor import _is_structural_claim, DocumentClaim, ClaimType, ClaimSeverity
+    
+    # 1. "вводится в действие по истечении шести месяцев со дня его опубликования"
+    c1 = DocumentClaim(
+        claim_id="c1",
+        claim_type=ClaimType.TEMPORAL,
+        severity=ClaimSeverity.HIGH,
+        claim_text="вводится в действие по истечении шести месяцев со дня его опубликования",
+        quote="вводится в действие по истечении шести месяцев со дня его опубликования"
+    )
+    assert _is_structural_claim(c1) is True
+
+    # 2. "настоящий закон вступает в силу"
+    c2 = DocumentClaim(
+        claim_id="c2",
+        claim_type=ClaimType.TEMPORAL,
+        severity=ClaimSeverity.HIGH,
+        claim_text="настоящий Закон вступает в силу со дня его первого официального опубликования",
+        quote="настоящий Закон вступает в силу со дня его первого официального опубликования"
+    )
+    assert _is_structural_claim(c2) is True

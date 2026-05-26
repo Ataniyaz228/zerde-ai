@@ -22,6 +22,34 @@ from zerde.models import EvidenceChunk
 
 logger = logging.getLogger(__name__)
 
+
+def _heal_chunk_rank(chunk: EvidenceChunk) -> EvidenceChunk:
+    """Dynamically re-evaluates the legal_rank of a cached chunk to prevent outdated ranks."""
+    if not chunk.source_url:
+        return chunk
+    try:
+        from zerde.models import WebTier
+        from zerde.utils.legal_scorer import infer_legal_rank_from_web_content
+        tier = chunk.web_tier or WebTier.TIER_2
+        new_rank, conf, reason = infer_legal_rank_from_web_content(
+            tier=tier,
+            title=chunk.source_title or "",
+            content=chunk.content or "",
+            url=chunk.source_url,
+        )
+        if chunk.legal_rank != new_rank:
+            logger.info(
+                f"[Cache/healing] Healed legal_rank of chunk {chunk.chunk_id[:12]}… "
+                f"from {chunk.legal_rank} to {new_rank} (URL: {chunk.source_url})"
+            )
+            chunk.legal_rank = new_rank
+            chunk.inferred_rank = new_rank
+            chunk.inferred_rank_confidence = conf
+            chunk.inference_reason = reason
+    except Exception as e:
+        logger.warning(f"[Cache/healing] Failed to heal chunk {chunk.chunk_id[:12]}…: {e}")
+    return chunk
+
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS evidence_cache (
     chunk_id     TEXT PRIMARY KEY,
@@ -98,6 +126,17 @@ class CacheManager:
         try:
             data = json.loads(row["chunk_json"])
             chunk = EvidenceChunk.model_validate(data)
+            old_rank = chunk.legal_rank
+            chunk = _heal_chunk_rank(chunk)
+            if chunk.legal_rank != old_rank:
+                try:
+                    with self._conn() as conn:
+                        conn.execute(
+                            "UPDATE evidence_cache SET chunk_json = ? WHERE chunk_id = ?",
+                            (chunk.model_dump_json(), chunk.chunk_id),
+                        )
+                except Exception as ex:
+                    logger.warning(f"[Cache/get] Failed to update healed rank: {ex}")
             logger.debug(f"[Cache] HIT: {chunk_id[:12]}…")
             return chunk
         except Exception as e:
@@ -257,6 +296,17 @@ class CacheManager:
                 try:
                     data = json.loads(r["chunk_json"])
                     chunk = EvidenceChunk.model_validate(data)
+                    old_rank = chunk.legal_rank
+                    chunk = _heal_chunk_rank(chunk)
+                    if chunk.legal_rank != old_rank:
+                        try:
+                            with self._conn() as conn:
+                                conn.execute(
+                                    "UPDATE evidence_cache SET chunk_json = ? WHERE chunk_id = ?",
+                                    (chunk.model_dump_json(), chunk.chunk_id),
+                                )
+                        except Exception as ex:
+                            logger.warning(f"[Cache/search_local] Failed to update healed rank: {ex}")
                     if chunk.chunk_id not in seen_chunk_ids:
                         chunks.append(chunk)
                         seen_chunk_ids.add(chunk.chunk_id)

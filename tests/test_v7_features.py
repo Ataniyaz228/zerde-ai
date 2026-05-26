@@ -124,6 +124,7 @@ class TestConflictsBridge:
             status=VerdictStatus.CONTRADICTED,
             contradiction_detail="Штраф превышает лимит КоАП (2000 МРП)",
             confidence="HIGH",
+            severity=ClaimSeverity.HIGH,
         )
         result = _build_conflicts_from_verdicts([v])
         assert len(result) == 1

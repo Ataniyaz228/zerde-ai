@@ -128,7 +128,20 @@ async def render_report(
             if pfx not in prefix_index:
                 prefix_index[pfx] = cid
 
-    active_chunks = [c for c in chunks if not c.is_duplicate]
+    virtual_ids = {"UNLINKED", "reference_data"}
+    referenced_ids = set()
+    for fact in analysis.facts:
+        for sid in fact.source_ids:
+            if sid in virtual_ids or sid.startswith("reference_"):
+                continue
+            full_id = prefix_index.get(sid, sid)
+            referenced_ids.add(full_id)
+
+    # Нормативная база содержит только чанки, которые реально привязаны к фактам в отчёте или имеют конфликты.
+    active_chunks = [
+        c for c in chunks 
+        if not c.is_duplicate and (c.chunk_id in referenced_ids or c.is_conflict)
+    ]
     conflict_chunks = [c for c in active_chunks if c.is_conflict]
 
     sections = [

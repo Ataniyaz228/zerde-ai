@@ -168,7 +168,7 @@ async def run_pipeline(
     active_chunks_for_audit = [c.model_copy(deep=True) for c in active_chunks]
 
     async def _run_s6():
-        return audit_analysis(analysis_for_audit, active_chunks_for_audit)
+        return audit_analysis(analysis_for_audit, active_chunks_for_audit, claims)
 
     policy_analysis, audited_analysis = await asyncio.gather(
         run_policy_analyst(

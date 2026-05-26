@@ -143,6 +143,12 @@ class Settings(BaseSettings):
         le=1.0,
         description="BM25 порог для статуса MEDIUM (ниже → LOW)",
     )
+    bm25_fallback_threshold: float = Field(
+        default=0.40,
+        ge=0.0,
+        le=1.0,
+        description="BM25 порог для автоматического corpus-wide поиска (fallback).",
+    )
 
     # -----------------------------------------------------------------------
     # Cache (SQLite)

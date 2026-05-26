@@ -342,23 +342,11 @@ def _parse_auditor_response(
         ))
 
     contradictions = [v for v in verdicts if v.status == VerdictStatus.CONTRADICTED]
-    confirmed_list = [v for v in verdicts if v.status == VerdictStatus.CONFIRMED]
-    unverified_list = [v for v in verdicts if v.status == VerdictStatus.UNVERIFIED]
 
-    pros = raw.get("pros", [f"Подтверждено {len(confirmed_list)} утверждений"])
     cons = raw.get("cons", [])
     for v in contradictions:
         if v.contradiction_detail:
             cons.append(f"{v.claim_id}: {v.contradiction_detail[:200]}")
-
-    recommendation = raw.get("recommendation", "")
-    if not recommendation:
-        recommendation = (
-            f"Аудит: проверено {len(verdicts)}, подтверждено {len(confirmed_list)}, "
-            f"опровергнуто {len(contradictions)}, не верифицировано {len(unverified_list)}."
-        )
-        if contradictions:
-            recommendation += f" КРИТИЧЕСКИ: {len(contradictions)} ошибок."
 
     return AnalysisJSON(
         analysis_id=analysis_id,
@@ -368,10 +356,10 @@ def _parse_auditor_response(
         conclusions=[],
         negative_space=neg_space,
         normative=[],
-        pros=pros if isinstance(pros, list) else [str(pros)],
+        custom_pros=[],  # Empty for dynamic computed_field evaluation in v9.4
         cons=cons if isinstance(cons, list) else [str(cons)],
         affected_parties=[],
-        recommendation=recommendation,
+        custom_recommendation="",  # Empty for dynamic computed_field evaluation in v9.4
         conflict_chunk_ids_referenced=[],
         llm_model_used=model,
         verdicts=verdicts,

@@ -296,6 +296,9 @@ class EvidenceChunk(BaseModel):
     # Правовая атрибуция
     legal_rank: LegalRank
     web_tier: WebTier | None = Field(default=None, description="Только для Web-источников")
+    inferred_rank: LegalRank | None = Field(default=None, description="Inferred rank from content multi-signal scorer")
+    inferred_rank_confidence: float | None = Field(default=None, description="Confidence of inferred rank [0.0, 1.0]")
+    inference_reason: str | None = Field(default=None, description="Explanation of why this rank was inferred")
 
     # Атрибуты НПА (только для Adilet-источников)
     law_id: str | None = None
@@ -407,8 +410,42 @@ class ConflictRecord(BaseModel):
     severity: ClaimSeverity
 
 
+class AnalysisStats(BaseModel):
+    """Иммутабельное агрегированное состояние статистики аудита (v9.4)."""
+
+    n_total: int
+    n_confirmed: int
+    n_contradicted: int
+    n_unverified: int
+    n_critical_contradicted: int
+    n_high_contradicted: int
+    n_unverified_risks: int
+    n_real_confirmed: int
+    reliability: float | None
+    pros: list[str]
+    recommendation: str
+
+
 class AnalysisJSON(BaseModel):
     """Выход Этапа 5: полная аналитическая структура."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_fields(cls, data: dict) -> dict:
+        if isinstance(data, dict):
+            # Migrate 'pros' -> 'custom_pros'
+            if "pros" in data and "custom_pros" not in data:
+                val = data.pop("pros")
+                data["custom_pros"] = val if isinstance(val, list) else [str(val)]
+            elif "pros" in data:
+                data.pop("pros")
+            
+            # Migrate 'recommendation' -> 'custom_recommendation'
+            if "recommendation" in data and "custom_recommendation" not in data:
+                data["custom_recommendation"] = data.pop("recommendation")
+            elif "recommendation" in data:
+                data.pop("recommendation")
+        return data
 
     analysis_id: str
     source_doc_id: str
@@ -421,10 +458,10 @@ class AnalysisJSON(BaseModel):
     normative: list[NormativeAssessment] = Field(default_factory=list)
 
     # Итоговые блоки
-    pros: list[str] = Field(default_factory=list)
+    custom_pros: list[str] = Field(default_factory=list, description="Пользовательские или сгенерированные LLM плюсы")
     cons: list[str] = Field(default_factory=list)
     affected_parties: list[AffectedParty] = Field(default_factory=list)
-    recommendation: str = Field(default="")
+    custom_recommendation: str = Field(default="", description="Пользовательские или сгенерированные LLM рекомендации")
 
     # Мета
     conflict_chunk_ids_referenced: list[str] = Field(
@@ -457,6 +494,9 @@ class AnalysisJSON(BaseModel):
         description="Конфликты, выявленные Auditor (S5/S6), для рендеринга",
     )
 
+    # V9.4: Иммутабельное состояние статистики
+    stats: AnalysisStats | None = None
+
 
     @computed_field  # type: ignore[misc]
     @property
@@ -471,3 +511,34 @@ class AnalysisJSON(BaseModel):
     @property
     def unverified_facts_count(self) -> int:
         return sum(1 for f in self.facts if f.validation_status == ValidationStatus.UNVERIFIED)
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def pros(self) -> list[str]:
+        if self.stats is not None:
+            return self.stats.pros
+        if not self.custom_pros:
+            confirmed_count = sum(1 for v in self.verdicts if v.status == VerdictStatus.CONFIRMED)
+            return [f"Подтверждено {confirmed_count} из {len(self.verdicts)} анализируемых утверждений законопроекта."]
+        return self.custom_pros
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def recommendation(self) -> str:
+        if self.stats is not None:
+            return self.stats.recommendation
+        if not self.custom_recommendation:
+            verdicts = self.verdicts
+            contradictions = [v for v in verdicts if v.status == VerdictStatus.CONTRADICTED]
+            confirmed_list = [v for v in verdicts if v.status == VerdictStatus.CONFIRMED]
+            unverified_list = [v for v in verdicts if v.status == VerdictStatus.UNVERIFIED]
+            
+            rec = (
+                f"Юридический аудит завершен. Из {len(verdicts)} выдвинутых утверждений: "
+                f"{len(confirmed_list)} подтверждено действующим законодательством Республики Казахстан, "
+                f"{len(contradictions)} опровергнуто, {len(unverified_list)} не верифицировано (отсутствуют в предоставленном корпусе)."
+            )
+            if contradictions:
+                rec += f" КРИТИЧЕСКИ: {len(contradictions)} ошибок."
+            return rec
+        return self.custom_recommendation

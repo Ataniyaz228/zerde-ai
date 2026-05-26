@@ -6,6 +6,21 @@ SQLite Cache Manager
 
 from __future__ import annotations
 
+import os
+import sys
+
+# Crucial CPU thread limits set at the absolute top BEFORE any numpy/torch imports
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+
+# Force SentenceTransformers to CPU to completely bypass GPU VRAM crashes on 6GB VRAM GPUs (like RTX 4050),
+# unless ZERDE_USE_CUDA=1 is explicitly set.
+if os.getenv("ZERDE_USE_CUDA") != "1":
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 import asyncio
 import hashlib
 import json
@@ -288,12 +303,6 @@ class CacheManager:
             
             # 1. Lazy load SentenceTransformers
             try:
-                import os
-                # Limit CPU threads to 2 to prevent system lagging and IDE crashes
-                os.environ["OMP_NUM_THREADS"] = "2"
-                os.environ["MKL_NUM_THREADS"] = "2"
-                os.environ["OPENBLAS_NUM_THREADS"] = "2"
-                
                 import torch
                 torch.set_num_threads(2)
                 
@@ -302,9 +311,10 @@ class CacheManager:
                 logger.error(f"[Cache/Vector] Failed to import sentence-transformers/torch: {e}")
                 raise e
 
-            # Use GPU if available, else CPU
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            logger.info(f"[Cache/Vector] Using device: {device}")
+            # Use GPU only if ZERDE_USE_CUDA=1 and CUDA is available
+            use_cuda = os.getenv("ZERDE_USE_CUDA") == "1"
+            device = "cuda" if (use_cuda and torch.cuda.is_available()) else "cpu"
+            logger.info(f"[Cache/Vector] Using device: {device} (Thread limit: {torch.get_num_threads()})")
             
             # Load BGE-M3 in FP16 if on CUDA to save VRAM, else FP32 on CPU
             model_kwargs = {}

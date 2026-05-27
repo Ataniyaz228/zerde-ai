@@ -1,4 +1,4 @@
-"""
+\"\"\"
 Pipeline Orchestrator
 Связывает все этапы в единый асинхронный пайплайн.
 
@@ -6,7 +6,7 @@ Pipeline Orchestrator
   - Stage 2.5: Claim Extractor (гибридный regex + LLM)
   - Stage 5: run_auditor() вместо run_analyst() — claim-by-claim верификация
   - reference_data.py: детерминированные вердикты без LLM
-"""
+\"\"\"
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from pathlib import Path
 
 from zerde.config import get_settings
 from zerde.models import (
+    AdiletFallbackStrategy,
     AnalysisJSON,
     ClaimExtractionResult,
     DocumentState,
@@ -34,15 +35,16 @@ from zerde.stages.s5_5_verifier import verify_contradictions
 from zerde.stages.s5_analyst import run_auditor
 from zerde.stages.s6_auditor import audit_analysis
 from zerde.stages.s7_render import render_report
+from zerde.utils.law_registry import get_registry
 
 logger = logging.getLogger(__name__)
 
 
 class ZerdePipelineResult(dict):
-    """
+    \"\"\"
     Контейнер для результатов полного пайплайна.
     Доступ: result.doc_state, result.analysis, result.report_path, etc.
-    """
+    \"\"\"
 
     doc_state: DocumentState
     query_plan: QueryPlan
@@ -55,25 +57,25 @@ class ZerdePipelineResult(dict):
     elapsed_seconds: float
 
     def __getattr__(self, name: str) -> any:
-        if name.startswith("_"):
-            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
+        if name.startswith(\"_\"):
+            raise AttributeError(f\"'ZerdePipelineResult' object has no attribute '{name}'\")
         import typing
         hints = typing.get_type_hints(type(self))
         if name not in hints:
-            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
+            raise AttributeError(f\"'ZerdePipelineResult' object has no attribute '{name}'\")
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
+            raise AttributeError(f\"'ZerdePipelineResult' object has no attribute '{name}'\")
 
     def __setattr__(self, name: str, value: any) -> None:
-        if name.startswith("_"):
+        if name.startswith(\"_\"):
             super().__setattr__(name, value)
             return
         import typing
         hints = typing.get_type_hints(type(self))
         if name not in hints:
-            raise AttributeError(f"Cannot set invalid attribute '{name}' on 'ZerdePipelineResult'")
+            raise AttributeError(f\"Cannot set invalid attribute '{name}' on 'ZerdePipelineResult'\")
         self[name] = value
 
 
@@ -81,7 +83,7 @@ async def run_pipeline(
     file_path: str | Path,
     output_path: str | Path | None = None,
 ) -> ZerdePipelineResult:
-    """
+    \"\"\"
     Запускает полный пайплайн от файла до Markdown-отчёта.
 
     Архитектура:
@@ -93,24 +95,24 @@ async def run_pipeline(
 
     Returns:
         ZerdePipelineResult с результатами всех этапов.
-    """
+    \"\"\"
     get_settings()
     start_time = time.perf_counter()
 
-    logger.info("=" * 60)
-    logger.info("Pipeline Start")
-    logger.info(f"Input: {file_path}")
-    logger.info("=" * 60)
+    logger.info(\"=\" * 60)
+    logger.info(\"Pipeline Start\")
+    logger.info(f\"Input: {file_path}\")
+    logger.info(\"=\" * 60)
 
     # ─── ЭТАП 1: Document Ingestion ───────────────────────────────────────
     t1 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 1: Document Ingestion")
+    logger.info(\"[Pipeline] ► Stage 1: Document Ingestion\")
     doc_state = await ingest_document(file_path)
-    logger.info(f"[Pipeline] ✓ Stage 1 done ({time.perf_counter() - t1:.2f}s) — {doc_state.char_count} chars")
+    logger.info(f\"[Pipeline] ✓ Stage 1 done ({time.perf_counter() - t1:.2f}s) — {doc_state.char_count} chars\")
 
     # ─── ЭТАП 2 + 2.5 + 2.7: LLM Planner, Claim Extractor и Self-Check (ПАРАЛЛЕЛЬНО) ────────────
     t2 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 2 + 2.5 + 2.7: LLM Planner, Claim Extractor и Self-Check (параллельно)")
+    logger.info(\"[Pipeline] ► Stage 2 + 2.5 + 2.7: LLM Planner, Claim Extractor и Self-Check (параллельно)\")
     query_plan, claims, selfcheck_claims = await asyncio.gather(
         build_query_plan(doc_state),
         extract_claims(doc_state),
@@ -118,30 +120,128 @@ async def run_pipeline(
     )
     if selfcheck_claims:
         claims.claims.extend(selfcheck_claims)
-        logger.info(f"[Pipeline] ✓ Stage 2.7 — {len(selfcheck_claims)} internal contradictions added")
+        logger.info(f\"[Pipeline] ✓ Stage 2.7 — {len(selfcheck_claims)} internal contradictions added\")
     elapsed_2 = time.perf_counter() - t2
     logger.info(
-        f"[Pipeline] ✓ Stage 2 done — {query_plan.total_queries} queries | "
-        f"Stage 2.5 + 2.7 done — {claims.total_count} claims ({len(claims.critical_claims)} critical) "
-        f"| время: {elapsed_2:.2f}s"
+        f\"[Pipeline] ✓ Stage 2 done — {query_plan.total_queries} queries | \"
+        f\"Stage 2.5 + 2.7 done — {claims.total_count} claims ({len(claims.critical_claims)} critical) \"
+        f\"| время: {elapsed_2:.2f}s\"
     )
 
     # ─── ЭТАП 3: Data Gathering ───────────────────────────────────────────
     t3 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 3: Evidence Gathering")
+    logger.info(\"[Pipeline] ► Stage 3: Evidence Gathering\")
     raw_chunks = await gather_evidence(query_plan)
-    logger.info(f"[Pipeline] ✓ Stage 3 done ({time.perf_counter() - t3:.2f}s) — {len(raw_chunks)} chunks")
+    logger.info(f\"[Pipeline] ✓ Stage 3 done ({time.perf_counter() - t3:.2f}s) — {len(raw_chunks)} chunks\")
+
+    # ─── ЭТАП 3.5: Local RAG Injection ─────────────────────────────
+    # Прямой запрос локальных чанков для всех law_ids из плана.
+    # Гарантирует что локальные чанки попадают в S5/S6 даже если adilet.zan.kz HTTP недоступен.
+    #
+    # v2: Используем ПРЯМОЙ SQL-запрос по метаданным (law_id + article) вместо
+    #     search_local, который через reranker отсеивает нужные статьи.
+    try:
+        from zerde.config import get_settings as _gs
+        from zerde.utils.cache import CacheManager as _CM
+        registry = get_registry()
+        _cache_for_rag = _CM(_gs().cache_db_path)
+        existing_chunk_ids = {c.chunk_id for c in raw_chunks}
+
+        # Собираем все уникальные law_ids из всех adilet запросов, резолвим через реестр
+        all_law_ids: list[str] = []
+        all_articles: list[str] = []
+        for aq in query_plan.adilet_queries:
+            for lid in (aq.law_ids or []):
+                resolved = registry.resolve(lid)
+                if resolved and resolved not in all_law_ids:
+                    all_law_ids.append(resolved)
+            for art in (aq.articles or []):
+                if art and art not in all_articles:
+                    all_articles.append(art)
+
+        if all_law_ids:
+            logger.info(f\"[Pipeline/S3.5] Прямой RAG-запрос для law_ids={all_law_ids} articles={all_articles}\")
+
+            # ── Шаг A: Прямой SQL по метаданным (гарантированное попадание) ──
+            import json as _json
+            import sqlite3 as _sqlite3
+            injected = 0
+            with _cache_for_rag._conn() as conn:
+                for lid in all_law_ids:
+                    if all_articles:
+                        # Для каждой статьи — отдельный запрос чтобы не пропустить ни одну
+                        for art in all_articles:
+                            rows = conn.execute(
+                                \"\"\"SELECT chunk_json FROM evidence_cache 
+                                   WHERE json_extract(chunk_json, '$.law_id') = ?
+                                   AND json_extract(chunk_json, '$.article') = ?\"\"\",
+                                (lid, art)
+                            ).fetchall()
+                            for r in rows:
+                                try:
+                                    chunk = EvidenceChunk.model_validate(_json.loads(r[\"chunk_json\"]))
+                                    if chunk.chunk_id not in existing_chunk_ids:
+                                        chunk.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
+                                        raw_chunks.append(chunk)
+                                        existing_chunk_ids.add(chunk.chunk_id)
+                                        injected += 1
+                                except Exception:
+                                    pass
+                    else:
+                        # Без фильтра по статьям — все чанки закона (limit 50)
+                        rows = conn.execute(
+                            \"\"\"SELECT chunk_json FROM evidence_cache 
+                               WHERE json_extract(chunk_json, '$.law_id') = ?
+                               LIMIT 50\"\"\",
+                            (lid,)
+                        ).fetchall()
+                        for r in rows:
+                            try:
+                                chunk = EvidenceChunk.model_validate(_json.loads(r[\"chunk_json\"]))
+                                if chunk.chunk_id not in existing_chunk_ids:
+                                    chunk.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
+                                    raw_chunks.append(chunk)
+                                    existing_chunk_ids.add(chunk.chunk_id)
+                                    injected += 1
+                            except Exception:
+                                pass
+
+            # ── Шаг B: Дополнительный семантический поиск (search_local) ──
+            # Ловит чанки без точных метаданных, но семантически релевантные
+            rag_tasks = [
+                _cache_for_rag.search_local(
+                    query_text=aq.query_text,
+                    law_ids=[registry.resolve(lid) for lid in (aq.law_ids or [])],
+                    limit=15,
+                )
+                for aq in query_plan.adilet_queries
+            ]
+            rag_results = await asyncio.gather(*rag_tasks, return_exceptions=True)
+            for result in rag_results:
+                if isinstance(result, list):
+                    for c in result:
+                        if c.chunk_id not in existing_chunk_ids:
+                            c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
+                            raw_chunks.append(c)
+                            existing_chunk_ids.add(c.chunk_id)
+                            injected += 1
+
+            if injected:
+                logger.info(f\"[Pipeline/S3.5] Инъекцировано {injected} локальных RAG-чанков (всего {len(raw_chunks)} чанков)\")
+    except Exception as _e:
+        logger.warning(f\"[Pipeline/S3.5] Local RAG injection ошибка (не критично): {_e}\")
+
 
     # ─── ЭТАП 4: Fusion & Validation ─────────────────────────────────────
     t4 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 4: Fusion & Conflict Detection")
+    logger.info(\"[Pipeline] ► Stage 4: Fusion & Conflict Detection\")
     fused_chunks = await fuse_and_validate(raw_chunks)
     active_chunks = [c for c in fused_chunks if not c.is_duplicate]
-    logger.info(f"[Pipeline] ✓ Stage 4 done ({time.perf_counter() - t4:.2f}s) — {len(active_chunks)} active")
+    logger.info(f\"[Pipeline] ✓ Stage 4 done ({time.perf_counter() - t4:.2f}s) — {len(active_chunks)} active\")
 
     # ─── ЭТАП 5 + 5.2: LLM Auditor & Contradiction Verifier (BATCHED & PARALLEL) ────────────────────────────
     t5 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 5 + 5.2: LLM Auditor & Contradiction Verifier (batched & parallel)")
+    logger.info(\"[Pipeline] ► Stage 5 + 5.2: LLM Auditor & Contradiction Verifier (batched & parallel)\")
     
     # Разделяем claims на батчи по 5 штук
     claim_items = list(claims.claims)
@@ -214,16 +314,16 @@ async def run_pipeline(
     from zerde.stages.s5_analyst import _validate_claim_coverage
     _validate_claim_coverage(analysis, claims)
     
-    contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
+    contradicted = sum(1 for v in analysis.verdicts if v.status.value == \"CONTRADICTED\")
     logger.info(
-        f"[Pipeline] ✓ Stage 5 + 5.2 done ({time.perf_counter() - t5:.2f}s) — "
-        f"verdicts={len(analysis.verdicts)} contradicted={contradicted} "
-        f"structural={len(claims.structural_claims)}"
+        f\"[Pipeline] ✓ Stage 5 + 5.2 done ({time.perf_counter() - t5:.2f}s) — \"
+        f\"verdicts={len(analysis.verdicts)} contradicted={contradicted} \"
+        f\"structural={len(claims.structural_claims)}\"
     )
 
     # ─── ЭТАП 5.5 + 6: Policy Analyst и BM25 Audit (ПАРАЛЛЕЛЬНО) ──────
     t56 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 5.5 + 6: Policy Analyst ∥ BM25 Audit (параллельно)")
+    logger.info(\"[Pipeline] ► Stage 5.5 + 6: Policy Analyst ∥ BM25 Audit (параллельно)\")
 
     # C2 Fix: Избегаем in-place мутаций разделяемого объекта analysis и chunks.
     # Создаем изолированные глубокие копии для обеих параллельных ветвей (S5.5 и S6).
@@ -245,28 +345,28 @@ async def run_pipeline(
         _run_s6(),
     )
     logger.info(
-        f"[Pipeline] ✓ Stage 5.5+6 done ({time.perf_counter() - t56:.2f}s) — "
-        f"policy={'✓' if policy_analysis else '✗'}"
+        f\"[Pipeline] ✓ Stage 5.5+6 done ({time.perf_counter() - t56:.2f}s) — \"
+        f\"policy={'✓' if policy_analysis else '✗'}\"
     )
 
     # ─── ЭТАП 7: Render ──────────────────────────────────────────────────
     t7 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 7: Report Rendering")
+    logger.info(\"[Pipeline] ► Stage 7: Report Rendering\")
     report_md = await render_report(audited_analysis, active_chunks, output_path, policy_analysis)
-    report_path = str(output_path) if output_path else "output/zerde_report_*.md"
-    logger.info(f"[Pipeline] ✓ Stage 7 done ({time.perf_counter() - t7:.2f}s)")
+    report_path = str(output_path) if output_path else \"output/zerde_report_*.md\"
+    logger.info(f\"[Pipeline] ✓ Stage 7 done ({time.perf_counter() - t7:.2f}s)\")
 
     total_elapsed = time.perf_counter() - start_time
 
-    logger.info("=" * 60)
-    logger.info(f"Pipeline Complete ({total_elapsed:.2f}s)")
+    logger.info(\"=\" * 60)
+    logger.info(f\"Pipeline Complete ({total_elapsed:.2f}s)\")
     logger.info(
-        f"Claims: {claims.total_count} | "
-        f"Verdicts: {len(audited_analysis.verdicts)} | "
-        f"Contradicted: {contradicted} | "
-        f"Reliability: {audited_analysis.overall_reliability or 'N/A'}"
+        f\"Claims: {claims.total_count} | \"
+        f\"Verdicts: {len(audited_analysis.verdicts)} | \"
+        f\"Contradicted: {contradicted} | \"
+        f\"Reliability: {audited_analysis.overall_reliability or 'N/A'}\"
     )
-    logger.info("=" * 60)
+    logger.info(\"=\" * 60)
 
     result = ZerdePipelineResult(
         doc_state=doc_state,

@@ -1,4 +1,4 @@
-"""
+\"\"\"
 Stage 2: LLM Planner
 Вход:  DocumentState
 Выход: QueryPlan
@@ -8,7 +8,7 @@ Stage 2: LLM Planner
   - tenacity retry (max 3 попытки, exponential backoff)
   - Schema validation с fallback на пустой план
   - Автоматическое разбиение длинных документов
-"""
+\"\"\"
 
 from __future__ import annotations
 
@@ -39,21 +39,21 @@ logger = logging.getLogger(__name__)
 
 
 async def build_query_plan(doc_state: DocumentState) -> QueryPlan:
-    """
+    \"\"\"
     Этап 2: LLM декомпозирует документ на структурированный план запросов.
     Один документ = один план. При повторном запуске берётся из кэша (0 токенов).
-    """
+    \"\"\"
     settings = get_settings()
     client = make_llm_client(settings)
 
-    logger.info(f"[S2] Building plan. doc_id={doc_state.doc_id[:8]}… chars={doc_state.char_count}")
+    logger.info(f\"[S2] Building plan. doc_id={doc_state.doc_id[:8]}… chars={doc_state.char_count}\")
 
     prompt = build_planner_prompt(doc_state.normalized_text)
-    system_msg = "JSON. Юридический планировщик РК. Только JSON по схеме. Без пояснений."
+    system_msg = \"JSON. Юридический планировщик РК. Только JSON по схеме. Без пояснений.\"
 
     messages = [
-        {"role": "system", "content": system_msg},
-        {"role": "user", "content": prompt},
+        {\"role\": \"system\", \"content\": system_msg},
+        {\"role\": \"user\", \"content\": prompt},
     ]
 
     raw_json = {}
@@ -69,41 +69,41 @@ async def build_query_plan(doc_state: DocumentState) -> QueryPlan:
                 max_tokens=settings.llm_max_tokens_planner,
             )
         except Exception as e:
-            logger.error(f"[S2] LLM failed (attempt {attempt}/{MAX_RETRIES}): {e}")
+            logger.error(f\"[S2] LLM failed (attempt {attempt}/{MAX_RETRIES}): {e}\")
             raw_json = {}
 
         # Проверяем что ответ содержит хоть какие-то запросы
         has_queries = (
-            raw_json.get("adilet_queries")
-            or raw_json.get("web_queries_ru")
-            or raw_json.get("web_queries_kk")
-            or raw_json.get("web_queries_en")
+            raw_json.get(\"adilet_queries\")
+            or raw_json.get(\"web_queries_ru\")
+            or raw_json.get(\"web_queries_kk\")
+            or raw_json.get(\"web_queries_en\")
         )
         if has_queries:
             break
 
         logger.warning(
-            f"[S2] Attempt {attempt}/{MAX_RETRIES}: planner returned 0 queries. "
-            f"Response keys: {list(raw_json.keys()) if raw_json else 'empty'}"
+            f\"[S2] Attempt {attempt}/{MAX_RETRIES}: planner returned 0 queries. \"
+            f\"Response keys: {list(raw_json.keys()) if raw_json else 'empty'}\"
         )
         # Инвалидируем кэш чтобы при retry получить новый ответ
         from zerde.utils.cache import LLMCache
         llm_cache = LLMCache(settings.cache_db_path)
-        prompt_key = json.dumps([{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}], ensure_ascii=False, sort_keys=True)
+        prompt_key = json.dumps([{\"role\": \"system\", \"content\": system_msg}, {\"role\": \"user\", \"content\": prompt}], ensure_ascii=False, sort_keys=True)
         cache_key = LLMCache._make_key(settings.llm_model_planner, prompt_key)
         await llm_cache._delete(cache_key)
-        logger.info(f"[S2] Cache invalidated for retry {attempt + 1}")
+        logger.info(f\"[S2] Cache invalidated for retry {attempt + 1}\")
 
     # Сохраняем для отладки
-    with open("last_planner_raw_response.json", "w", encoding="utf-8") as f:
+    with open(\"last_planner_raw_response.json\", \"w\", encoding=\"utf-8\") as f:
         json.dump(raw_json, f, ensure_ascii=False, indent=2)
-    logger.info("[S2] Raw Planner JSON saved to last_planner_raw_response.json")
+    logger.info(\"[S2] Raw Planner JSON saved to last_planner_raw_response.json\")
 
     plan = _parse_llm_plan(raw_json, doc_state)
     logger.info(
-        f"[S2] Plan ready. Queries: adilet={len(plan.adilet_queries)} "
-        f"web_ru={len(plan.web_queries_ru)} web_kk={len(plan.web_queries_kk)} "
-        f"web_en={len(plan.web_queries_en)}"
+        f\"[S2] Plan ready. Queries: adilet={len(plan.adilet_queries)} \"
+        f\"web_ru={len(plan.web_queries_ru)} web_kk={len(plan.web_queries_kk)} \"
+        f\"web_en={len(plan.web_queries_en)}\"
     )
     return plan
 
@@ -120,9 +120,9 @@ async def _call_llm_with_retry(
     max_tokens: int,
     system_msg: str,
 ) -> dict:
-    """
+    \"\"\"
     Вызывает LLM с tenacity retry: 3 попытки, экспоненциальный backoff 2–10s.
-    """
+    \"\"\"
 
     @retry(
         stop=stop_after_attempt(3),
@@ -134,17 +134,17 @@ async def _call_llm_with_retry(
         response = await client.chat.completions.create(
             model=model,
             temperature=0.0,
-            response_format={"type": "json_object"},
+            response_format={\"type\": \"json_object\"},
             max_tokens=max_tokens,
             messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": prompt},
+                {\"role\": \"system\", \"content\": system_msg},
+                {\"role\": \"user\", \"content\": prompt},
             ],
         )
-        content = response.choices[0].message.content or "{}"
+        content = response.choices[0].message.content or \"{}\"
         parsed = json.loads(content)
         if not isinstance(parsed, dict):
-            raise ValueError(f"LLM returned non-dict: {type(parsed)}")
+            raise ValueError(f\"LLM returned non-dict: {type(parsed)}\")
         return parsed
 
     return await _call()
@@ -156,16 +156,16 @@ async def _call_llm_with_retry(
 
 
 def _parse_llm_plan(raw: dict, doc_state: DocumentState) -> QueryPlan:
-    """
+    \"\"\"
     Парсит ответ LLM в QueryPlan с валидацией каждого поля.
     Некорректные записи пропускаются с предупреждением.
-    """
+    \"\"\"
     plan_id = hashlib.sha256(doc_state.normalized_text.encode()).hexdigest()
 
-    adilet_queries = _parse_adilet_queries(raw.get("adilet_queries", []))
-    web_queries_ru = _parse_web_queries(raw.get("web_queries_ru", []), "ru")
-    web_queries_kk = _parse_web_queries(raw.get("web_queries_kk", []), "kk")
-    web_queries_en = _parse_web_queries(raw.get("web_queries_en", []), "en")
+    adilet_queries = _parse_adilet_queries(raw.get(\"adilet_queries\", []))
+    web_queries_ru = _parse_web_queries(raw.get(\"web_queries_ru\", []), \"ru\")
+    web_queries_kk = _parse_web_queries(raw.get(\"web_queries_kk\", []), \"kk\")
+    web_queries_en = _parse_web_queries(raw.get(\"web_queries_en\", []), \"en\")
 
     return QueryPlan(
         plan_id=plan_id,
@@ -174,30 +174,50 @@ def _parse_llm_plan(raw: dict, doc_state: DocumentState) -> QueryPlan:
         web_queries_ru=web_queries_ru,
         web_queries_kk=web_queries_kk,
         web_queries_en=web_queries_en,
-        expected_elements=_safe_str_list(raw.get("expected_elements", [])),
-        bylaw_triggers=_safe_str_list(raw.get("bylaw_triggers", [])),
+        expected_elements=_safe_str_list(raw.get(\"expected_elements\", [])),
+        bylaw_triggers=_safe_str_list(raw.get(\"bylaw_triggers\", [])),
     )
 
 
 def _parse_adilet_queries(raw_list: list) -> list[AdiletQuery]:
+    from zerde.utils.law_registry import get_registry
+    registry = get_registry()
     result = []
     for i, item in enumerate(raw_list):
         if not isinstance(item, dict):
-            logger.warning(f"[S2] Skipping invalid adilet_query[{i}]: not a dict")
+            logger.warning(f\"[S2] Skipping invalid adilet_query[{i}]: not a dict\")
             continue
         try:
+            raw_law_ids = _safe_str_list(item.get(\"law_ids\", []))
+            # Fix #4: Резолвим каждый law_id через реестр (233-IV → 261-IV и т.д.)
+            resolved_law_ids = []
+            for lid in raw_law_ids:
+                resolved = registry.resolve(lid)
+                canonical = resolved if resolved else lid
+                if canonical not in resolved_law_ids:
+                    resolved_law_ids.append(canonical)
+
+            # Fix #4: Также патчим query_text — заменяем неправильные ID прямо в тексте
+            query_text = str(item.get(\"query_text\", \"\"))
+            for lid in raw_law_ids:
+                resolved = registry.resolve(lid)
+                if resolved and resolved != lid and lid in query_text:
+                    query_text = query_text.replace(lid, resolved)
+                    logger.debug(f\"[S2/Fix4] query_text: {lid} → {resolved}\")
+
             q = AdiletQuery(
-                query_text=str(item.get("query_text", "")),
-                law_ids=_safe_str_list(item.get("law_ids", [])),
-                articles=_safe_str_list(item.get("articles", [])),
-                date_from=_parse_date(item.get("date_from")),
-                date_to=_parse_date(item.get("date_to")),
+                query_text=query_text,
+                law_ids=resolved_law_ids,
+                articles=_safe_str_list(item.get(\"articles\", [])),
+                date_from=_parse_date(item.get(\"date_from\")),
+                date_to=_parse_date(item.get(\"date_to\")),
             )
             if q.query_text:
                 result.append(q)
         except Exception as e:
-            logger.warning(f"[S2] Skipping adilet_query[{i}]: {e}")
+            logger.warning(f\"[S2] Skipping adilet_query[{i}]: {e}\")
     return result
+
 
 
 def _parse_web_queries(raw_list: list, language: str) -> list[WebQuery]:
@@ -207,15 +227,15 @@ def _parse_web_queries(raw_list: list, language: str) -> list[WebQuery]:
             continue
         try:
             q = WebQuery(
-                query_text=str(item.get("query_text", "")),
+                query_text=str(item.get(\"query_text\", \"\")),
                 language=language,  # type: ignore[arg-type]
-                include_domains=_safe_str_list(item.get("include_domains", [])),
-                max_results=int(item.get("max_results", 10)),
+                include_domains=_safe_str_list(item.get(\"include_domains\", [])),
+                max_results=int(item.get(\"max_results\", 10)),
             )
             if q.query_text:
                 result.append(q)
         except Exception as e:
-            logger.warning(f"[S2] Skipping web_query[{i}]: {e}")
+            logger.warning(f\"[S2] Skipping web_query[{i}]: {e}\")
     return result
 
 

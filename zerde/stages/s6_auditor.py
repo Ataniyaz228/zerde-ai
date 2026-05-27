@@ -90,7 +90,7 @@ _STOP_WORDS = frozenset([
     "көзделген",    # предусмотренный
     "айқындалған",  # определённый
     "тәртіппен",    # в порядке
-    "негізінде",    # на основании
+    "негезінде",    # на основании
     "орай",          # в связи с
     # --- Казахский юридический канцелярит ---
     "республикасы",  # республика (притяжательная форма)
@@ -107,8 +107,8 @@ _STOP_WORDS = frozenset([
 
 # Regex для числовых утверждений
 _NUMBER_CLAIM_RE = re.compile(
-    r"\b(\d[\d\s]{0,5}(?:[.,]\d{1,4})?)"
-    r"\s*(%|млн\.?|млрд\.?|тыс\.?|тг\.?|kzt|мрп|мзп|лет|месяц\w*|дн\w*|тенге|процент\w*)\b",
+    r"\\b(\\d[\\d\\s]{0,5}(?:[.,]\\d{1,4})?)"
+    r"\\s*(%|млн\\.?|млрд\\.?|тыс\\.?|тг\\.?|kzt|мрп|мзп|лет|месяц\\w*|дн\\w*|тенге|процент\\w*)\\b",
     re.IGNORECASE,
 )
 
@@ -215,7 +215,7 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
     for ent in claim.entities:
         ent_clean = str(ent).strip().upper().replace(" ", "")
         ent_clean = re.sub(r"ЗРК|зрк", "", ent_clean).strip("-").strip()
-        if re.match(r"^\d+-[-‐–A-Z]+$", ent_clean) or ent_clean in LAW_REGISTRY:
+        if re.match(r"^\\d+-[-‐–A-Z]+$", ent_clean) or ent_clean in LAW_REGISTRY:
             law_ids.append(ent_clean)
             
     # 2. Search text and entities for common aliases
@@ -227,7 +227,7 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
         # Используем границы слов для коротких аббревиатур (длиной <= 3 символа),
         # чтобы избежать ложных совпадений внутри слов (например, "ак" в "акт", "актісі", "жақсы").
         if len(clean_alias) <= 3:
-            pattern = rf"\b{re.escape(clean_alias)}\b"
+            pattern = rf"\\b{re.escape(clean_alias)}\\b"
         else:
             pattern = re.escape(clean_alias)
             
@@ -235,30 +235,30 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
             law_ids.extend(resolved)
             
     # 3. Regex match standard law formats in text (e.g. № 413-IV or 1000-XIII)
-    matches = re.findall(r"\b\d+[-‐–][IVXivx\u0406\u0456]{1,5}\b", text_lower)
+    matches = re.findall(r"\\b\\d+[-‐–][IVXivx\\u0406\\u0456]{1,5}\\b", text_lower)
     for m in matches:
-        clean_m = m.upper().replace(" ", "").replace("\u0406", "I").replace("\u0456", "i")
+        clean_m = m.upper().replace(" ", "").replace("\\u0406", "I").replace("\\u0456", "i")
         law_ids.append(clean_m)
         
     return list(set(law_ids))
 
 
 def _extract_article_from_claim(claim: DocumentClaim) -> str | None:
-    """Извлекает номер статьи из утверждения с использованием regex."""
+    \"\"\"Извлекает номер статьи из утверждения с использованием regex.\"\"\"
     text = (claim.claim_text + " " + claim.quote).lower()
     
     # 1. Русский вариант: слово статья/ст в разных падежах, затем число
-    match_ru = re.search(r"\b(?:стать[яиюе]|ст\.?)\s*(\d+[\-\d]*)", text, re.IGNORECASE)
+    match_ru = re.search(r"\\b(?:стать[яиюе]|ст\\.?)\\s*(\\d+[\\-\\d]*)", text, re.IGNORECASE)
     if match_ru:
         return match_ru.group(1).strip()
         
     # 2. Казахский вариант: число, затем дефис и бап/бабы/бапта/баптың
-    match_kk = re.search(r"\b(\d+[\-\d]*)-(?:бап|бабы|бабының|бапта|баптың|бабына)", text, re.IGNORECASE)
+    match_kk = re.search(r"\\b(\\d+[\\-\\d]*)-(?:бап|бабы|бабының|бапта|баптың|бабына)", text, re.IGNORECASE)
     if match_kk:
         return match_kk.group(1).strip()
         
     # 3. Fallback на просто бап/бабы, если число идет после
-    match_kk_fallback = re.search(r"\b(?:бап|бабы|бабының|бапта|баптың|бабына)\s*(\d+[\-\d]*)", text, re.IGNORECASE)
+    match_kk_fallback = re.search(r"\\b(?:бап|бабы|бабының|бапта|баптың|бабына)\\s*(\\d+[\\-\\d]*)", text, re.IGNORECASE)
     if match_kk_fallback:
         return match_kk_fallback.group(1).strip()
         
@@ -269,10 +269,10 @@ def _exact_metadata_search(
     claim: DocumentClaim,
     corpus_index: dict[str, EvidenceChunk],
 ) -> list[str]:
-    """
+    \"\"\"
     Выполняет прямой поиск в корпусе по метаданным (law_id и article).
     Используется как приоритетный точный Шаг 1 в верификации.
-    """
+    \"\"\"
     referenced_law_ids = _extract_referenced_law_ids(claim)
     article_num = _extract_article_from_claim(claim)
     
@@ -303,10 +303,10 @@ def audit_analysis(
     chunks: list[EvidenceChunk],
     claims: ClaimExtractionResult | None = None,
 ) -> AnalysisJSON:
-    """
+    \"\"\"
     Этап 6: Детерминированный аудит. Строго без Retry.
     Ошибка при любой проверке → UNVERIFIED.
-    """
+    \"\"\"
     settings = get_settings()
 
     # Map claim_ids to DocumentClaim objects for metadata filtering
@@ -508,12 +508,19 @@ def audit_analysis(
                     v.confidence = "LOW"
             elif fact.validation_status in (ValidationStatus.HIGH, ValidationStatus.MEDIUM):
                 if v.status != VerdictStatus.CONFIRMED:
-                    # Если оригинальный вердикт модели был UNVERIFIED, а подтверждение пришло от
-                    # глобального BM25-поиска (а не точечного мета-поиска с bm25_score=1.0),
-                    # мы блокируем этот ненадежный апгрейд!
-                    if v.status == VerdictStatus.UNVERIFIED and (fact.bm25_score is None or fact.bm25_score < 1.0):
-                        logger.info(f"[S6/Sync] Blocking upgrade of verdict '{v.claim_id}' from UNVERIFIED to CONFIRMED based on BM25 fallback.")
-                        continue
+                    # Tiered BM25 threshold для апгрейда UNVERIFIED → CONFIRMED:
+                    # HIGH validation (множественные совпадения) → порог 0.4
+                    # MEDIUM validation → порог 0.6
+                    # None/0 → блокируем
+                    if v.status == VerdictStatus.UNVERIFIED:
+                        bm25 = fact.bm25_score or 0.0
+                        threshold = 0.4 if fact.validation_status == ValidationStatus.HIGH else 0.6
+                        if bm25 < threshold:
+                            logger.info(
+                                f"[S6/Sync] Blocking upgrade of verdict '{v.claim_id}' from UNVERIFIED to CONFIRMED "
+                                f"(bm25={bm25:.3f} < threshold={threshold})"
+                            )
+                            continue
 
                     logger.info(f"[S6/Sync] Upgrading verdict for '{v.claim_id}' to CONFIRMED because fact validation status is {fact.validation_status.value}")
                     v.status = VerdictStatus.CONFIRMED
@@ -643,13 +650,15 @@ def audit_analysis(
             q_retrieval = max(0.0, min(1.0, q_retrieval))
 
             # 4. Contradiction Penalty (P_conflict)
+            # v9.5: Смягчённые веса. Нахождение противоречий показывает что анализ РАБОТАЕТ,
+            # а не что он ненадёжный. Reliability = надёжность анализа, не качество документа.
             p_conflict = (
-                0.25 * n_contradicted_critical +
-                0.12 * n_contradicted_high +
-                0.06 * n_contradicted_medium +
-                0.02 * n_contradicted_low
+                0.08 * n_contradicted_critical +
+                0.05 * n_contradicted_high +
+                0.03 * n_contradicted_medium +
+                0.01 * n_contradicted_low
             )
-            p_conflict = max(0.0, min(0.95, p_conflict))
+            p_conflict = max(0.0, min(0.85, p_conflict))
 
             # Calculate Reliability (R)
             # R = (0.50 * V_ratio + 0.30 * Q_auth + 0.20 * Q_retrieval) * (1.0 - P_conflict)
@@ -674,17 +683,28 @@ def audit_analysis(
         # Compile and attach AnalysisStats (v9.4 Immutable Stage)
         from zerde.models import AnalysisStats
         
-        # FIX 3: Conditional pros — don't claim "Confirmed 0" as a positive
+        # FIX 3 + FIX 5: Conditional pros — don't claim "Confirmed 0" as a positive.
+        # FIX 5: Don't generate false positive "no contradictions" when corpus is empty.
+        # corpus_index может быть пустым (0 локальных чанков) — в этом случае
+        # "противоречий не обнаружено" — ложный позитив, т.к. мы ничего не проверяли.
+        has_real_evidence = len(corpus_index) > 0
+        has_local_evidence = any(
+            c.adilet_fallback_used is not None or c.law_id
+            for c in corpus_index.values()
+        )
         pros_list = []
         if n_confirmed > 0:
             pros_list.append(f"Подтверждено {n_confirmed} из {n_total} анализируемых утверждений законопроекта.")
-        if n_contradicted == 0:
+        if n_contradicted == 0 and has_real_evidence and has_local_evidence and v_ratio >= 0.5:
+            # Только если >50% фактов проверено и есть локальные источники
             pros_list.append("Противоречий с действующим законодательством РК не обнаружено.")
-        if n_confirmed > 0 and n_contradicted == 0:
+        if n_confirmed > 0 and n_contradicted == 0 and has_local_evidence and v_ratio >= 0.5:
             pros_list.append("Все проверенные утверждения соответствуют нормативно-правовой базе.")
         if not pros_list:
             # Fallback: nothing confirmed, but also nothing contradicted — neutral
-            if n_unverified == n_total:
+            if n_unverified == n_total and not has_real_evidence:
+                pros_list.append("Документ не содержит явных фактических ошибок (корпус источников недостаточен для полной верификации).")
+            elif n_unverified == n_total:
                 pros_list.append("Документ не содержит фактических ошибок в проверяемой части (недостаточно источников для полной верификации).")
             else:
                 pros_list.append(f"Проанализировано {n_total} утверждений законопроекта.")
@@ -762,10 +782,10 @@ def audit_analysis(
 
 
 class ZerdeBM25:
-    """
+    \"\"\"
     BM25Okapi wrapper с нормализацией scores [0, 1].
     Корпус: все активные EvidenceChunk.
-    """
+    \"\"\"
 
     def __init__(self, corpus_index: dict[str, EvidenceChunk]) -> None:
         self._index = corpus_index
@@ -796,11 +816,11 @@ class ZerdeBM25:
             self._max_score = 1.0
 
     def score(self, query: str, source_ids: list[str]) -> float:
-        """
+        \"\"\"
         Вычисляет BM25 score между query и текстами source_ids.
         Возвращает нормализованный score [0, 1].
         Если source_ids не в корпусе → 0.0.
-        """
+        \"\"\"
         if not self._bm25 or not source_ids:
             return 0.0
 
@@ -832,7 +852,7 @@ class ZerdeBM25:
 
 
 def _build_bm25_index(corpus_index: dict[str, EvidenceChunk]) -> ZerdeBM25:
-    """Строит BM25 индекс. Логирует размер."""
+    \"\"\"Строит BM25 индекс. Логирует размер.\"\"\"
     bm25 = ZerdeBM25(corpus_index)
     logger.info(f"[S6/BM25] Index built: {len(corpus_index)} documents")
     return bm25
@@ -844,9 +864,9 @@ def _corpus_wide_bm25_search(
     corpus_index: dict[str, EvidenceChunk],
     claim: DocumentClaim | None = None,
 ) -> float | None:
-    """
+    \"\"\"
     Иерархический полнотекстовый поиск с фильтрацией по метаданным law_id.
-    """
+    \"\"\"
     if not bm25._bm25 or not bm25._ids:
         return None
 
@@ -857,7 +877,7 @@ def _corpus_wide_bm25_search(
         raw_query = claim.claim_text + " " + claim.quote
     else:
         # Strip formatting artifacts from fact.claim
-        raw_query = re.sub(r"\[claim_\d{4}\]:\s*['\"]?", "", fact.claim).rstrip("'\"")
+        raw_query = re.sub(r"\\[claim_\\d{4}\\]:\\s*['\"]?", "", fact.claim).rstrip("'\"")
     query_tokens = _tokenize(raw_query)
     if not query_tokens:
         return None
@@ -944,8 +964,8 @@ def _corpus_wide_bm25_search(
             best_chunk = corpus_index[best_cid]
             chunk_text = (best_chunk.content or "").lower()
             # Проверяем, что номер статьи (например, "47") присутствует как число или слово
-            # Ищем границу слова \b47\b или ст. 47
-            pattern = rf"\b{re.escape(article_num)}\b"
+            # Ищем границу слова \\b47\\b или ст. 47
+            pattern = rf"\\b{re.escape(article_num)}\\b"
             if not re.search(pattern, chunk_text):
                 logger.info(f"[S6/Fallback/Layer3] Rejected Layer 3 match '{best_cid[:12]}' because it does not contain article '{article_num}'")
                 return None
@@ -959,12 +979,12 @@ def _corpus_wide_bm25_search(
 
 
 def _tokenize(text: str) -> list[str]:
-    """
+    \"\"\"
     Токенизация для BM25: lowercase + удаление пунктуации + стоп-слова.
-    """
+    \"\"\"
     text = text.lower()
     # Удаляем пунктуацию (кроме дефиса в словах)
-    text = re.sub(r"[^\w\s\-]", " ", text)
+    text = re.sub(r"[^\\w\\s\\-]", " ", text)
     tokens = text.split()
     return [t for t in tokens if len(t) > 2 and t not in _STOP_WORDS]
 
@@ -983,9 +1003,9 @@ def _audit_fact(
     medium_threshold: float,
     claim: DocumentClaim | None = None,
 ) -> AuditResult:
-    """
+    \"\"\"
     Аудит одного факта. Без catch — исключения всплывают наверх.
-    """
+    \"\"\"
     # Резолвим prefix IDs → полные chunk_ids
     resolved_ids = _resolve_source_ids(fact.source_ids, corpus_index, prefix_index)
 
@@ -1017,7 +1037,7 @@ def _confidence_to_status(
     high_threshold: float,
     medium_threshold: float,
 ) -> ValidationStatus:
-    """Конвертирует confidence score в ValidationStatus (для детерминированных фактов)."""
+    \"\"\"Конвертирует confidence score в ValidationStatus (для детерминированных фактов).\"\"\"
     if confidence >= high_threshold:
         return ValidationStatus.HIGH
     elif confidence >= medium_threshold:
@@ -1093,10 +1113,10 @@ def _resolve_source_ids(
     corpus_index: dict[str, EvidenceChunk],
     prefix_index: dict[str, str],
 ) -> list[str]:
-    """
+    \"\"\"
     Резолвит короткие (prefix) source_ids в полные chunk_ids.
     LLM возвращает '12-символьные' ID — ищем в prefix_index.
-    """
+    \"\"\"
     virtual = {"UNLINKED", "reference_data"}
     resolved = []
     for sid in source_ids:
@@ -1122,7 +1142,7 @@ def _check_topology(
     corpus_index: dict[str, EvidenceChunk],
     claim: DocumentClaim | None = None,
 ) -> bool:
-    """True если хотя бы один source_id (кроме виртуальных) существует в корпусе и соответствует law_id."""
+    \"\"\"True если хотя бы один source_id (кроме виртуальных) существует в корпусе и соответствует law_id.\"\"\"
     virtual = {"UNLINKED", "reference_data"}
     valid_ids = [sid for sid in resolved_ids if sid not in virtual and not sid.startswith("reference_")]
     if not valid_ids:
@@ -1183,9 +1203,9 @@ def _arithmetic_check(
     resolved_ids: list[str],
     corpus_index: dict[str, EvidenceChunk],
 ) -> bool:
-    """
+    \"\"\"
     Проверяет числа в claim против оригинальных источников.
-    """
+    \"\"\"
     claim_numbers = _extract_numbers_with_units(fact.claim)
     if not claim_numbers:
         return True
@@ -1225,7 +1245,7 @@ def _arithmetic_check(
 
 
 def _extract_numbers_with_units(text: str) -> dict[str, set[str]]:
-    """Извлекает числа с единицами. Returns: {unit: {val1, val2}}."""
+    \"\"\"Извлекает числа с единицами. Returns: {unit: {val1, val2}}.\"\"\"
     result: dict[str, set[str]] = {}
     for m in _NUMBER_CLAIM_RE.finditer(text):
         num_str = m.group(1).replace(" ", "").replace(",", ".")
@@ -1235,7 +1255,7 @@ def _extract_numbers_with_units(text: str) -> dict[str, set[str]]:
 
 
 def _normalize_numbers(num_strings: set[str]) -> set[float]:
-    """Конвертирует строки в float через sympy, защищая дефисы."""
+    \"\"\"Конвертирует строки в float через sympy, защищая дефисы.\"\"\"
     result: set[float] = set()
     for s in num_strings:
         cleaned = s.replace(" ", "")
@@ -1276,7 +1296,7 @@ def _audit_conclusions(
     corpus_index: dict[str, EvidenceChunk],
     prefix_index: dict[str, str],
 ) -> None:
-    """Простой аудит выводов: topology + проверка fact_ids."""
+    \"\"\"Простой аудит выводов: topology + проверка fact_ids.\"\"\"
     fact_ids = {f.fact_id for f in analysis.facts}
 
     for conclusion in analysis.conclusions:
@@ -1305,7 +1325,7 @@ def _audit_conclusions(
 
 
 def _build_conflicts_from_verdicts(verdicts: list[ClaimVerdict]) -> list[ConflictRecord]:
-    """
+    \"\"\"
     Превращает CONTRADICTED вердикты в ConflictRecord для единой секции конфликтов.
 
     V8.0: Классификация ConflictType основана на структурированных приоритетах:
@@ -1316,7 +1336,7 @@ def _build_conflicts_from_verdicts(verdicts: list[ClaimVerdict]) -> list[Conflic
       3. FACTUAL: все остальные CONTRADICTED (числа, факты, ссылки на статьи)
 
     ЗАПРЕЩЕНО: пропаганда HIERARCHY только из-за отсутствия документа в корпусе.
-    """
+    \"\"\"
     conflicts: list[ConflictRecord] = []
     seen: set[str] = set()
 

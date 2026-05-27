@@ -135,17 +135,17 @@ _LAW_ID_KNOWN = {
 }
 
 def _resolve_law_name(raw_id: str) -> str:
-    """
+    \"\"\"
     Разрешает название/ID закона в канонический short ID.
     Использует LawRegistry с fuzzy matching — без хардкода.
-    """
+    \"\"\"
     from zerde.utils.law_registry import get_registry
     registry = get_registry()
     return registry.resolve(raw_id.strip())
 
 
 def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
-    law_id = law_id.replace("\u0406", "I").replace("\u0456", "i").strip()
+    law_id = law_id.replace("\\u0406", "I").replace("\\u0456", "i").strip()
     law_id = _resolve_law_name(law_id)
     urls = []
     
@@ -159,7 +159,7 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
         return urls
         
     # 2. If it is already an Adilet ID
-    if re.match(r"^[A-Z]\d{9}", law_id):
+    if re.match(r"^[A-Z]\\d{9}", law_id):
         urls.append(f"{base}/rus/docs/{law_id}")
         if law_id.endswith("_"):
             urls.append(f"{base}/rus/docs/{law_id[:-1]}")
@@ -168,7 +168,7 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
         return urls
         
     # 3. Guessing/generating variants for standard format like "999-VI" or "94-V"
-    match = re.match(r"^(\d+)-([IVX]+)$", law_id, re.IGNORECASE)
+    match = re.match(r"^(\\d+)-([IVX]+)$", law_id, re.IGNORECASE)
     if match:
         num = match.group(1)
         roman = match.group(2).upper()
@@ -220,17 +220,21 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
             try:
                 chunks = await strategy_fn(query, cache, resolved_law_ids=resolved_law_ids)
                 if chunks:
+                    logger.info(f"[S3/Adilet] {strategy_fn.__name__} returned {len(chunks)} chunks for {resolved_law_ids}")
                     return chunks
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[S3/Adilet] {strategy_fn.__name__} failed for {resolved_law_ids}: {e}")
                 continue
         try:
             chunks = await cache.search_local(query.query_text, law_ids=resolved_law_ids, articles=query.articles)
             if chunks:
+                logger.info(f"[S3/Adilet] search_local found {len(chunks)} chunks for query: '{query.query_text[:80]}'")
                 for c in chunks:
                     c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
                 return chunks
         except Exception:
             pass
+        logger.warning(f"[S3/Adilet] All strategies failed for {resolved_law_ids}. Returning empty.")
         return []
 
 async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager, resolved_law_ids: list[str] | None = None) -> list[EvidenceChunk]:
@@ -281,7 +285,7 @@ def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[E
     node = tree.css_first("h1")
     if node:
         law_title = node.text(strip=True)
-    law_id_match = re.search(r"/docs/([A-Z]\d+)", source_url, re.IGNORECASE)
+    law_id_match = re.search(r"/docs/([A-Z]\\d+)", source_url, re.IGNORECASE)
     law_id = law_id_match.group(1) if law_id_match else ""
     nodes = tree.css("p[id^='st']")
     for node in nodes[:80]:
@@ -351,7 +355,7 @@ async def _search_web(query: WebQuery) -> tuple[list[dict], str]:
 
 async def _search_duckduckgo(query_text: str, max_results: int) -> list[dict]:
     def _sync_search():
-        has_cyrillic = any('\u0400' <= ch <= '\u04FF' for ch in query_text)
+        has_cyrillic = any('\\u0400' <= ch <= '\\u04FF' for ch in query_text)
         region = "kz-kz" if has_cyrillic else "wt-wt"
         try:
             results = _DDGS(timeout=15).text(query_text, max_results=max_results, region=region)
@@ -391,13 +395,13 @@ def _build_web_chunk(result: dict, query: WebQuery, provider: str) -> EvidenceCh
 
 def _regex_split_articles(text: str) -> list[dict]:
     pattern = re.compile(
-        r"(?:(?:Статья|Article)\s+(\d+[\-\d]*)|(\d+[\-\d]*)-(?:бап|бабы|бабының|бапта))\s*[.\n]([^\n]*)\n(.*?)(?=(?:(?:Статья|Article)\s+\d|(?:\d+)-(?:бап|бабы|бабының|бапта))|$)",
+        r"(?:(?:Статья|Article)\\s+(\\d+[\\-\\d]*)|(\\d+[\\-\\d]*)-(?:бап|бабы|бабының|бапта))\s*[.\\n]([^\\n]*)\\n(.*?)(?=(?:(?:Статья|Article)\\s+\\d|(?:\\d+)-(?:бап|бабы|бабының|бапта))|$)",
         re.DOTALL | re.IGNORECASE,
     )
     articles = []
     for m in pattern.finditer(text):
         art_num = m.group(1) or m.group(2)
-        content = (m.group(3).strip() + "\n" + m.group(4).strip()).strip()
+        content = (m.group(3).strip() + "\\n" + m.group(4).strip()).strip()
         articles.append({"article_num": art_num, "title": "", "content": content[:3000]})
     return articles
 
@@ -408,21 +412,21 @@ def _infer_adilet_rank(law_title: str) -> LegalRank:
     return LegalRank.LAW_RK
 
 def _extract_article_number(node_id: str, text: str) -> str:
-    id_match = re.search(r"st(\d+)", node_id, re.IGNORECASE)
+    id_match = re.search(r"st(\\d+)", node_id, re.IGNORECASE)
     if id_match:
         return id_match.group(1)
-    text_match = re.match(r"(?:Статья|Бап)\s+(\d+)", text[:50], re.IGNORECASE)
+    text_match = re.match(r"(?:Статья|Бап)\\s+(\\d+)", text[:50], re.IGNORECASE)
     if text_match:
         return text_match.group(1)
     return ""
 
 
 def _extract_law_id_from_text(title: str, content: str) -> str | None:
-    """
+    \"\"\"
     Парсит и извлекает law_id из названия (title) или текста (content) веб-страницы/документа.
     Сначала ищет точные совпадения известных кодексов и законов,
     а затем пытается найти стандартный паттерн ID закона (например, '94-V' или '1000-XIII').
-    """
+    \"\"\"
     import re
     combined = (title or "") + " " + (content or "")
     combined_lower = combined.lower()
@@ -433,7 +437,7 @@ def _extract_law_id_from_text(title: str, content: str) -> str | None:
     for name in sorted_names:
         # Для аббревиатур типа "коап рк", "ук рк", "гк рк" или полных названий
         # Проверяем границы слов или просто вхождение с пробелами/знаками препинания
-        pattern = r"\b" + re.escape(name) + r"\b"
+        pattern = r"\\b" + re.escape(name) + r"\\b"
         if re.search(pattern, combined_lower):
             return _LAW_NAME_TO_SHORT_ID[name]
 
@@ -456,11 +460,10 @@ def _extract_law_id_from_text(title: str, content: str) -> str | None:
 
     # 2. Поиск стандартного паттерна вида: 94-V, 1000-XIII, 413-IV, 122-IV, etc.
     # Паттерн: число, за которым следует дефис, а затем римские цифры I, V, X, L, C, D, M (в верхнем или нижнем регистре)
-    pattern = r"\b\d+-[IVX]+(?:-NEW)?\b"
+    pattern = r"\\b\\d+-[IVX]+(?:-NEW)?\\b"
     matches = re.findall(pattern, combined, re.IGNORECASE)
     if matches:
         # Возвращаем в верхнем регистре
         return matches[0].upper()
 
     return None
-

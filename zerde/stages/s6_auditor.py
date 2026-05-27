@@ -69,7 +69,7 @@ _STOP_WORDS = frozenset([
     "оған",          # ему
     "олар",          # они
     "олардың",       # их
-    "бар",           # есть/имеется
+    "bar",           # есть/имеется
     "жоқ",           # нет
     "болып",         # являясь
     "болады",        # является
@@ -157,8 +157,12 @@ _COMMON_LAW_NAME_MAP = {
     "искусственном интеллекте": ["230-VIII"],
     "цифровой кодекс": ["255-VIII"],
     "цифрового кодекса": ["255-VIII"],
+    "исполнительном производстве": ["261-IV"],
+    "исполнительного производства": ["261-IV"],
+    "судебных исполнителей": ["261-IV"],
+    "сот орындаушы": ["261-IV"],
+    "атқарушылық іс жүргізу": ["261-IV"],
 }
-
 
 _LAW_ID_SYNONYMS = {
     "1000-XIII": {"K940001000", "1000-XIII"},
@@ -177,7 +181,6 @@ _LAW_ID_SYNONYMS = {
     "235-V": {"K1400000235", "235-V"},
     "K1400000235": {"K1400000235", "235-V"},
     
-    # Дополнительные кодексы РК
     "226-V": {"K1400000226", "226-V"},   # УК РК
     "K1400000226": {"K1400000226", "226-V"},
     
@@ -186,6 +189,8 @@ _LAW_ID_SYNONYMS = {
     
     "350-VI": {"K2000000350", "350-VI"}, # АППК
     "K2000000350": {"K2000000350", "350-VI"},
+
+    "261-IV": {"Z100000261_", "261-IV"},
 }
 
 
@@ -489,6 +494,13 @@ def audit_analysis(
                     v.confidence = "LOW"
             elif fact.validation_status in (ValidationStatus.HIGH, ValidationStatus.MEDIUM):
                 if v.status != VerdictStatus.CONFIRMED:
+                    # Если оригинальный вердикт модели был UNVERIFIED, а подтверждение пришло от
+                    # глобального BM25-поиска (а не точечного мета-поиска с bm25_score=1.0),
+                    # мы блокируем этот ненадежный апгрейд!
+                    if v.status == VerdictStatus.UNVERIFIED and (fact.bm25_score is None or fact.bm25_score < 1.0):
+                        logger.info(f"[S6/Sync] Blocking upgrade of verdict '{v.claim_id}' from UNVERIFIED to CONFIRMED based on BM25 fallback.")
+                        continue
+
                     logger.info(f"[S6/Sync] Upgrading verdict for '{v.claim_id}' to CONFIRMED because fact validation status is {fact.validation_status.value}")
                     v.status = VerdictStatus.CONFIRMED
                     v.confidence = "HIGH" if fact.validation_status == ValidationStatus.HIGH else "MEDIUM"
@@ -866,6 +878,11 @@ def _corpus_wide_bm25_search(
             else:
                 logger.info(f"[S6/Fallback/Layer1] Match inside specific law was too weak ({normalized:.3f} < {settings.bm25_medium_threshold}). Rejecting.")
                 return None
+        else:
+            # Специфичный закон был запрошен, но не найден в корпусе.
+            # Блокируем глобальный поиск по другим законам во избежание галлюцинаций!
+            logger.info(f"[S6/Fallback] Expected law {referenced_law_ids} is not present in the corpus. Blocking global search.")
+            return None
 
     # --- LAYER 2: Code Family Fallback (if specific law was not found/loaded) ---
     # (If referenced_law_ids is defined but not loaded in the corpus, we try parent Codes)
@@ -907,6 +924,18 @@ def _corpus_wide_bm25_search(
     normalized = max(0.0, normalized)
 
     if normalized >= settings.bm25_fallback_threshold:
+        # Дополнительная проверка на статью (если упоминается в утверждении)
+        article_num = _extract_article_from_claim(claim) if claim else _extract_article_from_claim(DocumentClaim(claim_id="tmp", claim_text=fact.claim, claim_type="factual", severity="medium"))
+        if article_num:
+            best_chunk = corpus_index[best_cid]
+            chunk_text = (best_chunk.content or "").lower()
+            # Проверяем, что номер статьи (например, "47") присутствует как число или слово
+            # Ищем границу слова \b47\b или ст. 47
+            pattern = rf"\b{re.escape(article_num)}\b"
+            if not re.search(pattern, chunk_text):
+                logger.info(f"[S6/Fallback/Layer3] Rejected Layer 3 match '{best_cid[:12]}' because it does not contain article '{article_num}'")
+                return None
+
         fact.source_ids = [best_cid]
         logger.info(f"[S6/Fallback/Layer3] Verified claim '{fact.claim_id}' via strict corpus-wide search: score={normalized:.3f}")
         return normalized

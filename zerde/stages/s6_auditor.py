@@ -318,12 +318,34 @@ def audit_analysis(
                 resolved_ids.append(sid)
                 continue
             # Try exact match first, then prefix resolution
+            full_id = None
             if sid in corpus_index:
-                resolved_ids.append(sid)
+                full_id = sid
             elif sid in prefix_index:
                 full_id = prefix_index[sid]
-                resolved_ids.append(full_id)
                 logger.debug(f"[S6/Resolve] Resolved truncated source_id '{sid}' → '{full_id}'")
+            
+            if full_id:
+                # Apply Source Domain Filtering (excluding Wikipedia/non-KZ non-authoritative)
+                chunk = corpus_index[full_id]
+                if not chunk.law_id:
+                    # Web source check
+                    from zerde.models import WebTier
+                    from urllib.parse import urlparse
+                    is_official = False
+                    url = (chunk.source_url or "").lower()
+                    try:
+                        parsed = urlparse(url)
+                        domain = (parsed.hostname or "").removeprefix("www.")
+                        if domain.endswith(".kz") and chunk.web_tier in (WebTier.TIER_1, WebTier.TIER_2):
+                            is_official = True
+                    except Exception:
+                        pass
+                    
+                    if not is_official:
+                        logger.info(f"[S6/SourceFilter] Filtering out non-authoritative/non-KZ source '{full_id[:12]}': {chunk.source_url}")
+                        continue
+                resolved_ids.append(full_id)
             else:
                 resolved_ids.append(sid)  # keep as-is, might be invalid
         v.source_ids = resolved_ids
@@ -530,7 +552,30 @@ def audit_analysis(
                 ClaimSeverity.LOW: 0.5,
             }
             w_total = sum(severity_weights.get(v.severity, 1.0) for v in analytical_verdicts)
-            w_confirmed = sum(severity_weights.get(v.severity, 1.0) for v in analytical_verdicts if v.status == VerdictStatus.CONFIRMED)
+            
+            w_confirmed = 0.0
+            for v in analytical_verdicts:
+                if v.status == VerdictStatus.CONFIRMED:
+                    real_sources = [sid for sid in v.source_ids if sid and sid != "UNLINKED" and not sid.startswith("reference_")]
+                    if not real_sources:
+                        # Fallback for virtual reference-data verified claims
+                        a_coef = 0.5
+                    else:
+                        best_rank = 11
+                        for sid in real_sources:
+                            if sid in corpus_index:
+                                best_rank = min(best_rank, int(corpus_index[sid].legal_rank))
+                        
+                        if best_rank <= 3:
+                            a_coef = 1.0
+                        elif best_rank <= 6:
+                            a_coef = 0.8
+                        elif best_rank <= 9:
+                            a_coef = 0.5
+                        else:
+                            a_coef = 0.2
+                    w_confirmed += severity_weights.get(v.severity, 1.0) * a_coef
+
             v_ratio = w_confirmed / w_total if w_total > 0 else 0.0
 
             # 2. Authority Quality Score (Q_auth)

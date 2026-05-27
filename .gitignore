@@ -9,9 +9,13 @@ __pycache__/
 .ruff_cache/
 output/
 docs/
-zerde_cache.db
-zerde.log
 *.egg-info/
 dist/
 build/
-zerde_cache.db-shm
+# Databases & Logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+last_*_raw_response.json
+scratch/

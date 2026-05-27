@@ -57,6 +57,7 @@ class CacheManager:
     def __init__(self, db_path: str = "zerde_cache.db") -> None:
         env_db_path = os.getenv("ZERDE_CACHE_DB")
         self.db_path = Path(env_db_path if env_db_path else db_path)
+        self._shared_conn = None
         self._init_db()
         self._morph = None
         self._reranker = None
@@ -64,24 +65,27 @@ class CacheManager:
 
     def _init_db(self) -> None:
         """Инициализирует БД и создаёт таблицы если не существуют."""
-        with self._conn() as conn:
-            conn.executescript(_CREATE_TABLE_SQL)
+        if self._shared_conn is None:
+            self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._shared_conn.execute("PRAGMA journal_mode=WAL")
+            self._shared_conn.row_factory = sqlite3.Row
+        with self._shared_conn:
+            self._shared_conn.executescript(_CREATE_TABLE_SQL)
         logger.debug(f"[Cache] DB initialized at {self.db_path}")
 
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
         """Context manager для соединения с SQLite (WAL mode)."""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
+        if getattr(self, "_shared_conn", None) is None:
+            self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._shared_conn.execute("PRAGMA journal_mode=WAL")
+            self._shared_conn.row_factory = sqlite3.Row
         try:
-            yield conn
-            conn.commit()
+            yield self._shared_conn
+            self._shared_conn.commit()
         except Exception:
-            conn.rollback()
+            self._shared_conn.rollback()
             raise
-        finally:
-            conn.close()
 
     async def get(self, chunk_id: str) -> EvidenceChunk | None:
         """
@@ -454,7 +458,7 @@ class CacheManager:
             # Generate normalized BGE-M3 embeddings
             embeddings = self._embed_model.encode(
                 new_texts, 
-                batch_size=8, 
+                batch_size=32, 
                 show_progress_bar=False, 
                 normalize_embeddings=True
             )
@@ -736,24 +740,29 @@ class LLMCache:
 
     def __init__(self, db_path: str = "zerde_cache.db") -> None:
         self.db_path = db_path
+        self._shared_conn = None
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.executescript(_CREATE_TABLE_SQL)
+        if self._shared_conn is None:
+            self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._shared_conn.execute("PRAGMA journal_mode=WAL")
+            self._shared_conn.row_factory = sqlite3.Row
+        with self._shared_conn:
+            self._shared_conn.executescript(_CREATE_TABLE_SQL)
 
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        if getattr(self, "_shared_conn", None) is None:
+            self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._shared_conn.execute("PRAGMA journal_mode=WAL")
+            self._shared_conn.row_factory = sqlite3.Row
         try:
-            yield conn
-            conn.commit()
+            yield self._shared_conn
+            self._shared_conn.commit()
         except Exception:
-            conn.rollback()
+            self._shared_conn.rollback()
             raise
-        finally:
-            conn.close()
 
     async def get(self, model: str, prompt_key: str = None, prompt: str = None) -> dict | None:
         actual_prompt = prompt_key if prompt_key is not None else prompt
@@ -847,7 +856,8 @@ def _heal_chunk_rank(chunk: EvidenceChunk) -> EvidenceChunk:
     current_rank = chunk.legal_rank
 
     # Кодексы РК
-    if lid in ("235-V", "226-V", "350-VI", "212-IV", "1000-XIII", "409-I", "442-II", "414-I", "414-I-NEW"):
+    if lid in ("235-V", "226-V", "350-VI", "212-IV", "1000-XIII", "409-I", "442-II", "414-I", "414-I-NEW",
+               "171-VIII", "178-VIII", "360-VI-NEW", "125-VI-NEW", "375-V-NEW", "400-VI-NEW"):
         if current_rank != LegalRank.CODE:
             logger.info(f"[Cache/Healing] Healed chunk {chunk.chunk_id[:12]}… rank: {current_rank} -> CODE")
             chunk.legal_rank = LegalRank.CODE

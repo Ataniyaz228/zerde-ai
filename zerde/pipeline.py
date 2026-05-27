@@ -108,25 +108,23 @@ async def run_pipeline(
     doc_state = await ingest_document(file_path)
     logger.info(f"[Pipeline] ✓ Stage 1 done ({time.perf_counter() - t1:.2f}s) — {doc_state.char_count} chars")
 
-    # ─── ЭТАП 2 + 2.5: LLM Planner и Claim Extractor (ПАРАЛЛЕЛЬНО) ────────────
+    # ─── ЭТАП 2 + 2.5 + 2.7: LLM Planner, Claim Extractor и Self-Check (ПАРАЛЛЕЛЬНО) ────────────
     t2 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 2 + 2.5: LLM Planner и Claim Extractor (параллельно)")
-    query_plan, claims = await asyncio.gather(
+    logger.info("[Pipeline] ► Stage 2 + 2.5 + 2.7: LLM Planner, Claim Extractor и Self-Check (параллельно)")
+    query_plan, claims, selfcheck_claims = await asyncio.gather(
         build_query_plan(doc_state),
         extract_claims(doc_state),
+        asyncio.to_thread(run_self_check, doc_state.normalized_text),
     )
-    elapsed_2 = time.perf_counter() - t2
-    logger.info(
-        f"[Pipeline] ✓ Stage 2 done — {query_plan.total_queries} queries | "
-        f"Stage 2.5 done — {claims.total_count} claims ({len(claims.critical_claims)} critical) "
-        f"| время: {elapsed_2:.2f}s"
-    )
-
-    # ─── ЭТАП 2.7: Document Self-Check (внутридокументные противоречия) ───
-    selfcheck_claims = run_self_check(doc_state.normalized_text)
     if selfcheck_claims:
         claims.claims.extend(selfcheck_claims)
         logger.info(f"[Pipeline] ✓ Stage 2.7 — {len(selfcheck_claims)} internal contradictions added")
+    elapsed_2 = time.perf_counter() - t2
+    logger.info(
+        f"[Pipeline] ✓ Stage 2 done — {query_plan.total_queries} queries | "
+        f"Stage 2.5 + 2.7 done — {claims.total_count} claims ({len(claims.critical_claims)} critical) "
+        f"| время: {elapsed_2:.2f}s"
+    )
 
     # ─── ЭТАП 3: Data Gathering ───────────────────────────────────────────
     t3 = time.perf_counter()
@@ -141,31 +139,87 @@ async def run_pipeline(
     active_chunks = [c for c in fused_chunks if not c.is_duplicate]
     logger.info(f"[Pipeline] ✓ Stage 4 done ({time.perf_counter() - t4:.2f}s) — {len(active_chunks)} active")
 
-    # ─── ЭТАП 5: LLM Auditor (claim-by-claim) ────────────────────────────
+    # ─── ЭТАП 5 + 5.2: LLM Auditor & Contradiction Verifier (BATCHED & PARALLEL) ────────────────────────────
     t5 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 5: LLM Auditor (claim-by-claim verification)")
-    analysis = await run_auditor(
-        chunks=active_chunks,
-        plan=query_plan,
-        claims=claims,
-        doc_text=doc_state.normalized_text,
-    )
+    logger.info("[Pipeline] ► Stage 5 + 5.2: LLM Auditor & Contradiction Verifier (batched & parallel)")
+    
+    # Разделяем claims на батчи по 5 штук
+    claim_items = list(claims.claims)
+    batch_size = 5
+    batches = [claim_items[i:i + batch_size] for i in range(0, len(claim_items), batch_size)]
+    
+    if not batches:
+        import uuid as _uuid
+        analysis = AnalysisJSON(
+            analysis_id=str(_uuid.uuid4()),
+            source_doc_id=query_plan.source_doc_id,
+            plan_id=query_plan.plan_id,
+            facts=[],
+            conclusions=[],
+            negative_space=[],
+            normative=[],
+            cons=[],
+            llm_model_used=get_settings().llm_model_analyst,
+            verdicts=[],
+        )
+    else:
+        async def _process_batch(batch_claims: list[DocumentClaim]) -> AnalysisJSON:
+            batch_result = ClaimExtractionResult(
+                doc_id=claims.doc_id,
+                claims=batch_claims,
+                structural_claims=[],
+            )
+            # Запускаем аудитора для батча
+            batch_analysis = await run_auditor(
+                chunks=active_chunks,
+                plan=query_plan,
+                claims=batch_result,
+                doc_text=doc_state.normalized_text,
+            )
+            # Сразу верифицируем противоречия для этого батча
+            batch_analysis = await verify_contradictions(batch_analysis, active_chunks)
+            return batch_analysis
+
+        batch_results = await asyncio.gather(*[_process_batch(b) for b in batches])
+        
+        # Объединяем результаты всех батчей
+        import uuid as _uuid
+        analysis = AnalysisJSON(
+            analysis_id=str(_uuid.uuid4()),
+            source_doc_id=query_plan.source_doc_id,
+            plan_id=query_plan.plan_id,
+            facts=[],
+            conclusions=[],
+            negative_space=[],
+            normative=[],
+            cons=[],
+            llm_model_used=batch_results[0].llm_model_used if batch_results else get_settings().llm_model_analyst,
+            verdicts=[],
+        )
+        
+        seen_cons = set()
+        for br in batch_results:
+            analysis.verdicts.extend(br.verdicts)
+            analysis.facts.extend(br.facts)
+            analysis.conclusions.extend(br.conclusions)
+            analysis.negative_space.extend(br.negative_space)
+            analysis.normative.extend(br.normative)
+            for con in br.cons:
+                if con not in seen_cons:
+                    analysis.cons.append(con)
+                    seen_cons.add(con)
+
     # V7.0: Переносим структурные claims в analysis для рендеринга
     analysis.structural_claims = claims.structural_claims
+    from zerde.stages.s5_analyst import _validate_claim_coverage
+    _validate_claim_coverage(analysis, claims)
+    
     contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
     logger.info(
-        f"[Pipeline] ✓ Stage 5 done ({time.perf_counter() - t5:.2f}s) — "
+        f"[Pipeline] ✓ Stage 5 + 5.2 done ({time.perf_counter() - t5:.2f}s) — "
         f"verdicts={len(analysis.verdicts)} contradicted={contradicted} "
         f"structural={len(claims.structural_claims)}"
     )
-
-    # ─── ЭТАП 5.2: Contradiction Verifier (Anti-Hallucination Layer) ──────
-    t5_2 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 5.2: Contradiction Verifier")
-    analysis = await verify_contradictions(analysis, active_chunks)
-    # Recalculate contradicted count after verification
-    contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
-    logger.info(f"[Pipeline] ✓ Stage 5.2 done ({time.perf_counter() - t5_2:.2f}s) — remaining contradicted={contradicted}")
 
     # ─── ЭТАП 5.5 + 6: Policy Analyst и BM25 Audit (ПАРАЛЛЕЛЬНО) ──────
     t56 = time.perf_counter()

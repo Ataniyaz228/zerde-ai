@@ -14,11 +14,23 @@ import json
 import logging
 import re
 
+import asyncio
 from openai import AsyncOpenAI
 
 from zerde.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
+
+
+_LLM_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def get_llm_semaphore() -> asyncio.Semaphore:
+    global _LLM_SEMAPHORE
+    if _LLM_SEMAPHORE is None:
+        _LLM_SEMAPHORE = asyncio.Semaphore(5)
+    return _LLM_SEMAPHORE
+
 
 
 def _repair_truncated_json(raw: str) -> dict | None:
@@ -160,30 +172,32 @@ async def cached_llm_call(
     if cached is not None:
         return cached
 
-    # Делаем реальный LLM-вызов
-    # Пробуем с json_object, при ошибке — без него (fallback)
-    content = None
-    for use_json_mode in (True, False):
-        try:
-            kwargs: dict = dict(
-                model=model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                messages=messages,
-            )
-            if use_json_mode:
-                kwargs["response_format"] = {"type": "json_object"}
-
-            response = await client.chat.completions.create(**kwargs)
-            content = response.choices[0].message.content or "{}"
-            break  # Успех — выходим
-        except Exception as e:
-            err_str = str(e)
-            if "json" in err_str.lower() or "400" in err_str:
+    # Делаем реальный LLM-вызов под семафором
+    semaphore = get_llm_semaphore()
+    async with semaphore:
+        # Пробуем с json_object, при ошибке — без него (fallback)
+        content = None
+        for use_json_mode in (True, False):
+            try:
+                kwargs: dict = dict(
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    messages=messages,
+                )
                 if use_json_mode:
-                    logger.info("[LLMCall] json_object not supported, retrying without it...")
-                    continue  # Попробуем без json_mode
-            raise  # Другая ошибка — пробрасываем
+                    kwargs["response_format"] = {"type": "json_object"}
+
+                response = await client.chat.completions.create(**kwargs)
+                content = response.choices[0].message.content or "{}"
+                break  # Успех — выходим
+            except Exception as e:
+                err_str = str(e)
+                if "json" in err_str.lower() or "400" in err_str:
+                    if use_json_mode:
+                        logger.info("[LLMCall] json_object not supported, retrying without it...")
+                        continue  # Попробуем без json_mode
+                raise  # Другая ошибка — пробрасываем
 
     if content is None:
         content = "{}"

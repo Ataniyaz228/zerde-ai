@@ -100,16 +100,14 @@ async def ingest_all_docs():
     cache = CacheManager("zerde_cache.db")
     docs_dir = Path("docs")
     
-    # Find all reference files, ignoring drafts/test bills
-    exclude_files = {"draft_law.txt", "zerde_test_bill_rk_2025.docx", "проект_закона_коап_каз.docx"}
-    
     all_chunks = []
     
     for path in docs_dir.rglob("*"):
         if not path.is_file():
             continue
-        if path.name.lower() in exclude_files:
-            print(f"Skipping test/draft file: {path.name}")
+        # Automatically ignore any drafts/test bills located directly in the root of the docs/ directory
+        if path.parent == docs_dir:
+            print(f"Skipping test/draft file in docs root: {path.name}")
             continue
             
         suffix = path.suffix.lower()

@@ -135,38 +135,14 @@ _LAW_ID_KNOWN = {
 }
 
 def _resolve_law_name(raw_id: str) -> str:
-    import re
-    stripped = raw_id.strip()
-    if re.match(r"^\d+-[IVX]+(?:-NEW)?$", stripped) or re.match(r"^[A-Z]\d{8,10}_?$", stripped):
-        return stripped
-    key = stripped.lower()
-    
-    def normalize(text: str) -> str:
-        text = text.replace("республики казахстан", "рк")
-        text = text.replace("республикасы", "рк")
-        text = re.sub(r"\bзакон рк\b", "закон", text)
-        return text.strip()
+    """
+    Разрешает название/ID закона в канонический short ID.
+    Использует LawRegistry с fuzzy matching — без хардкода.
+    """
+    from zerde.utils.law_registry import get_registry
+    registry = get_registry()
+    return registry.resolve(raw_id.strip())
 
-    norm_key = normalize(key)
-    
-    # Exact check
-    for name, short_id in _LAW_NAME_TO_SHORT_ID.items():
-        if normalize(name) == norm_key:
-            return short_id
-            
-    # Substring check
-    for name, short_id in _LAW_NAME_TO_SHORT_ID.items():
-        norm_name = normalize(name)
-        if norm_name in norm_key or norm_key in norm_name:
-            return short_id
-            
-    # Significant words check
-    for name, short_id in _LAW_NAME_TO_SHORT_ID.items():
-        words = [w for w in name.split() if len(w) > 3 and w not in ["закон", "кодекс", "республики", "казахстан"]]
-        if words and all(w in key for w in words):
-            return short_id
-            
-    return stripped
 
 def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
     law_id = law_id.replace("\u0406", "I").replace("\u0456", "i").strip()

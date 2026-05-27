@@ -162,6 +162,7 @@ _COMMON_LAW_NAME_MAP = {
     "судебных исполнителей": ["261-IV"],
     "сот орындаушы": ["261-IV"],
     "атқарушылық іс жүргізу": ["261-IV"],
+    "233-IV": ["261-IV"],
 }
 
 _LAW_ID_SYNONYMS = {
@@ -190,7 +191,8 @@ _LAW_ID_SYNONYMS = {
     "350-VI": {"K2000000350", "350-VI"}, # АППК
     "K2000000350": {"K2000000350", "350-VI"},
 
-    "261-IV": {"Z100000261_", "261-IV"},
+    "261-IV": {"Z100000261_", "261-IV", "233-IV"},
+    "233-IV": {"Z100000261_", "261-IV", "233-IV"},
 }
 
 
@@ -244,10 +246,22 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
 def _extract_article_from_claim(claim: DocumentClaim) -> str | None:
     """Извлекает номер статьи из утверждения с использованием regex."""
     text = (claim.claim_text + " " + claim.quote).lower()
-    # Ищем: статья 44, ст. 44, ст 44, бап 44, etc.
-    match = re.search(r"\b(?:статья|ст\.|ст|бап)\s*(\d+[\-\d]*)", text, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
+    
+    # 1. Русский вариант: слово статья/ст в разных падежах, затем число
+    match_ru = re.search(r"\b(?:стать[яиюе]|ст\.?)\s*(\d+[\-\d]*)", text, re.IGNORECASE)
+    if match_ru:
+        return match_ru.group(1).strip()
+        
+    # 2. Казахский вариант: число, затем дефис и бап/бабы/бапта/баптың
+    match_kk = re.search(r"\b(\d+[\-\d]*)-(?:бап|бабы|бабының|бапта|баптың|бабына)", text, re.IGNORECASE)
+    if match_kk:
+        return match_kk.group(1).strip()
+        
+    # 3. Fallback на просто бап/бабы, если число идет после
+    match_kk_fallback = re.search(r"\b(?:бап|бабы|бабының|бапта|баптың|бабына)\s*(\d+[\-\d]*)", text, re.IGNORECASE)
+    if match_kk_fallback:
+        return match_kk_fallback.group(1).strip()
+        
     return None
 
 

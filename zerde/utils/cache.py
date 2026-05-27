@@ -45,6 +45,15 @@ CREATE TABLE IF NOT EXISTS llm_response_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_llm_expires ON llm_response_cache(expires_at);
+
+CREATE TABLE IF NOT EXISTS law_metadata (
+    law_id      TEXT PRIMARY KEY,  -- короткий ID: "261-IV"
+    adilet_code TEXT,              -- полный код Адилет: "Z100000261_"
+    title_ru    TEXT,              -- заголовок на русском
+    title_kz    TEXT,              -- заголовок на казахском
+    chunk_count INTEGER DEFAULT 0, -- кол-во чанков в evidence_cache
+    updated_at  TEXT               -- ISO timestamp последнего обновления
+);
 """
 
 
@@ -188,15 +197,71 @@ class CacheManager:
             self._sync_new_chunks(chunks)
         return stored
 
+    def upsert_law_metadata(
+        self,
+        law_id: str,
+        adilet_code: str = "",
+        title_ru: str = "",
+        title_kz: str = "",
+        chunk_count: int = 0,
+    ) -> None:
+        """
+        Обновляет или вставляет запись в law_metadata.
+
+        Args:
+            law_id: Короткий ID закона ("261-IV").
+            adilet_code: Полный код Адилет ("Z100000261_").
+            title_ru: Заголовок на русском.
+            title_kz: Заголовок на казахском.
+            chunk_count: Количество чанков в evidence_cache.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO law_metadata (law_id, adilet_code, title_ru, title_kz, chunk_count, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(law_id) DO UPDATE SET
+                    adilet_code  = COALESCE(NULLIF(excluded.adilet_code, ''), law_metadata.adilet_code),
+                    title_ru     = COALESCE(NULLIF(excluded.title_ru, ''), law_metadata.title_ru),
+                    title_kz     = COALESCE(NULLIF(excluded.title_kz, ''), law_metadata.title_kz),
+                    chunk_count  = chunk_count + excluded.chunk_count,
+                    updated_at   = excluded.updated_at
+                """,
+                (
+                    law_id,
+                    adilet_code,
+                    title_ru,
+                    title_kz,
+                    chunk_count,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        logger.debug(f"[Cache] law_metadata upserted: {law_id}")
+
+    def get_law_registry_rows(self) -> list[dict]:
+        """
+        Возвращает все записи из law_metadata.
+
+        Returns:
+            Список словарей {law_id, adilet_code, title_ru, title_kz, chunk_count}.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT law_id, adilet_code, title_ru, title_kz, chunk_count FROM law_metadata"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     async def stats(self) -> dict:
         """Возвращает статистику по кэшу EvidenceChunk и их эмбеддингам."""
         with self._conn() as conn:
             total_chunks = conn.execute("SELECT COUNT(*) FROM evidence_cache").fetchone()[0]
             total_embeddings = conn.execute("SELECT COUNT(*) FROM evidence_embeddings").fetchone()[0]
+            law_count = conn.execute("SELECT COUNT(*) FROM law_metadata").fetchone()[0]
             db_size = self.db_path.stat().st_size if self.db_path.exists() else 0
         return {
             "total_chunks": total_chunks,
             "total_embeddings": total_embeddings,
+            "law_registry_entries": law_count,
             "db_size_bytes": db_size,
             "db_path": str(self.db_path),
         }

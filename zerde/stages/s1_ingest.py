@@ -140,6 +140,11 @@ def _extract_pdf(path: Path) -> str:
     # Пост-процессинг: склеиваем разнесённые буквы (Adilet PDF артефакт)
     full_text = _fix_spaced_pdf_text(full_text)
 
+    # Исправляем разрывы строк в номерах статей (10-\n5 -> 10-5, 124\n-бап -> 124-бап)
+    import re
+    full_text = re.sub(r"(\d+)-\s*\n\s*(\d+)", r"\1-\2", full_text)
+    full_text = re.sub(r"(\d+)\s*\n\s*-(бап|бабы|бапта|бабының|бабына)", r"\1-\2", full_text)
+
     return full_text
 
 

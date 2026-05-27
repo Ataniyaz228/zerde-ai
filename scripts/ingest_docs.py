@@ -13,9 +13,42 @@ sys.path.append(str(Path(__file__).parent.parent))
 from zerde.models import EvidenceChunk, LegalRank, WebTier
 from zerde.utils.cache import CacheManager
 from zerde.stages.s3_gather import _regex_split_articles, _LAW_ID_KNOWN
+from zerde.utils.law_registry import reload_registry
 
 # Reverse lookup for known codes from s3_gather
 _CODE_TO_LAW_ID = {v.upper(): k for k, v in _LAW_ID_KNOWN.items()}
+
+
+def _extract_title_from_text(text: str, lang: str = "ru") -> str:
+    """
+    Извлекает заголовок закона из первых 2000 символов документа.
+    
+    Поддерживает два паттерна:
+    - "Закон Республики Казахстан ... O ..." -> "О ..."
+    - "Защите ..." (название просто)
+    - "Tutulu ...", "Туралы ..."
+    """
+    sample = text[:2000]
+    
+    # Русский: "Закон Республики Казахстан ... О ..."
+    m = re.search(
+        r"О\s+(.{10,120}?)(?:\n|$)",
+        sample,
+        re.IGNORECASE,
+    )
+    if m:
+        title = m.group(1).strip().rstrip(".")
+        if len(title) > 10:
+            return title
+    
+    # Фоллбэк: первая длинная строка (название закона)
+    lines = [l.strip() for l in sample.splitlines() if l.strip()]
+    for line in lines[:20]:
+        if 15 < len(line) < 200 and not re.match(r"^\d", line):
+            return line
+    
+    return ""
+
 
 def detect_law_id(file_path: Path, text: str = "") -> str:
     filename = file_path.name.lower()
@@ -82,7 +115,18 @@ def extract_pdf_text(path: Path) -> str:
     for page in doc:
         pages.append(page.get_text("text"))
     doc.close()
-    return "\n".join(pages)
+    text = "\n".join(pages)
+    
+    # 1. Apply spaced text fixer from stage 1 to clean up Adilet PDF spacing
+    from zerde.stages.s1_ingest import _fix_spaced_pdf_text
+    text = _fix_spaced_pdf_text(text)
+    
+    # 2. Fix layout splits in article numbers: 10-\n5 -> 10-5
+    text = re.sub(r"(\d+)-\s*\n\s*(\d+)", r"\1-\2", text)
+    # 124\n-бап -> 124-бап
+    text = re.sub(r"(\d+)\s*\n\s*-(бап|бабы|бапта|бабының|бабына)", r"\1-\2", text)
+    
+    return text
 
 def extract_docx_text(path: Path) -> str:
     doc = docx.Document(str(path))
@@ -149,6 +193,7 @@ async def ingest_all_docs():
     docs_dir = Path("docs")
     
     all_chunks = []
+    law_titles: dict[str, dict] = {}  # law_id → {title_ru, title_kz}
     
     for path in docs_dir.rglob("*"):
         if not path.is_file():
@@ -199,7 +244,7 @@ async def ingest_all_docs():
                     valid_count += 1
                 print(f"   [Fallback] Generated {valid_count} valid paragraph chunks out of {len(paragraphs)} total paragraphs.")
                      
-            # Extract metadata values
+            # Определяем язык и заголовок документа
             filename = path.name.lower()
             
             # Language: ru or kk
@@ -208,6 +253,19 @@ async def ingest_all_docs():
                 lang = "kk"
             elif "rus" in filename or "ru" in filename or ".rus." in filename:
                 lang = "ru"
+
+            # Извлекаем заголовок
+            doc_title = _extract_title_from_text(text, lang)
+            title_ru = doc_title if lang == "ru" else ""
+            title_kz = doc_title if lang == "kk" else ""
+
+            # Сохраняем заголовок для реестра
+            if law_id not in law_titles:
+                law_titles[law_id] = {"title_ru": "", "title_kz": ""}
+            if title_ru:
+                law_titles[law_id]["title_ru"] = title_ru
+            if title_kz:
+                law_titles[law_id]["title_kz"] = title_kz
                 
             # Source version date (format: DD-MM-YYYY -> YYYY-MM-DD)
             date_match = re.search(r"\b(\d{2})-(\d{2})-(\d{4})\b", filename)
@@ -263,12 +321,53 @@ async def ingest_all_docs():
         stored = await cache.put_many(all_chunks)
         print(f"🎉 Stored {stored} chunks in zerde_cache.db successfully!")
         
-        print("\n🧠 Pre-computing BGE-M3 vector embeddings for all ingested chunks...")
-        # Since embed_chunks is sync, we run it directly. It will lazy-init the BGE-M3 model on GPU/CPU.
-        cache.embed_chunks(all_chunks)
-        print("🎉 Successfully generated and stored BGE-M3 vector embeddings!")
+        # Обновляем law_metadata для всех law_id из загруженных чанков
+        law_stats: dict[str, dict] = {}
+        for chunk in all_chunks:
+            lid = chunk.law_id or "UNKNOWN"
+            if lid not in law_stats:
+                law_stats[lid] = {"chunk_count": 0, "title_ru": "", "title_kz": ""}
+            law_stats[lid]["chunk_count"] += 1
+            # Добавляем заголовки из накопленных за время инджеста
+            if lid in law_titles:
+                if not law_stats[lid]["title_ru"] and law_titles[lid].get("title_ru"):
+                    law_stats[lid]["title_ru"] = law_titles[lid]["title_ru"]
+                if not law_stats[lid]["title_kz"] and law_titles[lid].get("title_kz"):
+                    law_stats[lid]["title_kz"] = law_titles[lid]["title_kz"]
+        
+        for lid, stats in law_stats.items():
+            if lid == "UNKNOWN":
+                continue
+            # Получаем adilet_code из статического словаря
+            adilet_code = _LAW_ID_KNOWN.get(lid, "")
+            cache.upsert_law_metadata(
+                law_id=lid,
+                adilet_code=adilet_code,
+                title_ru=stats.get("title_ru", ""),
+                title_kz=stats.get("title_kz", ""),
+                chunk_count=stats["chunk_count"],
+            )
+        print(f"📚 Law registry updated: {len(law_stats)} laws written to law_metadata.")
+        
+        # Перезагружаем синглтон реестра после инджеста
+        reload_registry()
+        print("✅ Law registry reloaded.")
+        
+        # Optimize: Only embed chunks that don't have embeddings in the database yet
+        with cache._conn() as conn:
+            existing_emb_ids = set(row[0] for row in conn.execute("SELECT chunk_id FROM evidence_embeddings").fetchall())
+        chunks_to_embed = [c for c in all_chunks if c.chunk_id not in existing_emb_ids]
+        
+        if chunks_to_embed:
+            print(f"\n🧠 Pre-computing BGE-M3 vector embeddings for {len(chunks_to_embed)} missing chunks...")
+            # Since embed_chunks is sync, we run it directly. It will lazy-init the BGE-M3 model on GPU/CPU.
+            cache.embed_chunks(chunks_to_embed)
+            print(f"🎉 Successfully generated and stored BGE-M3 vector embeddings for {len(chunks_to_embed)} chunks!")
+        else:
+            print("\n🎉 All chunks already have vector embeddings. Skipping embedding generation!")
     else:
         print("\nNo chunks found to store!")
 
 if __name__ == "__main__":
     asyncio.run(ingest_all_docs())
+

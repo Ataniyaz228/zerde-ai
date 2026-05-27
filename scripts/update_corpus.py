@@ -5,10 +5,14 @@ import json
 import os
 import re
 import sqlite3
+import ssl
 import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+
+# Disable SSL verification for development/unverified environments
+ssl._create_default_https_context = ssl._create_unverified_context
 
 # User-Agent header to prevent blocking
 HEADERS = {
@@ -110,6 +114,7 @@ def main():
     parser = argparse.ArgumentParser(description="Zerde AI RAG Automated Corpus Updater")
     parser.add_argument("--dry-run", action="store_true", help="Print updates without modifying files or DB")
     parser.add_argument("--adilet-id", type=str, help="Update only a specific NPA by Adilet ID (e.g. K1400000235)")
+    parser.add_argument("--force", action="store_true", help="Force redownload and re-ingest all documents even if up to date")
     args = parser.parse_args()
 
     manifest_path = Path("docs/manifest.json")
@@ -145,11 +150,14 @@ def main():
             print("   ⚠️ Could not fetch latest version from Adilet. Skipping.")
             continue
 
-        if latest_version <= current_version:
+        if latest_version <= current_version and not args.force:
             print(f"   ✅ Up to date! (Local: {current_version} >= Remote: {latest_version})")
             continue
 
-        print(f"   🔔 Update detected! (Remote: {latest_version} > Local: {current_version})")
+        if latest_version <= current_version and args.force:
+            print(f"   🔄 [Force] Re-downloading and re-ingesting anyway (Local: {current_version} == Remote: {latest_version})")
+        else:
+            print(f"   🔔 Update detected! (Remote: {latest_version} > Local: {current_version})")
 
         if args.dry_run:
             print("   [Dry Run] Skipping file download and database cleanup.")

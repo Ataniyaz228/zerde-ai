@@ -180,15 +180,34 @@ def _parse_llm_plan(raw: dict, doc_state: DocumentState) -> QueryPlan:
 
 
 def _parse_adilet_queries(raw_list: list) -> list[AdiletQuery]:
+    from zerde.utils.law_registry import get_registry
+    registry = get_registry()
     result = []
     for i, item in enumerate(raw_list):
         if not isinstance(item, dict):
             logger.warning(f"[S2] Skipping invalid adilet_query[{i}]: not a dict")
             continue
         try:
+            raw_law_ids = _safe_str_list(item.get("law_ids", []))
+            # Fix #4: Резолвим каждый law_id через реестр (233-IV → 261-IV и т.д.)
+            resolved_law_ids = []
+            for lid in raw_law_ids:
+                resolved = registry.resolve(lid)
+                canonical = resolved if resolved else lid
+                if canonical not in resolved_law_ids:
+                    resolved_law_ids.append(canonical)
+
+            # Fix #4: Также патчим query_text — заменяем неправильные ID прямо в тексте
+            query_text = str(item.get("query_text", ""))
+            for lid in raw_law_ids:
+                resolved = registry.resolve(lid)
+                if resolved and resolved != lid and lid in query_text:
+                    query_text = query_text.replace(lid, resolved)
+                    logger.debug(f"[S2/Fix4] query_text: {lid} → {resolved}")
+
             q = AdiletQuery(
-                query_text=str(item.get("query_text", "")),
-                law_ids=_safe_str_list(item.get("law_ids", [])),
+                query_text=query_text,
+                law_ids=resolved_law_ids,
                 articles=_safe_str_list(item.get("articles", [])),
                 date_from=_parse_date(item.get("date_from")),
                 date_to=_parse_date(item.get("date_to")),
@@ -198,6 +217,7 @@ def _parse_adilet_queries(raw_list: list) -> list[AdiletQuery]:
         except Exception as e:
             logger.warning(f"[S2] Skipping adilet_query[{i}]: {e}")
     return result
+
 
 
 def _parse_web_queries(raw_list: list, language: str) -> list[WebQuery]:

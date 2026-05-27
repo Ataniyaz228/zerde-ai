@@ -508,12 +508,19 @@ def audit_analysis(
                     v.confidence = "LOW"
             elif fact.validation_status in (ValidationStatus.HIGH, ValidationStatus.MEDIUM):
                 if v.status != VerdictStatus.CONFIRMED:
-                    # Если оригинальный вердикт модели был UNVERIFIED, а подтверждение пришло от
-                    # глобального BM25-поиска (а не точечного мета-поиска с bm25_score=1.0),
-                    # мы блокируем этот ненадежный апгрейд!
-                    if v.status == VerdictStatus.UNVERIFIED and (fact.bm25_score is None or fact.bm25_score < 1.0):
-                        logger.info(f"[S6/Sync] Blocking upgrade of verdict '{v.claim_id}' from UNVERIFIED to CONFIRMED based on BM25 fallback.")
-                        continue
+                    # Tiered BM25 threshold для апгрейда UNVERIFIED → CONFIRMED:
+                    # HIGH validation (множественные совпадения) → порог 0.4
+                    # MEDIUM validation → порог 0.6
+                    # None/0 → блокируем
+                    if v.status == VerdictStatus.UNVERIFIED:
+                        bm25 = fact.bm25_score or 0.0
+                        threshold = 0.4 if fact.validation_status == ValidationStatus.HIGH else 0.6
+                        if bm25 < threshold:
+                            logger.info(
+                                f"[S6/Sync] Blocking upgrade of verdict '{v.claim_id}' from UNVERIFIED to CONFIRMED "
+                                f"(bm25={bm25:.3f} < threshold={threshold})"
+                            )
+                            continue
 
                     logger.info(f"[S6/Sync] Upgrading verdict for '{v.claim_id}' to CONFIRMED because fact validation status is {fact.validation_status.value}")
                     v.status = VerdictStatus.CONFIRMED
@@ -643,13 +650,15 @@ def audit_analysis(
             q_retrieval = max(0.0, min(1.0, q_retrieval))
 
             # 4. Contradiction Penalty (P_conflict)
+            # v9.5: Смягчённые веса. Нахождение противоречий показывает что анализ РАБОТАЕТ,
+            # а не что он ненадёжный. Reliability = надёжность анализа, не качество документа.
             p_conflict = (
-                0.25 * n_contradicted_critical +
-                0.12 * n_contradicted_high +
-                0.06 * n_contradicted_medium +
-                0.02 * n_contradicted_low
+                0.08 * n_contradicted_critical +
+                0.05 * n_contradicted_high +
+                0.03 * n_contradicted_medium +
+                0.01 * n_contradicted_low
             )
-            p_conflict = max(0.0, min(0.95, p_conflict))
+            p_conflict = max(0.0, min(0.85, p_conflict))
 
             # Calculate Reliability (R)
             # R = (0.50 * V_ratio + 0.30 * Q_auth + 0.20 * Q_retrieval) * (1.0 - P_conflict)
@@ -674,17 +683,28 @@ def audit_analysis(
         # Compile and attach AnalysisStats (v9.4 Immutable Stage)
         from zerde.models import AnalysisStats
         
-        # FIX 3: Conditional pros — don't claim "Confirmed 0" as a positive
+        # FIX 3 + FIX 5: Conditional pros — don't claim "Confirmed 0" as a positive.
+        # FIX 5: Don't generate false positive "no contradictions" when corpus is empty.
+        # corpus_index может быть пустым (0 локальных чанков) — в этом случае
+        # "противоречий не обнаружено" — ложный позитив, т.к. мы ничего не проверяли.
+        has_real_evidence = len(corpus_index) > 0
+        has_local_evidence = any(
+            c.adilet_fallback_used is not None or c.law_id
+            for c in corpus_index.values()
+        )
         pros_list = []
         if n_confirmed > 0:
             pros_list.append(f"Подтверждено {n_confirmed} из {n_total} анализируемых утверждений законопроекта.")
-        if n_contradicted == 0:
+        if n_contradicted == 0 and has_real_evidence and has_local_evidence and v_ratio >= 0.5:
+            # Только если >50% фактов проверено и есть локальные источники
             pros_list.append("Противоречий с действующим законодательством РК не обнаружено.")
-        if n_confirmed > 0 and n_contradicted == 0:
+        if n_confirmed > 0 and n_contradicted == 0 and has_local_evidence and v_ratio >= 0.5:
             pros_list.append("Все проверенные утверждения соответствуют нормативно-правовой базе.")
         if not pros_list:
             # Fallback: nothing confirmed, but also nothing contradicted — neutral
-            if n_unverified == n_total:
+            if n_unverified == n_total and not has_real_evidence:
+                pros_list.append("Документ не содержит явных фактических ошибок (корпус источников недостаточен для полной верификации).")
+            elif n_unverified == n_total:
                 pros_list.append("Документ не содержит фактических ошибок в проверяемой части (недостаточно источников для полной верификации).")
             else:
                 pros_list.append(f"Проанализировано {n_total} утверждений законопроекта.")

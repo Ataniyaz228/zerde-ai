@@ -220,17 +220,21 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
             try:
                 chunks = await strategy_fn(query, cache, resolved_law_ids=resolved_law_ids)
                 if chunks:
+                    logger.info(f"[S3/Adilet] {strategy_fn.__name__} returned {len(chunks)} chunks for {resolved_law_ids}")
                     return chunks
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[S3/Adilet] {strategy_fn.__name__} failed for {resolved_law_ids}: {e}")
                 continue
         try:
             chunks = await cache.search_local(query.query_text, law_ids=resolved_law_ids, articles=query.articles)
             if chunks:
+                logger.info(f"[S3/Adilet] search_local found {len(chunks)} chunks for query: '{query.query_text[:80]}'")
                 for c in chunks:
                     c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
                 return chunks
         except Exception:
             pass
+        logger.warning(f"[S3/Adilet] All strategies failed for {resolved_law_ids}. Returning empty.")
         return []
 
 async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager, resolved_law_ids: list[str] | None = None) -> list[EvidenceChunk]:

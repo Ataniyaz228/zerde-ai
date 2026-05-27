@@ -17,6 +17,7 @@ from pathlib import Path
 
 from zerde.config import get_settings
 from zerde.models import (
+    AdiletFallbackStrategy,
     AnalysisJSON,
     ClaimExtractionResult,
     DocumentState,
@@ -34,6 +35,7 @@ from zerde.stages.s5_5_verifier import verify_contradictions
 from zerde.stages.s5_analyst import run_auditor
 from zerde.stages.s6_auditor import audit_analysis
 from zerde.stages.s7_render import render_report
+from zerde.utils.law_registry import get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,104 @@ async def run_pipeline(
     logger.info("[Pipeline] ► Stage 3: Evidence Gathering")
     raw_chunks = await gather_evidence(query_plan)
     logger.info(f"[Pipeline] ✓ Stage 3 done ({time.perf_counter() - t3:.2f}s) — {len(raw_chunks)} chunks")
+
+    # ─── ЭТАП 3.5: Local RAG Injection ─────────────────────────────
+    # Прямой запрос локальных чанков для всех law_ids из плана.
+    # Гарантирует что локальные чанки попадают в S5/S6 даже если adilet.zan.kz HTTP недоступен.
+    #
+    # v2: Используем ПРЯМОЙ SQL-запрос по метаданным (law_id + article) вместо
+    #     search_local, который через reranker отсеивает нужные статьи.
+    try:
+        from zerde.config import get_settings as _gs
+        from zerde.utils.cache import CacheManager as _CM
+        registry = get_registry()
+        _cache_for_rag = _CM(_gs().cache_db_path)
+        existing_chunk_ids = {c.chunk_id for c in raw_chunks}
+
+        # Собираем все уникальные law_ids из всех adilet запросов, резолвим через реестр
+        all_law_ids: list[str] = []
+        all_articles: list[str] = []
+        for aq in query_plan.adilet_queries:
+            for lid in (aq.law_ids or []):
+                resolved = registry.resolve(lid)
+                if resolved and resolved not in all_law_ids:
+                    all_law_ids.append(resolved)
+            for art in (aq.articles or []):
+                if art and art not in all_articles:
+                    all_articles.append(art)
+
+        if all_law_ids:
+            logger.info(f"[Pipeline/S3.5] Прямой RAG-запрос для law_ids={all_law_ids} articles={all_articles}")
+
+            # ── Шаг A: Прямой SQL по метаданным (гарантированное попадание) ──
+            import json as _json
+            import sqlite3 as _sqlite3
+            injected = 0
+            with _cache_for_rag._conn() as conn:
+                for lid in all_law_ids:
+                    if all_articles:
+                        # Для каждой статьи — отдельный запрос чтобы не пропустить ни одну
+                        for art in all_articles:
+                            rows = conn.execute(
+                                """SELECT chunk_json FROM evidence_cache 
+                                   WHERE json_extract(chunk_json, '$.law_id') = ?
+                                   AND json_extract(chunk_json, '$.article') = ?""",
+                                (lid, art)
+                            ).fetchall()
+                            for r in rows:
+                                try:
+                                    chunk = EvidenceChunk.model_validate(_json.loads(r["chunk_json"]))
+                                    if chunk.chunk_id not in existing_chunk_ids:
+                                        chunk.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
+                                        raw_chunks.append(chunk)
+                                        existing_chunk_ids.add(chunk.chunk_id)
+                                        injected += 1
+                                except Exception:
+                                    pass
+                    else:
+                        # Без фильтра по статьям — все чанки закона (limit 50)
+                        rows = conn.execute(
+                            """SELECT chunk_json FROM evidence_cache 
+                               WHERE json_extract(chunk_json, '$.law_id') = ?
+                               LIMIT 50""",
+                            (lid,)
+                        ).fetchall()
+                        for r in rows:
+                            try:
+                                chunk = EvidenceChunk.model_validate(_json.loads(r["chunk_json"]))
+                                if chunk.chunk_id not in existing_chunk_ids:
+                                    chunk.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
+                                    raw_chunks.append(chunk)
+                                    existing_chunk_ids.add(chunk.chunk_id)
+                                    injected += 1
+                            except Exception:
+                                pass
+
+            # ── Шаг B: Дополнительный семантический поиск (search_local) ──
+            # Ловит чанки без точных метаданных, но семантически релевантные
+            rag_tasks = [
+                _cache_for_rag.search_local(
+                    query_text=aq.query_text,
+                    law_ids=[registry.resolve(lid) for lid in (aq.law_ids or [])],
+                    limit=15,
+                )
+                for aq in query_plan.adilet_queries
+            ]
+            rag_results = await asyncio.gather(*rag_tasks, return_exceptions=True)
+            for result in rag_results:
+                if isinstance(result, list):
+                    for c in result:
+                        if c.chunk_id not in existing_chunk_ids:
+                            c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
+                            raw_chunks.append(c)
+                            existing_chunk_ids.add(c.chunk_id)
+                            injected += 1
+
+            if injected:
+                logger.info(f"[Pipeline/S3.5] Инъекцировано {injected} локальных RAG-чанков (всего {len(raw_chunks)} чанков)")
+    except Exception as _e:
+        logger.warning(f"[Pipeline/S3.5] Local RAG injection ошибка (не критично): {_e}")
+
 
     # ─── ЭТАП 4: Fusion & Validation ─────────────────────────────────────
     t4 = time.perf_counter()

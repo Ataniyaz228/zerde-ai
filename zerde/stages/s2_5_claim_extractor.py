@@ -49,17 +49,17 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
     (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx\u0406\u0456]{1,5}(?:\s*(?:ЗРК|ҚРЗ))?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
     
     # Ссылки на статьи КоАП (RU + KK)
-    (re.compile(r"стать[яиею]\s*(\d+(?:[-.]?\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
+    (re.compile(r"стать[яиею]\s*(\d+(?:[-.]?\\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     (re.compile(r"ӘҚБтК\w*\s*(?:-\s*)?(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)(?:[^0-9\n]*?)ӘҚБтК", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     
     # Ссылки на статьи УК (RU + KK)
-    (re.compile(r"стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\s+(?:Уголовн\w+\s+[Кк]одекс\w*|УК)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
+    (re.compile(r"стать[яиеюй]\w?\\s+(\d+(?:[-.]?\\d+)?)\s+(?:Уголовн\w+\s+[Кк]одекс\w*|УК)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
     (re.compile(r"ҚК\w*\s*(?:-\s*)?(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
     (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)(?:[^0-9\n]*?)ҚК", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
     
     # Ссылки на статьи любого Кодекса (RU + KK)
-    (re.compile(r"(?:в\s+)?стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
+    (re.compile(r"(?:в\s+)?стать[яиеюй]\w?\\s+(\d+(?:[-.]?\\d+)?)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
     (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
     
     # Ссылки на ППРК: Постановление Правительства №142, ППРК №909
@@ -147,6 +147,14 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
     ]
     if any(m in text_lower for m in commencement_markers):
         return True
+
+    # 0.5. Если содержит глаголы процессуальных поправок, это НЕ структурный claim
+    amendment_verbs = [
+        "дополнить", "исключить", "изложить", "после слов", "словами", "точку заменить",
+        "толықтырылсын", "алып тасталсын", "ауыстырылсын", "сөздерінен кейін"
+    ]
+    if any(v in text_lower for v in amendment_verbs):
+        return False
 
     # 1. Если есть модальные глаголы — всегда нормативное, не структурное
     if any(v in text_lower for v in _MODAL_VERBS):

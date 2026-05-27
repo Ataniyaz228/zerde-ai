@@ -209,16 +209,22 @@ async def _run_adilet_agent(queries: list[AdiletQuery], cache: CacheManager) -> 
     return chunks
 
 async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -> list[EvidenceChunk]:
+    from zerde.utils.law_registry import get_registry
+    registry = get_registry()
+    # Резолвим law_ids через реестр до любых операций с ними
+    resolved_law_ids = [registry.resolve(lid) for lid in (query.law_ids or [])]
+    if resolved_law_ids != (query.law_ids or []):
+        logger.info(f"[S3/Adilet] Resolved law_ids: {query.law_ids} → {resolved_law_ids}")
     async with _ADILET_SEMAPHORE:
         for strategy_fn in [_try_adilet_css_selectors, _try_adilet_pdf_ocr]:
             try:
-                chunks = await strategy_fn(query, cache)
+                chunks = await strategy_fn(query, cache, resolved_law_ids=resolved_law_ids)
                 if chunks:
                     return chunks
             except Exception:
                 continue
         try:
-            chunks = await cache.search_local(query.query_text, law_ids=query.law_ids, articles=query.articles)
+            chunks = await cache.search_local(query.query_text, law_ids=resolved_law_ids, articles=query.articles)
             if chunks:
                 for c in chunks:
                     c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
@@ -227,12 +233,13 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
             pass
         return []
 
-async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager) -> list[EvidenceChunk]:
+async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager, resolved_law_ids: list[str] | None = None) -> list[EvidenceChunk]:
     settings = get_settings()
     base = str(settings.adilet_base_url).rstrip("/")
     chunks = []
     urls_to_try = []
-    for law_id in query.law_ids:
+    law_ids_to_use = resolved_law_ids if resolved_law_ids is not None else (query.law_ids or [])
+    for law_id in law_ids_to_use:
         urls_to_try.extend(_normalize_law_id_to_adilet_urls(law_id, base)[:3])
     if not urls_to_try:
         urls_to_try = await _search_adilet_for_query(query, base)
@@ -297,7 +304,7 @@ def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[E
         ))
     return chunks
 
-async def _try_adilet_pdf_ocr(query: AdiletQuery, cache: CacheManager) -> list[EvidenceChunk]:
+async def _try_adilet_pdf_ocr(query: AdiletQuery, cache: CacheManager, resolved_law_ids: list[str] | None = None) -> list[EvidenceChunk]:
     return []
 
 async def _run_web_agent(queries: list[WebQuery], cache: CacheManager) -> list[EvidenceChunk]:

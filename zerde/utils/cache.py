@@ -188,6 +188,19 @@ class CacheManager:
             self._sync_new_chunks(chunks)
         return stored
 
+    async def stats(self) -> dict:
+        """Возвращает статистику по кэшу EvidenceChunk и их эмбеддингам."""
+        with self._conn() as conn:
+            total_chunks = conn.execute("SELECT COUNT(*) FROM evidence_cache").fetchone()[0]
+            total_embeddings = conn.execute("SELECT COUNT(*) FROM evidence_embeddings").fetchone()[0]
+            db_size = self.db_path.stat().st_size if self.db_path.exists() else 0
+        return {
+            "total_chunks": total_chunks,
+            "total_embeddings": total_embeddings,
+            "db_size_bytes": db_size,
+            "db_path": str(self.db_path),
+        }
+
     def embed_chunks(self, chunks: list[EvidenceChunk]) -> None:
         """
         Pre-computes and stores vector embeddings for EvidenceChunks in batch.

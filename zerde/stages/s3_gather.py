@@ -1,8 +1,8 @@
-"""
+\"\"\"
 Stage 3: Data Gathering Agents
 Вход:  QueryPlan
 Выход: list[EvidenceChunk]
-"""
+\"\"\"
 
 from __future__ import annotations
 
@@ -145,30 +145,30 @@ def _resolve_law_name(raw_id: str) -> str:
 
 
 def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
-    law_id = law_id.replace("\\u0406", "I").replace("\\u0456", "i").strip()
+    law_id = law_id.replace(\"\u0406\", \"I\").replace(\"\u0456\", \"i\").strip()
     law_id = _resolve_law_name(law_id)
     urls = []
     
     # 1. Known mapping
     if law_id in _LAW_ID_KNOWN:
         adilet_code = _LAW_ID_KNOWN[law_id]
-        urls.append(f"{base}/rus/docs/{adilet_code}")
+        urls.append(f\"{base}/rus/docs/{adilet_code}\")
         # also append without trailing underscore
-        if adilet_code.endswith("_"):
-            urls.append(f"{base}/rus/docs/{adilet_code[:-1]}")
+        if adilet_code.endswith(\"_\"):
+            urls.append(f\"{base}/rus/docs/{adilet_code[:-1]}\")
         return urls
         
     # 2. If it is already an Adilet ID
-    if re.match(r"^[A-Z]\\d{9}", law_id):
-        urls.append(f"{base}/rus/docs/{law_id}")
-        if law_id.endswith("_"):
-            urls.append(f"{base}/rus/docs/{law_id[:-1]}")
+    if re.match(r\"^[A-Z]\d{9}\", law_id):
+        urls.append(f\"{base}/rus/docs/{law_id}\")
+        if law_id.endswith(\"_\"):
+            urls.append(f\"{base}/rus/docs/{law_id[:-1]}\")
         else:
-            urls.append(f"{base}/rus/docs/{law_id}_")
+            urls.append(f\"{base}/rus/docs/{law_id}_\")
         return urls
         
-    # 3. Guessing/generating variants for standard format like "999-VI" or "94-V"
-    match = re.match(r"^(\\d+)-([IVX]+)$", law_id, re.IGNORECASE)
+    # 3. Guessing/generating variants for standard format like \"999-VI\" or \"94-V\"
+    match = re.match(r\"^(\d+)-([IVX]+)$\", law_id, re.IGNORECASE)
     if match:
         num = match.group(1)
         roman = match.group(2).upper()
@@ -176,12 +176,12 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
         # Let's generate a couple of variants:
         # Z1300000 + num, Z1500000 + num, Z1600000 + num, etc.
         num_padded = num.zfill(4)
-        for yr in ["13", "14", "15", "16", "20", "23"]:
-            urls.append(f"{base}/rus/docs/Z{yr}0000{num_padded}")
-            urls.append(f"{base}/rus/docs/Z{yr}0000{num}")
+        for yr in [\"13\", \"14\", \"15\", \"16\", \"20\", \"23\"]:
+            urls.append(f\"{base}/rus/docs/Z{yr}0000{num_padded}\")
+            urls.append(f\"{base}/rus/docs/Z{yr}0000{num}\")
             
     # 4. As-is fallback
-    as_is = f"{base}/rus/docs/{law_id}"
+    as_is = f\"{base}/rus/docs/{law_id}\"
     if as_is not in urls:
         urls.append(as_is)
         
@@ -190,7 +190,7 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
 async def gather_evidence(plan: QueryPlan) -> list[EvidenceChunk]:
     settings = get_settings()
     cache = CacheManager(settings.cache_db_path)
-    logger.info(f"[S3] Gathering evidence. total_queries={plan.total_queries}")
+    logger.info(f\"[S3] Gathering evidence. total_queries={plan.total_queries}\")
     adilet_task = _run_adilet_agent(plan.adilet_queries, cache)
     web_queries = plan.web_queries_ru + plan.web_queries_kk + plan.web_queries_en
     web_task = _run_web_agent(web_queries, cache)
@@ -214,32 +214,32 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
     # Резолвим law_ids через реестр до любых операций с ними
     resolved_law_ids = [registry.resolve(lid) for lid in (query.law_ids or [])]
     if resolved_law_ids != (query.law_ids or []):
-        logger.info(f"[S3/Adilet] Resolved law_ids: {query.law_ids} → {resolved_law_ids}")
+        logger.info(f\"[S3/Adilet] Resolved law_ids: {query.law_ids} → {resolved_law_ids}\")
     async with _ADILET_SEMAPHORE:
         for strategy_fn in [_try_adilet_css_selectors, _try_adilet_pdf_ocr]:
             try:
                 chunks = await strategy_fn(query, cache, resolved_law_ids=resolved_law_ids)
                 if chunks:
-                    logger.info(f"[S3/Adilet] {strategy_fn.__name__} returned {len(chunks)} chunks for {resolved_law_ids}")
+                    logger.info(f\"[S3/Adilet] {strategy_fn.__name__} returned {len(chunks)} chunks for {resolved_law_ids}\")
                     return chunks
             except Exception as e:
-                logger.warning(f"[S3/Adilet] {strategy_fn.__name__} failed for {resolved_law_ids}: {e}")
+                logger.warning(f\"[S3/Adilet] {strategy_fn.__name__} failed for {resolved_law_ids}: {e}\")
                 continue
         try:
             chunks = await cache.search_local(query.query_text, law_ids=resolved_law_ids, articles=query.articles)
             if chunks:
-                logger.info(f"[S3/Adilet] search_local found {len(chunks)} chunks for query: '{query.query_text[:80]}'")
+                logger.info(f\"[S3/Adilet] search_local found {len(chunks)} chunks for query: '{query.query_text[:80]}'\")
                 for c in chunks:
                     c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
                 return chunks
         except Exception:
             pass
-        logger.warning(f"[S3/Adilet] All strategies failed for {resolved_law_ids}. Returning empty.")
+        logger.warning(f\"[S3/Adilet] All strategies failed for {resolved_law_ids}. Returning empty.\")
         return []
 
 async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager, resolved_law_ids: list[str] | None = None) -> list[EvidenceChunk]:
     settings = get_settings()
-    base = str(settings.adilet_base_url).rstrip("/")
+    base = str(settings.adilet_base_url).rstrip(\"/\")
     chunks = []
     urls_to_try = []
     law_ids_to_use = resolved_law_ids if resolved_law_ids is not None else (query.law_ids or [])
@@ -263,15 +263,15 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager, res
 async def _search_adilet_for_query(query: AdiletQuery, base: str) -> list[str]:
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(f"{base}/rus/search", params={"q": query.query_text, "type": "docs"})
+            resp = await client.get(f\"{base}/rus/search\", params={\"q\": query.query_text, \"type\": \"docs\"})
             if resp.status_code != 200:
                 return []
             from selectolax.parser import HTMLParser
             tree = HTMLParser(resp.text)
             links = []
-            for a in tree.css("a.search-result-link, a.doc-link, .search-item a"):
-                href = a.attributes.get("href", "")
-                if "/docs/" in href:
+            for a in tree.css(\"a.search-result-link, a.doc-link, .search-item a\"):
+                href = a.attributes.get(\"href\", \"\")
+                if \"/docs/\" in href:
                     links.append(urljoin(base, href))
             return links[:5]
     except Exception:
@@ -282,24 +282,24 @@ def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[E
     tree = HTMLParser(html)
     chunks = []
     law_title = ""
-    node = tree.css_first("h1")
+    node = tree.css_first(\"h1\")
     if node:
         law_title = node.text(strip=True)
-    law_id_match = re.search(r"/docs/([A-Z]\\d+)", source_url, re.IGNORECASE)
+    law_id_match = re.search(r\"/docs/([A-Z]\d+)\", source_url, re.IGNORECASE)
     law_id = law_id_match.group(1) if law_id_match else ""
-    nodes = tree.css("p[id^='st']")
+    nodes = tree.css(\"p[id^='st']\")
     for node in nodes[:80]:
         article_text = node.text(strip=True)
         if len(article_text) < 30:
             continue
-        article_num = _extract_article_number(node.attributes.get("id", ""), article_text)
+        article_num = _extract_article_number(node.attributes.get(\"id\", \"\"), article_text)
         if query.articles and article_num not in query.articles:
             continue
         chunk_id = hashlib.sha256(article_text.encode()).hexdigest()
         chunks.append(EvidenceChunk(
             chunk_id=chunk_id,
-            source_url=source_url + f"#{node.attributes.get('id', '')}",
-            source_title=f"{law_title} | Ст. {article_num}" if article_num else law_title,
+            source_url=source_url + f\"#{node.attributes.get('id', '')}\",
+            source_title=f\"{law_title} | Ст. {article_num}\" if article_num else law_title,
             content=article_text,
             legal_rank=_infer_adilet_rank(law_title),
             law_id=law_id,
@@ -337,52 +337,52 @@ async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[Evidenc
         return chunks
 
 async def _search_tavily(query: str, max_results: int) -> list[dict]:
-    raise RuntimeError("Tavily not configured")
+    raise RuntimeError(\"Tavily not configured\")
 
 async def _search_serper(query: str, max_results: int) -> list[dict]:
-    raise RuntimeError("Serper not configured")
+    raise RuntimeError(\"Serper not configured\")
 
 async def _search_google(query: str, max_results: int) -> list[dict]:
-    raise RuntimeError("Google not configured")
+    raise RuntimeError(\"Google not configured\")
 
 async def _search_web(query: WebQuery) -> tuple[list[dict], str]:
     # Simple DuckDuckGo search fallback
     try:
         res = await _search_duckduckgo(query.query_text, query.max_results)
-        return res, "duckduckgo"
+        return res, \"duckduckgo\"
     except Exception:
-        return [], "none"
+        return [], \"none\"
 
 async def _search_duckduckgo(query_text: str, max_results: int) -> list[dict]:
     def _sync_search():
-        has_cyrillic = any('\\u0400' <= ch <= '\\u04FF' for ch in query_text)
-        region = "kz-kz" if has_cyrillic else "wt-wt"
+        has_cyrillic = any('\u0400' <= ch <= '\u04FF' for ch in query_text)
+        region = \"kz-kz\" if has_cyrillic else \"wt-wt\"
         try:
             results = _DDGS(timeout=15).text(query_text, max_results=max_results, region=region)
         except Exception:
             results = _DDGS(timeout=15).text(query_text, max_results=max_results)
         return [
             {
-                "title": r.get("title", ""),
-                "url": r.get("href", r.get("url", "")),
-                "content": r.get("body", r.get("snippet", "")).strip()
+                \"title\": r.get(\"title\", \"\"),
+                \"url\": r.get(\"href\", r.get(\"url\", \"\")),
+                \"content\": r.get(\"body\", r.get(\"snippet\", \"\")).strip()
             }
             for r in results
         ] if results else []
     return await asyncio.to_thread(_sync_search)
 
 def _build_web_chunk(result: dict, query: WebQuery, provider: str) -> EvidenceChunk | None:
-    url = result.get("url", "")
+    url = result.get(\"url\", \"\")
     if not url:
         return None
     tier = classify_web_tier(url)
     if tier == WebTier.BLACKLIST:
         return None
-    content = result.get("content", "").strip()
+    content = result.get(\"content\", \"\").strip()
     if len(content) < 50:
         return None
     chunk_id = hashlib.sha256(content.encode()).hexdigest()
-    title = result.get("title", "")
+    title = result.get(\"title\", \"\")
     return EvidenceChunk(
         chunk_id=chunk_id,
         source_url=url,
@@ -395,30 +395,30 @@ def _build_web_chunk(result: dict, query: WebQuery, provider: str) -> EvidenceCh
 
 def _regex_split_articles(text: str) -> list[dict]:
     pattern = re.compile(
-        r"(?:(?:Статья|Article)\\s+(\\d+[\\-\\d]*)|(\\d+[\\-\\d]*)-(?:бап|бабы|бабының|бапта))\s*[.\\n]([^\\n]*)\\n(.*?)(?=(?:(?:Статья|Article)\\s+\\d|(?:\\d+)-(?:бап|бабы|бабының|бапта))|$)",
+        r\"(?:(?:Статья|Article)\s+(\d+[\-\d]*)|(\d+[\-\d]*)-(?:бап|бабы|бабының|бапта))\s*[.\n]([^\n]*)\n(.*?)(?=(?:(?:Статья|Article)\s+\d|(?:\d+)-(?:бап|бабы|бабының|бапта))|$)\",
         re.DOTALL | re.IGNORECASE,
     )
     articles = []
     for m in pattern.finditer(text):
         art_num = m.group(1) or m.group(2)
-        content = (m.group(3).strip() + "\\n" + m.group(4).strip()).strip()
-        articles.append({"article_num": art_num, "title": "", "content": content[:3000]})
+        content = (m.group(3).strip() + \"\n\" + m.group(4).strip()).strip()
+        articles.append({\"article_num\": art_num, \"title\": \"\", \"content\": content[:3000]})
     return articles
 
 def _infer_adilet_rank(law_title: str) -> LegalRank:
     title_lower = law_title.lower()
-    if "кодекс" in title_lower or "кодексі" in title_lower:
+    if \"кодекс\" in title_lower or \"кодексі\" in title_lower:
         return LegalRank.CODE
     return LegalRank.LAW_RK
 
 def _extract_article_number(node_id: str, text: str) -> str:
-    id_match = re.search(r"st(\\d+)", node_id, re.IGNORECASE)
+    id_match = re.search(r\"st(\d+)\", node_id, re.IGNORECASE)
     if id_match:
         return id_match.group(1)
-    text_match = re.match(r"(?:Статья|Бап)\\s+(\\d+)", text[:50], re.IGNORECASE)
+    text_match = re.match(r\"(?:Статья|Бап)\s+(\d+)\", text[:50], re.IGNORECASE)
     if text_match:
         return text_match.group(1)
-    return ""
+    return \"\"
 
 
 def _extract_law_id_from_text(title: str, content: str) -> str | None:
@@ -428,39 +428,39 @@ def _extract_law_id_from_text(title: str, content: str) -> str | None:
     а затем пытается найти стандартный паттерн ID закона (например, '94-V' или '1000-XIII').
     \"\"\"
     import re
-    combined = (title or "") + " " + (content or "")
+    combined = (title or \"\") + \" \" + (content or \"\")
     combined_lower = combined.lower()
 
     # 1. Поиск известных названий/аббревиатур из _LAW_NAME_TO_SHORT_ID
     # Отсортируем по длине ключа по убыванию, чтобы сначала сопоставить самые специфичные фразы
     sorted_names = sorted(_LAW_NAME_TO_SHORT_ID.keys(), key=len, reverse=True)
     for name in sorted_names:
-        # Для аббревиатур типа "коап рк", "ук рк", "гк рк" или полных названий
+        # Для аббревиатур типа \"коап рк\", \"ук рк\", \"гк рк\" или полных названий
         # Проверяем границы слов или просто вхождение с пробелами/знаками препинания
-        pattern = r"\\b" + re.escape(name) + r"\\b"
+        pattern = r\"\b\" + re.escape(name) + r\"\b\"
         if re.search(pattern, combined_lower):
             return _LAW_NAME_TO_SHORT_ID[name]
 
     # Отдельно проверим краткие/русские/казахские кодовые слова, которые могут не быть в словаре:
-    # "гражданский кодекс" -> "1000-XIII"
-    # "уголовный кодекс" -> "226-V"
-    # "коап" / "административных правонарушениях" -> "235-V"
-    # "трудовой кодекс" -> "414-I"
-    # "земельный кодекс" -> "442-II"
-    if "гражданск" in combined_lower or " гк" in combined_lower:
-        return "1000-XIII"
-    if "уголовн" in combined_lower or " ук" in combined_lower or " қк" in combined_lower:
-        return "226-V"
-    if "коап" in combined_lower or "административн" in combined_lower:
-        return "235-V"
-    if "трудов" in combined_lower:
-        return "414-I"
-    if "земельн" in combined_lower:
-        return "442-II"
+    # \"гражданский кодекс\" -> \"1000-XIII\"
+    # \"уголовный кодекс\" -> \"226-V\"
+    # \"коап\" / \"административных правонарушениях\" -> \"235-V\"
+    # \"трудовой кодекс\" -> \"414-I\"
+    # \"земельный кодекс\" -> \"442-II\"
+    if \"гражданск\" in combined_lower or \" гк\" in combined_lower:
+        return \"1000-XIII\"
+    if \"уголовн\" in combined_lower or \" ук\" in combined_lower or \" қк\" in combined_lower:
+        return \"226-V\"
+    if \"коап\" in combined_lower or \"административн\" in combined_lower:
+        return \"235-V\"
+    if \"трудов\" in combined_lower:
+        return \"414-I\"
+    if \"земельн\" in combined_lower:
+        return \"442-II\"
 
     # 2. Поиск стандартного паттерна вида: 94-V, 1000-XIII, 413-IV, 122-IV, etc.
     # Паттерн: число, за которым следует дефис, а затем римские цифры I, V, X, L, C, D, M (в верхнем или нижнем регистре)
-    pattern = r"\\b\\d+-[IVX]+(?:-NEW)?\\b"
+    pattern = r\"\b\d+-[IVX]+(?:-NEW)?\b\"
     matches = re.findall(pattern, combined, re.IGNORECASE)
     if matches:
         # Возвращаем в верхнем регистре

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
@@ -20,6 +21,37 @@ logger = logging.getLogger(__name__)
 
 _db_lock = asyncio.Lock()
 _STEM_CACHE = {}
+
+# ───────────────────────────────────────────────────────────────────────────
+# Fix #3: BGE-M3 Синглтон на уровне модуля
+# Все инстансы CacheManager разделяют одну модель через глобальные переменные
+# уровня модуля. Решает "Broken pipe" при параллельных subprocess.
+# ───────────────────────────────────────────────────────────────────────────
+_BGE_LOCK = threading.Lock()
+_BGE_MODEL: SentenceTransformer | None = None
+_BGE_DEVICE: str | None = None
+
+
+def _get_bge_model() -> tuple[SentenceTransformer, str]:
+    """Возвращает (model, device) — создаёт единжды на процесс."""
+    global _BGE_MODEL, _BGE_DEVICE
+    if _BGE_MODEL is not None:
+        return _BGE_MODEL, _BGE_DEVICE  # type: ignore[return-value]
+    with _BGE_LOCK:
+        if _BGE_MODEL is not None:
+            return _BGE_MODEL, _BGE_DEVICE  # type: ignore[return-value]
+        device = "cuda" if (torch.cuda.is_available() and os.getenv("ZERDE_USE_CUDA") == "1") else "cpu"
+        logger.info(f"[BGE-M3/Singleton] Инициализация BGE-M3 (device={device})...")
+        model_kwargs = {"torch_dtype": torch.float16} if device == "cuda" else {}
+        _BGE_MODEL = SentenceTransformer(
+            "BAAI/bge-m3",
+            device=device,
+            model_kwargs=model_kwargs if model_kwargs else None
+        )
+        _BGE_MODEL.max_seq_length = 2048
+        _BGE_DEVICE = device
+        logger.info(f"[BGE-M3/Singleton] Готово на {device}")
+    return _BGE_MODEL, _BGE_DEVICE  # type: ignore[return-value]
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS evidence_cache (
@@ -439,20 +471,9 @@ class CacheManager:
                 return
             
             logger.info("[Cache/Vector] Initializing BGE-M3 model and pre-loading embeddings...")
-            device = "cuda" if (torch.cuda.is_available() and os.getenv("ZERDE_USE_CUDA") == "1") else "cpu"
-            logger.info(f"[Cache/Vector] UsingSentenceTransformer device: {device}")
-            
-            model_kwargs = {}
-            if device == "cuda":
-                model_kwargs["torch_dtype"] = torch.float16
-            
-            self._embed_model = SentenceTransformer(
-                "BAAI/bge-m3",
-                device=device,
-                model_kwargs=model_kwargs if model_kwargs else None
-            )
+            # Fix #3: Используем глобальный синглтон вместо создания новой модели
+            self._embed_model, device = _get_bge_model()
             self._device_type = device
-            self._embed_model.max_seq_length = 2048  # 512 truncated most legal chunks; 2048 safe on 6GB VRAM
             
             # 2. Pre-load all embeddings from SQLite
             self._embeddings_keys = []

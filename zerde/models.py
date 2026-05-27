@@ -308,6 +308,11 @@ class EvidenceChunk(BaseModel):
     effective_date: date | None = None
     expiry_date: date | None = None
 
+    # [NEW] Поля метаданных v7.1
+    language: str | None = None        # "ru" или "kk"
+    source_version: str | None = None  # Дата редакции НПА (например, "2026-03-11")
+    ingest_date: str | None = None     # Дата импорта/индексации (ISO-8601)
+
     # Технические поля
     adilet_fallback_used: AdiletFallbackStrategy | None = None
     embedding: list[float] | None = Field(default=None, exclude=True, description="Вектор для Cosine dedup")

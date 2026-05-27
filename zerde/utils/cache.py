@@ -288,16 +288,6 @@ class CacheManager:
                 
         return results
 
-    async def stats(self) -> dict:
-        """Возвращает статистику по таблицам в БД."""
-        with self._conn() as conn:
-            total_chunks = conn.execute("SELECT COUNT(*) FROM evidence_cache").fetchone()[0]
-            total_embeddings = conn.execute("SELECT COUNT(*) FROM evidence_embeddings").fetchone()[0]
-        return {
-            "total_chunks": total_chunks,
-            "total_embeddings": total_embeddings,
-        }
-
     def _stem_word(self, w: str) -> str:
         if w in _STEM_CACHE:
             return _STEM_CACHE[w]
@@ -686,15 +676,40 @@ class CacheManager:
             # Weighted Linear Combination: 35% Semantic, 50% BM25, 15% SQL match (Calibrated weights)
             wlc_scores[cid] = 0.35 * sem_norm + 0.50 * bm25_norm + 0.15 * sql_score
 
-        # Sort combined chunk_ids by WLC score descending and take top 30
-        sorted_wlc = sorted(wlc_scores.items(), key=lambda item: item[1], reverse=True)[:30]
+        # Simple query language detection
+        has_cyrillic = any('\u0400' <= ch <= '\u04FF' for ch in query_text)
+        has_kaz_chars = any(ch in "әғқңөұүһіӘҒҚҢӨҰҮҺІ" for ch in query_text)
+        detected_lang = "kk" if has_kaz_chars else ("ru" if has_cyrillic else None)
 
-        # Load full EvidenceChunk objects for the winners
-        top_candidates = []
-        for cid, score in sorted_wlc:
+        # Load chunks and adjust WLC scores with language matching and version freshness
+        adjusted_wlc = []
+        for cid, score in sorted(wlc_scores.items(), key=lambda item: item[1], reverse=True)[:50]:
             chunk_obj = await self.get(cid)
-            if chunk_obj:
-                top_candidates.append(chunk_obj)
+            if not chunk_obj:
+                continue
+            
+            # Language match boost
+            lang_factor = 1.0
+            if detected_lang and chunk_obj.language:
+                if chunk_obj.language != detected_lang:
+                    lang_factor = 0.3  # Penalty for non-matching language
+            
+            # Version freshness boost (recent version gets a slight boost)
+            version_boost = 0.0
+            if chunk_obj.source_version:
+                try:
+                    # e.g. "2026-03-11" -> parse year
+                    year = int(chunk_obj.source_version.split("-")[0])
+                    version_boost = max(0.0, (year - 2020) * 0.01)
+                except Exception:
+                    pass
+                    
+            adjusted_score = score * lang_factor + version_boost
+            adjusted_wlc.append((chunk_obj, adjusted_score))
+
+        # Sort adjusted candidates and take top 30
+        adjusted_wlc.sort(key=lambda x: x[1], reverse=True)
+        top_candidates = [chunk for chunk, _ in adjusted_wlc[:30]]
 
         # ----------------------------------------------------
         # Cross-Encoder Reranking (BAAI/bge-reranker-v2-m3)

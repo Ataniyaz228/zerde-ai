@@ -95,7 +95,55 @@ def extract_docx_text(path: Path) -> str:
             paragraphs.append(" | ".join(row_text))
     return "\n".join(paragraphs)
 
+MAX_CHUNK_SIZE = 4000
+OVERLAP = 200
+
+def split_long_article(art_num: str, content: str) -> list[dict]:
+    if len(content) <= MAX_CHUNK_SIZE:
+        return [{"article_num": art_num, "content": content}]
+    
+    # Split by clauses (e.g. \n1., \n2., \n1), \n2))
+    parts = re.split(r'\n(?=\d+[\.\)])', content)
+    
+    if len(parts) == 1:
+        # Fallback: split by character chunks with overlap
+        chunks = []
+        start = 0
+        chunk_idx = 1
+        while start < len(content):
+            end = start + MAX_CHUNK_SIZE
+            chunks.append({
+                "article_num": f"{art_num}_p{chunk_idx}",
+                "content": content[start:end]
+            })
+            chunk_idx += 1
+            start += MAX_CHUNK_SIZE - OVERLAP
+        return chunks
+        
+    chunks = []
+    current = ""
+    chunk_idx = 1
+    
+    for part in parts:
+        if len(current) + len(part) > MAX_CHUNK_SIZE and current:
+            chunks.append({
+                "article_num": f"{art_num}_p{chunk_idx}",
+                "content": current
+            })
+            chunk_idx += 1
+            current = current[-OVERLAP:] + "\n" + part
+        else:
+            current = (current + "\n" + part).strip()
+            
+    if current:
+        chunks.append({
+            "article_num": f"{art_num}_p{chunk_idx}",
+            "content": current
+        })
+    return chunks
+
 async def ingest_all_docs():
+    import datetime
     print("🚀 Starting local document ingestion to zerde_cache.db...")
     cache = CacheManager("zerde_cache.db")
     docs_dir = Path("docs")
@@ -146,17 +194,46 @@ async def ingest_all_docs():
                         continue
                     articles.append({
                         "article_num": f"p{idx+1}",
-                        "content": p[:3000]
+                        "content": p
                     })
                     valid_count += 1
                 print(f"   [Fallback] Generated {valid_count} valid paragraph chunks out of {len(paragraphs)} total paragraphs.")
-                    
-            print(f"Generated {len(articles)} chunks/articles.")
+                     
+            # Extract metadata values
+            filename = path.name.lower()
+            
+            # Language: ru or kk
+            lang = "ru"
+            if "kaz" in filename or "kk" in filename or ".kaz." in filename:
+                lang = "kk"
+            elif "rus" in filename or "ru" in filename or ".rus." in filename:
+                lang = "ru"
+                
+            # Source version date (format: DD-MM-YYYY -> YYYY-MM-DD)
+            date_match = re.search(r"\b(\d{2})-(\d{2})-(\d{4})\b", filename)
+            if date_match:
+                day, month, year = date_match.groups()
+                version = f"{year}-{month}-{day}"
+                eff_date = datetime.date(int(year), int(month), int(day))
+            else:
+                version = None
+                eff_date = None
+                
+            ingest_dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            
+            # Apply adaptive chunking to each article
+            adaptive_articles = []
+            for art in articles:
+                art_num = art["article_num"]
+                content = art["content"]
+                adaptive_articles.extend(split_long_article(art_num, content))
+                
+            print(f"Generated {len(adaptive_articles)} adaptive chunks/articles (split from {len(articles)} raw articles).")
             
             is_code = law_id.startswith("K") or "кодекс" in str(path).lower() or law_id in ("235-V", "226-V", "350-VI", "212-IV", "1000-XIII", "409-I", "442-II", "414-I")
             rank = LegalRank.CODE if is_code else LegalRank.LAW_RK
             
-            for art in articles:
+            for art in adaptive_articles:
                 content = art["content"]
                 art_num = art["article_num"]
                 
@@ -169,6 +246,10 @@ async def ingest_all_docs():
                     legal_rank=rank,
                     law_id=law_id,
                     article=art_num,
+                    effective_date=eff_date,
+                    language=lang,
+                    source_version=version,
+                    ingest_date=ingest_dt,
                 )
                 all_chunks.append(chunk)
                 

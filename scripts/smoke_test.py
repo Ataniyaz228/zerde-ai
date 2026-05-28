@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import os
 import sys
 import time
 import traceback
@@ -124,7 +125,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", type=Path, default=Path("data/corpus"))
     ap.add_argument("--out", type=Path, default=Path("data/smoke_results.csv"))
+    ap.add_argument(
+        "--ocr",
+        action="store_true",
+        help="Включить Tesseract OCR для сканированных PDF (медленно, ~6с/страница)",
+    )
     args = ap.parse_args()
+    # По умолчанию OCR отключён в smoke, чтобы прогон 1000+ файлов оставался быстрым
+    if not args.ocr:
+        os.environ["ZERDE_PDF_OCR_ENABLED"] = "0"
     return asyncio.run(main_async(args.corpus, args.out))
 
 

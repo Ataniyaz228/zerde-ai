@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from pathlib import Path
 
 from zerde.models import DocumentFormat, DocumentState
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 # Минимум символов для "нормального" PDF текстового слоя
 _PDF_MIN_TEXT_CHARS = 100
+
+# OCR конфиг — управляется через env (default: включён, rus+kaz, 200 dpi, ≤50 страниц).
+# tessdata: traineddata скачиваются в ~/.local/share/tessdata
+_DEFAULT_TESSDATA = os.path.expanduser("~/.local/share/tessdata")
 
 
 # ---------------------------------------------------------------------------
@@ -132,10 +137,15 @@ def _extract_pdf(path: Path) -> str:
     full_text = "\n".join(pages_text)
     doc.close()
 
-    # Если текстового слоя нет — используем pymupdf встроенный TextPage (OCR-like)
+    # Если текстового слоя нет — используем pymupdf встроенный TextPage (blocks fallback)
     if len(full_text.strip()) < _PDF_MIN_TEXT_CHARS:
-        logger.warning(f"[S1/PDF] Text layer too sparse ({len(full_text.strip())} chars). Trying textpage fallback.")
+        logger.warning(f"[S1/PDF] Text layer too sparse ({len(full_text.strip())} chars). Trying blocks fallback.")
         full_text = _extract_pdf_ocr_fallback(path)
+
+    # Если и blocks пустой — это скан, запускаем настоящий OCR (Tesseract via pymupdf)
+    if len(full_text.strip()) < _PDF_MIN_TEXT_CHARS:
+        logger.warning(f"[S1/PDF] Blocks fallback also sparse. Trying Tesseract OCR.")
+        full_text = _extract_pdf_via_ocr(path)
 
     # Пост-процессинг: склеиваем разнесённые буквы (Adilet PDF артефакт)
     full_text = _fix_spaced_pdf_text(full_text)
@@ -210,8 +220,9 @@ def _fix_spaced_pdf_text(text: str) -> str:
 
 def _extract_pdf_ocr_fallback(path: Path) -> str:
     """
-    Fallback для сканированных PDF: pymupdf high-res text extraction.
-    Попытка извлечь текст через blocks и словарное представление.
+    Промежуточный fallback: pymupdf blocks-представление.
+    Не настоящий OCR — просто другой способ обхода текстового слоя.
+    Помогает на PDF, где обычный get_text("text") теряет блоки.
     """
     import fitz
 
@@ -219,7 +230,6 @@ def _extract_pdf_ocr_fallback(path: Path) -> str:
     parts: list[str] = []
 
     for page in doc:
-        # Используем dict-представление для восстановления структуры
         blocks = page.get_text("blocks")  # type: ignore[arg-type]
         for block in blocks:
             if len(block) >= 5 and isinstance(block[4], str):
@@ -227,8 +237,62 @@ def _extract_pdf_ocr_fallback(path: Path) -> str:
 
     doc.close()
     result = "\n".join(p for p in parts if p)
-    logger.info(f"[S1/PDF OCR fallback] Extracted {len(result)} chars from {path.name}")
+    logger.info(f"[S1/PDF blocks fallback] Extracted {len(result)} chars from {path.name}")
     return result
+
+
+def _extract_pdf_via_ocr(path: Path) -> str:
+    """
+    OCR через Tesseract (встроенный в pymupdf). Для сканированных PDF без
+    текстового слоя.
+
+    Управляется env-переменными (для тестов/smoke можно отключить):
+      ZERDE_PDF_OCR_ENABLED  — "0" чтобы выключить (default: вкл)
+      ZERDE_TESSDATA         — путь к директории с .traineddata
+      ZERDE_PDF_OCR_LANGS    — "rus+kaz" (default)
+      ZERDE_PDF_OCR_DPI      — 200 (default)
+      ZERDE_PDF_OCR_MAX_PAGES — 50 (default; ограничение чтобы не зависнуть на 500-стр PDF)
+    """
+    if os.environ.get("ZERDE_PDF_OCR_ENABLED", "1").lower() in ("0", "false", "no"):
+        logger.info(f"[S1/PDF OCR] disabled via ZERDE_PDF_OCR_ENABLED=0, skipping {path.name}")
+        return ""
+
+    tessdata = os.environ.get("ZERDE_TESSDATA", _DEFAULT_TESSDATA)
+    if not Path(tessdata).is_dir():
+        logger.error(
+            f"[S1/PDF OCR] tessdata directory not found: {tessdata}. "
+            f"Download rus.traineddata and kaz.traineddata into it. Skipping OCR."
+        )
+        return ""
+
+    langs = os.environ.get("ZERDE_PDF_OCR_LANGS", "rus+kaz")
+    dpi = int(os.environ.get("ZERDE_PDF_OCR_DPI", "200"))
+    max_pages = int(os.environ.get("ZERDE_PDF_OCR_MAX_PAGES", "50"))
+
+    import fitz
+
+    doc = fitz.open(str(path))
+    total_pages = doc.page_count
+    n = min(total_pages, max_pages)
+    parts: list[str] = []
+    for i in range(n):
+        try:
+            tp = doc[i].get_textpage_ocr(
+                language=langs, dpi=dpi, full=True, tessdata=tessdata
+            )
+            parts.append(tp.extractText())
+        except Exception as e:
+            logger.warning(f"[S1/PDF OCR] page {i + 1} failed for {path.name}: {e}")
+    doc.close()
+
+    if total_pages > max_pages:
+        logger.warning(
+            f"[S1/PDF OCR] {path.name}: OCR'd {n}/{total_pages} pages (max_pages={max_pages})"
+        )
+
+    full_text = "\n".join(p for p in parts if p)
+    logger.info(f"[S1/PDF OCR] {path.name}: extracted {len(full_text)} chars from {n} pages")
+    return full_text
 
 
 def _extract_docx(path: Path) -> str:

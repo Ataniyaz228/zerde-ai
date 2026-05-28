@@ -135,11 +135,6 @@ async def run_pipeline(
     logger.info(f"[Pipeline] ✓ Stage 3 done ({time.perf_counter() - t3:.2f}s) — {len(raw_chunks)} chunks")
 
     # ─── ЭТАП 3.5: Local RAG Injection ─────────────────────────────
-    # Прямой запрос локальных чанков для всех law_ids из плана.
-    # Гарантирует что локальные чанки попадают в S5/S6 даже если adilet.zan.kz HTTP недоступен.
-    #
-    # v2: Используем ПРЯМОЙ SQL-запрос по метаданным (law_id + article) вместо
-    #     search_local, который через reranker отсеивает нужные статьи.
     try:
         from zerde.config import get_settings as _gs
         from zerde.utils.cache import CacheManager as _CM
@@ -147,30 +142,38 @@ async def run_pipeline(
         _cache_for_rag = _CM(_gs().cache_db_path)
         existing_chunk_ids = {c.chunk_id for c in raw_chunks}
 
-        # Собираем все уникальные law_ids из всех adilet запросов, резолвим через реестр
-        all_law_ids: list[str] = []
-        all_articles: list[str] = []
+        law_id_to_articles: dict[str, set[str] | None] = {}
         for aq in query_plan.adilet_queries:
-            for lid in (aq.law_ids or []):
-                resolved = registry.resolve(lid)
-                if resolved and resolved not in all_law_ids:
-                    all_law_ids.append(resolved)
-            for art in (aq.articles or []):
-                if art and art not in all_articles:
-                    all_articles.append(art)
+            aq_lids = [registry.resolve(lid) for lid in (aq.law_ids or []) if lid]
+            
+            for lid in aq_lids:
+                if not lid:
+                    continue
+                
+                # Если уже стоит None (взять всё), не ограничиваем статьями
+                if law_id_to_articles.get(lid) is None:
+                    continue
+                
+                if not aq.articles:
+                    law_id_to_articles[lid] = None
+                else:
+                    current_arts = law_id_to_articles.get(lid, set())
+                    if current_arts is not None:
+                        current_arts.update(aq.articles)
+                        law_id_to_articles[lid] = current_arts
 
-        if all_law_ids:
-            logger.info(f"[Pipeline/S3.5] Прямой RAG-запрос для law_ids={all_law_ids} articles={all_articles}")
+        if law_id_to_articles:
+            logger.info(f"[Pipeline/S3.5] Прямой RAG-запрос: {law_id_to_articles}")
 
             # ── Шаг A: Прямой SQL по метаданным (гарантированное попадание) ──
             import json as _json
             import sqlite3 as _sqlite3
             injected = 0
             with _cache_for_rag._conn() as conn:
-                for lid in all_law_ids:
-                    if all_articles:
+                for lid, arts in law_id_to_articles.items():
+                    if arts:
                         # Для каждой статьи — отдельный запрос чтобы не пропустить ни одну
-                        for art in all_articles:
+                        for art in arts:
                             rows = conn.execute(
                                 """SELECT chunk_json FROM evidence_cache 
                                    WHERE json_extract(chunk_json, '$.law_id') = ?
@@ -188,11 +191,11 @@ async def run_pipeline(
                                 except Exception:
                                     pass
                     else:
-                        # Без фильтра по статьям — все чанки закона (limit 50)
+                        # Без фильтра по статьям — все чанки закона (limit 150)
                         rows = conn.execute(
                             """SELECT chunk_json FROM evidence_cache 
                                WHERE json_extract(chunk_json, '$.law_id') = ?
-                               LIMIT 50""",
+                               LIMIT 150""",
                             (lid,)
                         ).fetchall()
                         for r in rows:
@@ -231,24 +234,82 @@ async def run_pipeline(
     except Exception as _e:
         logger.warning(f"[Pipeline/S3.5] Local RAG injection ошибка (не критично): {_e}")
 
+    # ─── ЭТАП 3.6: Claim-driven Injection (v9.6) ──────────────────────────
+    # Planner (S2) не видит будущих claims, поэтому S3.5 пропускает статьи,
+    # упоминаемые ТОЛЬКО в S2.5 claim extractor. Здесь догружаем chunks по
+    # парам (target_law_id × article из claim).
+    try:
+        from zerde.config import get_settings as _gs2
+        from zerde.utils.cache import CacheManager as _CM2
+        from zerde.stages.s6_auditor import _extract_article_from_claim, _are_law_ids_synonymous
+        import json as _json2
+        registry = get_registry()
+        _cache_for_claims = _CM2(_gs2().cache_db_path)
+        existing_chunk_ids = {c.chunk_id for c in raw_chunks}
+
+        # Собираем пары (resolved_law_id, article) из всех claims
+        claim_pairs: set[tuple[str, str]] = set()
+        all_claims = list(claims.claims) + list(claims.structural_claims)
+        for c in all_claims:
+            article = _extract_article_from_claim(c)
+            if not article:
+                continue
+            for raw_lid in (c.target_law_ids or []):
+                resolved = registry.resolve(raw_lid)
+                if resolved:
+                    claim_pairs.add((resolved, article))
+
+        if claim_pairs:
+            logger.info(f"[Pipeline/S3.6] Claim-driven запросы: {len(claim_pairs)} пар (law_id × article)")
+            injected_c = 0
+            # Получаем все синонимы law_id (включая полные Adilet IDs типа K1400000235)
+            from zerde.stages.s6_auditor import _LAW_ID_SYNONYMS
+            with _cache_for_claims._conn() as conn:
+                for lid, art in claim_pairs:
+                    # Расширяем list синонимов для устойчивости (например, 261-IV ↔ 233-IV)
+                    lid_variants = set(_LAW_ID_SYNONYMS.get(lid, {lid}))
+                    lid_variants.add(lid)
+                    for variant in lid_variants:
+                        rows = conn.execute(
+                            """SELECT chunk_json FROM evidence_cache
+                               WHERE json_extract(chunk_json, '$.law_id') = ?
+                               AND json_extract(chunk_json, '$.article') = ?""",
+                            (variant, art),
+                        ).fetchall()
+                        for r in rows:
+                            try:
+                                chunk = EvidenceChunk.model_validate(_json2.loads(r["chunk_json"]))
+                                if chunk.chunk_id not in existing_chunk_ids:
+                                    chunk.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
+                                    raw_chunks.append(chunk)
+                                    existing_chunk_ids.add(chunk.chunk_id)
+                                    injected_c += 1
+                            except Exception:
+                                pass
+
+            if injected_c:
+                logger.info(
+                    f"[Pipeline/S3.6] Инъекцировано {injected_c} чанков по claim-парам "
+                    f"(всего {len(raw_chunks)} чанков)"
+                )
+    except Exception as _e:
+        logger.warning(f"[Pipeline/S3.6] Claim-driven injection ошибка (не критично): {_e}")
+
 
     # ─── ЭТАП 4: Fusion & Validation ─────────────────────────────────────
     t4 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 4: Fusion & Conflict Detection")
+    
+    # Language filtering removed as it was dropping cross-lingual web results
     fused_chunks = await fuse_and_validate(raw_chunks)
     active_chunks = [c for c in fused_chunks if not c.is_duplicate]
     logger.info(f"[Pipeline] ✓ Stage 4 done ({time.perf_counter() - t4:.2f}s) — {len(active_chunks)} active")
 
-    # ─── ЭТАП 5 + 5.2: LLM Auditor & Contradiction Verifier (BATCHED & PARALLEL) ────────────────────────────
+    # ─── ЭТАП 5 + 5.2: LLM Auditor & Contradiction Verifier ────────────────────────────
     t5 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 5 + 5.2: LLM Auditor & Contradiction Verifier (batched & parallel)")
-    
-    # Разделяем claims на батчи по 5 штук
-    claim_items = list(claims.claims)
-    batch_size = 5
-    batches = [claim_items[i:i + batch_size] for i in range(0, len(claim_items), batch_size)]
-    
-    if not batches:
+    logger.info("[Pipeline] ► Stage 5 + 5.2: LLM Auditor & Contradiction Verifier")
+
+    if not claims.claims:
         import uuid as _uuid
         analysis = AnalysisJSON(
             analysis_id=str(_uuid.uuid4()),
@@ -263,57 +324,19 @@ async def run_pipeline(
             verdicts=[],
         )
     else:
-        async def _process_batch(batch_claims: list[DocumentClaim]) -> AnalysisJSON:
-            batch_result = ClaimExtractionResult(
-                doc_id=claims.doc_id,
-                claims=batch_claims,
-                structural_claims=[],
-            )
-            # Запускаем аудитора для батча
-            batch_analysis = await run_auditor(
-                chunks=active_chunks,
-                plan=query_plan,
-                claims=batch_result,
-                doc_text=doc_state.normalized_text,
-            )
-            # Сразу верифицируем противоречия для этого батча
-            batch_analysis = await verify_contradictions(batch_analysis, active_chunks)
-            return batch_analysis
-
-        batch_results = await asyncio.gather(*[_process_batch(b) for b in batches])
-        
-        # Объединяем результаты всех батчей
-        import uuid as _uuid
-        analysis = AnalysisJSON(
-            analysis_id=str(_uuid.uuid4()),
-            source_doc_id=query_plan.source_doc_id,
-            plan_id=query_plan.plan_id,
-            facts=[],
-            conclusions=[],
-            negative_space=[],
-            normative=[],
-            cons=[],
-            llm_model_used=batch_results[0].llm_model_used if batch_results else get_settings().llm_model_analyst,
-            verdicts=[],
+        analysis = await run_auditor(
+            chunks=active_chunks,
+            plan=query_plan,
+            claims=claims,
+            doc_text=doc_state.normalized_text,
         )
-        
-        seen_cons = set()
-        for br in batch_results:
-            analysis.verdicts.extend(br.verdicts)
-            analysis.facts.extend(br.facts)
-            analysis.conclusions.extend(br.conclusions)
-            analysis.negative_space.extend(br.negative_space)
-            analysis.normative.extend(br.normative)
-            for con in br.cons:
-                if con not in seen_cons:
-                    analysis.cons.append(con)
-                    seen_cons.add(con)
+        analysis = await verify_contradictions(analysis, active_chunks)
 
     # V7.0: Переносим структурные claims в analysis для рендеринга
     analysis.structural_claims = claims.structural_claims
     from zerde.stages.s5_analyst import _validate_claim_coverage
     _validate_claim_coverage(analysis, claims)
-    
+
     contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
     logger.info(
         f"[Pipeline] ✓ Stage 5 + 5.2 done ({time.perf_counter() - t5:.2f}s) — "
@@ -364,7 +387,7 @@ async def run_pipeline(
         f"Claims: {claims.total_count} | "
         f"Verdicts: {len(audited_analysis.verdicts)} | "
         f"Contradicted: {contradicted} | "
-        f"Reliability: {audited_analysis.overall_reliability or 'N/A'}"
+        f"Reliability: {audited_analysis.overall_reliability if audited_analysis.overall_reliability is not None else 'N/A'}"
     )
     logger.info("=" * 60)
 

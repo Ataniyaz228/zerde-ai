@@ -38,35 +38,74 @@ async def run_auditor(
     active = [c for c in chunks if not c.is_duplicate]
     conflict_ids = [c.chunk_id for c in active if c.is_conflict]
 
-    # Строим auditor prompt (чеклист-режим)
-    prompt = build_auditor_prompt(
-        chunks=active,
-        claims=claims,
-        plan=plan,
-        doc_text=doc_text,
-    )
+    # Rank chunks by BM25 relevance to document text so LLM sees the most relevant ones first
+    if doc_text and len(active) > 30:
+        active = _rank_by_relevance(active, doc_text, conflict_ids, top_k=30)
 
-    system_msg = (
-        "JSON. Аудитор юр. документов РК. Вердикт на каждый claim. "
-        "ОШИБКИ = наивысший приоритет. Без пояснений вне JSON."
-    )
-    messages = [
-        {"role": "system", "content": system_msg},
-        {"role": "user", "content": prompt},
-    ]
+    batch_size = 5
+    claim_list = claims.claims
+    all_analysis_jsons = []
 
-    raw_json = await cached_llm_call(
-        client=client,
-        model=settings.llm_model_analyst,
-        messages=messages,
-        settings=settings,
-        ttl_seconds=86400,
-        max_tokens=settings.llm_max_tokens_analyst,
-    )
+    for i in range(0, len(claim_list), batch_size):
+        batch_claims_list = claim_list[i:i+batch_size]
+        batch_claims = ClaimExtractionResult(
+            doc_id=claims.doc_id,
+            claims=batch_claims_list,
+        )
 
-    analysis = _parse_auditor_response(raw_json, plan, claims, settings.llm_model_analyst)
-    _validate_claim_coverage(analysis, claims)
-    return analysis
+        prompt = build_auditor_prompt(
+            chunks=active,
+            claims=batch_claims,
+            plan=plan,
+            doc_text=doc_text,
+        )
+
+        system_msg = (
+            "JSON. Аудитор юр. документов РК. Вердикт на каждый claim. "
+            "ОШИБКИ = наивысший приоритет. Без пояснений вне JSON."
+        )
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": prompt},
+        ]
+
+        raw_json = await cached_llm_call(
+            client=client,
+            model=settings.llm_model_analyst,
+            messages=messages,
+            settings=settings,
+            ttl_seconds=86400,
+            max_tokens=settings.llm_max_tokens_analyst,
+        )
+
+        analysis = _parse_auditor_response(raw_json, plan, batch_claims, settings.llm_model_analyst)
+        all_analysis_jsons.append(analysis)
+
+    if not all_analysis_jsons:
+        return AnalysisJSON(
+            analysis_id="empty",
+            source_doc_id=plan.source_doc_id,
+            plan_id=plan.plan_id,
+            facts=[],
+            conclusions=[],
+            negative_space=[],
+            normative=[],
+            cons=[],
+            llm_model_used=settings.llm_model_analyst,
+            verdicts=[]
+        )
+
+    final_analysis = all_analysis_jsons[0]
+    for a in all_analysis_jsons[1:]:
+        final_analysis.facts.extend(a.facts)
+        final_analysis.conclusions.extend(a.conclusions)
+        final_analysis.negative_space.extend(a.negative_space)
+        final_analysis.normative.extend(a.normative)
+        final_analysis.cons.extend(a.cons)
+        final_analysis.verdicts.extend(a.verdicts)
+
+    _validate_claim_coverage(final_analysis, claims)
+    return final_analysis
 
 
 def _parse_auditor_response(
@@ -142,7 +181,7 @@ def _parse_auditor_response(
             claim_text = f"[{v.claim_id}]: '{v.document_value}'"
             confidence = 0.4
         facts.append(Fact(
-            fact_id=f"fact_{len(facts):04d}",
+            fact_id=f"fact_{v.claim_id}",
             claim_id=v.claim_id,
             claim=claim_text,
             source_ids=v.source_ids if v.source_ids else ["UNLINKED"],

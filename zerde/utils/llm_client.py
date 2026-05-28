@@ -39,7 +39,17 @@ def _repair_truncated_json(raw: str) -> dict | None:
     DeepSeek Flash часто обрезает ответ посередине строки.
     Стратегия: обрезаем до последнего валидного } или ], потом закрываем.
     """
-    if not raw or not raw.strip().startswith("{"):
+    if not raw:
+        return None
+        
+    # Убираем возможный markdown
+    if "```json" in raw:
+        raw = raw.split("```json", 1)[1]
+    if "```" in raw:
+        raw = raw.split("```", 1)[0]
+        
+    raw = raw.strip()
+    if not raw or not (raw.startswith("{") or raw.startswith("[")):
         return None
 
     # Стратегия 1: обрезать до последней закрытой структуры

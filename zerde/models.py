@@ -222,6 +222,12 @@ class DocumentClaim(BaseModel):
         default_factory=list,
         description="Альтернативные цитаты из документа (при дедупликации)",
     )
+    # V9.6: Законы, которые изменяет/дополняет данный документ (поправочный акт).
+    # Используется S6 для привязки claim → корпус при отсутствии явной ссылки на закон.
+    target_law_ids: list[str] = Field(
+        default_factory=list,
+        description="ID законов-мишеней поправочного акта (напр. ['261-IV', '235-V'])",
+    )
 
 
 class ClaimVerdict(BaseModel):

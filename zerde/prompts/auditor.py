@@ -164,7 +164,8 @@ def build_auditor_prompt(
 
     corpus_parts = []
     total_chars = 0
-    sorted_chunks = sorted(chunks, key=lambda c: (not c.is_conflict, _lang_penalty(c), int(c.legal_rank)))
+    # Chunks are assumed BM25-ranked by caller (run_auditor); only prioritize conflicts + language match
+    sorted_chunks = sorted(chunks, key=lambda c: (not c.is_conflict, _lang_penalty(c)))
 
     for chunk in sorted_chunks:
         chunk_text = _format_chunk(chunk)

@@ -15,7 +15,7 @@ from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from ddgs import DDGS as _DDGS
+from duckduckgo_search import DDGS as _DDGS
 from openai import AsyncOpenAI
 
 from zerde.config import get_settings
@@ -287,25 +287,55 @@ def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[E
         law_title = node.text(strip=True)
     law_id_match = re.search(r"/docs/([A-Z]\d+)", source_url, re.IGNORECASE)
     law_id = law_id_match.group(1) if law_id_match else ""
+    
     nodes = tree.css("p[id^='st']")
-    for node in nodes[:80]:
-        article_text = node.text(strip=True)
-        if len(article_text) < 30:
-            continue
-        article_num = _extract_article_number(node.attributes.get("id", ""), article_text)
+    if nodes:
+        for node in nodes[:80]:
+            article_text = node.text(strip=True)
+            if len(article_text) < 30:
+                continue
+            article_num = _extract_article_number(node.attributes.get("id", ""), article_text)
+            if query.articles and article_num not in query.articles:
+                continue
+            chunk_id = hashlib.sha256(article_text.encode()).hexdigest()
+            lang = "ru" if "/rus/" in source_url else "kk" if "/kaz/" in source_url else None
+            chunks.append(EvidenceChunk(
+                chunk_id=chunk_id,
+                source_url=source_url + f"#{node.attributes.get('id', '')}",
+                source_title=f"{law_title} | Ст. {article_num}" if article_num else law_title,
+                content=article_text,
+                legal_rank=_infer_adilet_rank(law_title),
+                law_id=law_id,
+                article=article_num,
+                adilet_fallback_used=AdiletFallbackStrategy.CSS_SELECTOR,
+                language=lang,
+            ))
+        return chunks
+
+    # Fallback to regex splitting
+    text = tree.body.text(separator="\n", strip=True) if tree.body else html
+    articles_dict = _regex_split_articles(text)
+    for art in articles_dict[:80]:
+        article_num = art["article_num"]
         if query.articles and article_num not in query.articles:
             continue
+        article_text = art["content"]
+        if len(article_text) < 30:
+            continue
         chunk_id = hashlib.sha256(article_text.encode()).hexdigest()
+        lang = "ru" if "/rus/" in source_url else "kk" if "/kaz/" in source_url else None
         chunks.append(EvidenceChunk(
             chunk_id=chunk_id,
-            source_url=source_url + f"#{node.attributes.get('id', '')}",
+            source_url=source_url,
             source_title=f"{law_title} | Ст. {article_num}" if article_num else law_title,
-            content=article_text,
+            content=f"Статья {article_num}. {art['title']}\n{article_text}",
             legal_rank=_infer_adilet_rank(law_title),
             law_id=law_id,
             article=article_num,
             adilet_fallback_used=AdiletFallbackStrategy.CSS_SELECTOR,
+            language=lang,
         ))
+
     return chunks
 
 async def _try_adilet_pdf_ocr(query: AdiletQuery, cache: CacheManager, resolved_law_ids: list[str] | None = None) -> list[EvidenceChunk]:
@@ -337,7 +367,33 @@ async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[Evidenc
         return chunks
 
 async def _search_tavily(query: str, max_results: int) -> list[dict]:
-    raise RuntimeError("Tavily not configured")
+    settings = get_settings()
+    if not settings.tavily_api_key:
+        raise ValueError("Tavily API key not set in config")
+    
+    import httpx
+    url = f"{settings.tavily_base_url}/search"
+    payload = {
+        "api_key": settings.tavily_api_key,
+        "query": query,
+        "search_depth": "basic",
+        "max_results": max_results,
+        "include_raw_content": False
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, timeout=20.0)
+        response.raise_for_status()
+        data = response.json()
+        
+    results = []
+    for item in data.get("results", []):
+        results.append({
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "content": item.get("content", "")
+        })
+    return results
 
 async def _search_serper(query: str, max_results: int) -> list[dict]:
     raise RuntimeError("Serper not configured")
@@ -346,21 +402,34 @@ async def _search_google(query: str, max_results: int) -> list[dict]:
     raise RuntimeError("Google not configured")
 
 async def _search_web(query: WebQuery) -> tuple[list[dict], str]:
-    # Simple DuckDuckGo search fallback
+    settings = get_settings()
+    provider = settings.search_provider.lower()
+    
+    if provider == "tavily":
+        try:
+            res = await _search_tavily(query.query_text, query.max_results)
+            return res, "tavily"
+        except Exception as e:
+            logger.warning(f"[S3/Web] Tavily search failed (limit reached?): {e}. Falling back to DuckDuckGo.")
+            # Fall through to DDG
+    
+    # Fallback / Default: DuckDuckGo
     try:
         res = await _search_duckduckgo(query.query_text, query.max_results)
         return res, "duckduckgo"
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[S3/Web] Web search failed for query '{query.query_text[:30]}': {e}")
         return [], "none"
 
 async def _search_duckduckgo(query_text: str, max_results: int) -> list[dict]:
     def _sync_search():
         has_cyrillic = any('\u0400' <= ch <= '\u04FF' for ch in query_text)
-        region = "kz-kz" if has_cyrillic else "wt-wt"
         try:
-            results = _DDGS(timeout=15).text(query_text, max_results=max_results, region=region)
-        except Exception:
-            results = _DDGS(timeout=15).text(query_text, max_results=max_results)
+            # DDGS sometimes fails on kz-kz natively depending on the proxy/IP. We try it first.
+            results = _DDGS(timeout=15).text(query_text, max_results=max_results, region="kz-kz")
+        except Exception as e:
+            logger.warning(f"[DDGS] kz-kz region failed ({e}), falling back to wt-wt")
+            results = _DDGS(timeout=15).text(query_text, max_results=max_results, region="wt-wt")
         return [
             {
                 "title": r.get("title", ""),
@@ -391,6 +460,7 @@ def _build_web_chunk(result: dict, query: WebQuery, provider: str) -> EvidenceCh
         legal_rank=LegalRank.LAW_RK,
         web_tier=tier,
         search_provider=provider,
+        language=getattr(query, "language", None),
     )
 
 def _regex_split_articles(text: str) -> list[dict]:

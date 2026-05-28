@@ -610,7 +610,7 @@ class CacheManager:
                 self._reranker = CrossEncoder(
                     "BAAI/bge-reranker-v2-m3",
                     device=device,
-                    automodel_args=model_kwargs if model_kwargs else None
+                    model_kwargs=model_kwargs if model_kwargs else None
                 )
                 self._reranker_loaded = True
                 logger.info("[Cache/Reranker] Cross-Encoder initialized successfully!")
@@ -772,8 +772,8 @@ class CacheManager:
             if sem_raw <= -1.0:
                 sem_norm = 0.0
 
-            # Weighted Linear Combination: 35% Semantic, 50% BM25, 15% SQL match (Calibrated weights)
-            wlc_scores[cid] = 0.35 * sem_norm + 0.50 * bm25_norm + 0.15 * sql_score
+            # Weighted Linear Combination: 55% Semantic, 30% BM25, 15% SQL match (Calibrated weights)
+            wlc_scores[cid] = 0.55 * sem_norm + 0.30 * bm25_norm + 0.15 * sql_score
 
         # Simple query language detection
         has_cyrillic = any('\u0400' <= ch <= '\u04FF' for ch in query_text)
@@ -791,7 +791,7 @@ class CacheManager:
             lang_factor = 1.0
             if detected_lang and chunk_obj.language:
                 if chunk_obj.language != detected_lang:
-                    lang_factor = 0.3  # Penalty for non-matching language
+                    lang_factor = 0.85  # Slight penalty for cross-lingual matches, preserves BGE-M3 cross-lingual capability
             
             # Version freshness boost (recent version gets a slight boost)
             version_boost = 0.0

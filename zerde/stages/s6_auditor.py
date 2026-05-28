@@ -199,13 +199,11 @@ _LAW_ID_SYNONYMS = {
 def _are_law_ids_synonymous(law_a: str, law_b: str) -> bool:
     if not law_a or not law_b:
         return False
-    a = law_a.strip().upper()
-    b = law_b.strip().upper()
-    if a == b:
-        return True
-    syns_a = _LAW_ID_SYNONYMS.get(a, {a})
-    syns_b = _LAW_ID_SYNONYMS.get(b, {b})
-    return not syns_a.isdisjoint(syns_b)
+    from zerde.utils.law_registry import get_registry
+    reg = get_registry()
+    a_canon = reg.resolve(law_a).upper()
+    b_canon = reg.resolve(law_b).upper()
+    return a_canon == b_canon
 
 
 def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
@@ -239,7 +237,12 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
     for m in matches:
         clean_m = m.upper().replace(" ", "").replace("\u0406", "I").replace("\u0456", "i")
         law_ids.append(clean_m)
-        
+
+    # 4. V9.6: Fallback \u2014 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u043c target_law_ids \u0438\u0437 claim (\u0434\u043b\u044f \u043f\u043e\u043f\u0440\u0430\u0432\u043e\u0447\u043d\u044b\u0445 \u0430\u043a\u0442\u043e\u0432).
+    # \u041f\u0440\u0438\u043c\u0435\u043d\u044f\u0435\u043c \u0442\u043e\u043b\u044c\u043a\u043e \u0435\u0441\u043b\u0438 text/entities \u043d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u0434\u0430\u043b\u0438.
+    if not law_ids and getattr(claim, "target_law_ids", None):
+        law_ids.extend(claim.target_law_ids)
+
     return list(set(law_ids))
 
 
@@ -356,7 +359,7 @@ def audit_analysis(
                     try:
                         parsed = urlparse(url)
                         domain = (parsed.hostname or "").removeprefix("www.")
-                        if domain.endswith(".kz") and chunk.web_tier in (WebTier.TIER_1, WebTier.TIER_2):
+                        if chunk.web_tier in (WebTier.TIER_1, WebTier.TIER_2):
                             is_official = True
                     except Exception:
                         pass
@@ -374,12 +377,16 @@ def audit_analysis(
     # must be downgraded to UNVERIFIED and confidence to LOW.
     for v in analysis.verdicts:
         if v.status == VerdictStatus.CONFIRMED and not v.is_deterministic:
+            has_reference = any(
+                sid and (sid in VIRTUAL_SOURCES or sid.startswith("reference_"))
+                for sid in v.source_ids
+            )
             real_sources = [
                 sid for sid in v.source_ids
                 if sid and sid not in VIRTUAL_SOURCES and not sid.startswith("reference_")
                 and sid in corpus_index  # Only count IDs that actually exist in corpus
             ]
-            if not real_sources:
+            if not real_sources and not has_reference:
                 logger.warning(
                     f"[S6/Downgrade] Downgrading verdict for claim '{v.claim_id}' from CONFIRMED to UNVERIFIED "
                     f"due to lack of real source links. source_ids={v.source_ids}"
@@ -576,6 +583,37 @@ def audit_analysis(
             and any(sid and sid != "UNLINKED" and not sid.startswith("reference_") for sid in v.source_ids)
         )
 
+        # V9.6: При очень малом числе аналитических claims reliability нельзя считать надёжно.
+        # n_total=1-2 даёт экстремально низкие значения даже для корректных документов.
+        if n_total <= 2 and n_total > 0:
+            all_unverified = all(v.status == VerdictStatus.UNVERIFIED for v in analytical_verdicts)
+            if all_unverified:
+                # Недостаточно данных — не показываем процент (None = "N/A")
+                reliability = None
+                analysis.overall_reliability = reliability
+                logger.info(f"[S6/Score] n_total={n_total}, все UNVERIFIED → reliability=None (insufficient data)")
+                # Собираем статистику без reliability
+                from zerde.models import AnalysisStats
+                analysis.stats = AnalysisStats(
+                    n_total=n_total,
+                    n_confirmed=0,
+                    n_contradicted=0,
+                    n_unverified=n_total,
+                    n_critical_contradicted=0,
+                    n_high_contradicted=0,
+                    n_unverified_risks=sum(1 for v in analytical_verdicts if v.severity in (ClaimSeverity.CRITICAL, ClaimSeverity.HIGH)),
+                    n_real_confirmed=0,
+                    reliability=None,
+                    pros=["Документ не содержит явных фактических ошибок (слишком мало проверяемых утверждений для полной верификации)."],
+                    recommendation=(
+                        f"Юридический аудит завершен. Из {n_total} утверждений: 0 подтверждено, "
+                        f"0 опровергнуто, {n_total} не верифицировано — корпус не содержит нужных источников."
+                    ),
+                )
+                analysis.conflicts = _build_conflicts_from_verdicts(analysis.verdicts)
+                logger.info(f"[S6] Done (insufficient data path). UNVERIFIED={n_total}")
+                return analysis
+
         if n_total > 0:
             # 1. Verification Coverage Score (V_ratio) weighted by severity
             severity_weights = {
@@ -672,9 +710,6 @@ def audit_analysis(
             else:
                 reliability = max(0.0, min(1.0, reliability))
 
-            # Epistemic Honesty Fallback
-            if n_real_confirmed == 0:
-                reliability = None
         else:
             reliability = None
 
@@ -897,6 +932,7 @@ def _corpus_wide_bm25_search(
         candidate_indices = [
             i for i, cid in enumerate(bm25._ids)
             if any(_are_law_ids_synonymous(corpus_index[cid].law_id, ref_id) for ref_id in referenced_law_ids)
+            or corpus_index[cid].web_tier is not None
         ]
         if candidate_indices:
             best_idx = max(candidate_indices, key=lambda i: raw_scores[i])
@@ -907,16 +943,12 @@ def _corpus_wide_bm25_search(
             
             if normalized >= settings.bm25_medium_threshold:
                 fact.source_ids = [best_cid]
-                logger.info(f"[S6/Fallback/Layer1] Verified claim '{fact.claim_id}' inside law {referenced_law_ids}: score={normalized:.3f}")
+                logger.info(f"[S6/Fallback/Layer1] Verified claim '{fact.claim_id}' inside law {referenced_law_ids} (or web): score={normalized:.3f}")
                 return normalized
             else:
-                logger.info(f"[S6/Fallback/Layer1] Match inside specific law was too weak ({normalized:.3f} < {settings.bm25_medium_threshold}). Rejecting.")
-                return None
+                logger.info(f"[S6/Fallback/Layer1] Match inside specific law or web was too weak ({normalized:.3f} < {settings.bm25_medium_threshold}). Falling through.")
         else:
-            # Специфичный закон был запрошен, но не найден в корпусе.
-            # Блокируем глобальный поиск по другим законам во избежание галлюцинаций!
-            logger.info(f"[S6/Fallback] Expected law {referenced_law_ids} is not present in the corpus. Blocking global search.")
-            return None
+            logger.info(f"[S6/Fallback] Expected law {referenced_law_ids} is not present in the corpus, and no web chunks. Falling through.")
 
     # --- LAYER 2: Code Family Fallback (if specific law was not found/loaded) ---
     # (If referenced_law_ids is defined but not loaded in the corpus, we try parent Codes)
@@ -966,7 +998,7 @@ def _corpus_wide_bm25_search(
             # Проверяем, что номер статьи (например, "47") присутствует как число или слово
             # Ищем границу слова \b47\b или ст. 47
             pattern = rf"\b{re.escape(article_num)}\b"
-            if not re.search(pattern, chunk_text):
+            if best_chunk.article != article_num and not re.search(pattern, chunk_text):
                 logger.info(f"[S6/Fallback/Layer3] Rejected Layer 3 match '{best_cid[:12]}' because it does not contain article '{article_num}'")
                 return None
 
@@ -1019,6 +1051,30 @@ def _audit_fact(
 
     # 2. BM25
     bm25_score = bm25.score(fact.claim, resolved_ids)
+
+    # V9.6: Если LLM привязала к общему закону (BM25 низкий),
+    # но в claim есть номер статьи + target_law_id — найдём конкретный чанк статьи
+    if claim and bm25_score < medium_threshold:
+        article_num = _extract_article_from_claim(claim)
+        referenced_law_ids = _extract_referenced_law_ids(claim)
+        if article_num and referenced_law_ids:
+            for cid, chunk in corpus_index.items():
+                if (
+                    chunk.article == article_num
+                    and any(_are_law_ids_synonymous(chunk.law_id, ref_id) for ref_id in referenced_law_ids)
+                ):
+                    # Нашли точный чанк (закон + статья) — повышаем confidence
+                    article_bm25 = bm25.score(fact.claim, [cid])
+                    if article_bm25 > bm25_score:
+                        logger.info(
+                            f"[S6/ArticleBoost] Fact '{fact.fact_id}' rebound via article match: "
+                            f"{bm25_score:.3f} → {article_bm25:.3f} (chunk={cid[:12]})"
+                        )
+                        # Дополняем source_ids найденным чанком
+                        if cid not in fact.source_ids:
+                            fact.source_ids = list(fact.source_ids) + [cid]
+                        bm25_score = max(bm25_score, article_bm25, 0.35)  # минимум MEDIUM
+                    break
 
     # 3. Arithmetic
     arithmetic_ok = _arithmetic_check(fact, resolved_ids, corpus_index)
@@ -1155,7 +1211,13 @@ def _check_topology(
 
     # Strict Cross-Domain Check: Предотвращает ложное подтверждение статей разных доменов
     text_lower = (fact.claim + " " + (claim.claim_text if claim else "")).lower()
-    is_koap_claim = "коап" in text_lower or "әқбтк" in text_lower or "административ" in text_lower
+    # V9.6: Точная проверка КоАП — только по аббревиатуре или точной фразе,
+    # не по слову "административ" (слишком широко: есть в АППК, КоАП, приказах МВД и т.д.)
+    is_koap_claim = (
+        "коап" in text_lower
+        or "әқбтк" in text_lower
+        or bool(re.search(r"административн\w+\s+правонаруш", text_lower))
+    )
     is_gk_claim = "гражданск" in text_lower or " гк" in text_lower or "азаматтық" in text_lower or "акрк" in text_lower
 
     found = []

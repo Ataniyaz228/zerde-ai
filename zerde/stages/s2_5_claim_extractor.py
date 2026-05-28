@@ -11,6 +11,7 @@ Stage 2.5: Claim Extractor
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import string
@@ -49,17 +50,17 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
     (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx\u0406\u0456]{1,5}(?:\s*(?:ЗРК|ҚРЗ))?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
     
     # Ссылки на статьи КоАП (RU + KK)
-    (re.compile(r"стать[яиею]\s*(\d+(?:[-.]?\\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
+    (re.compile(r"стать[яиею]\s*(\d+(?:[-.]?\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     (re.compile(r"ӘҚБтК\w*\s*(?:-\s*)?(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)(?:[^0-9\n]*?)ӘҚБтК", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
-    
+
     # Ссылки на статьи УК (RU + KK)
-    (re.compile(r"стать[яиеюй]\w?\\s+(\d+(?:[-.]?\\d+)?)\s+(?:Уголовн\w+\s+[Кк]одекс\w*|УК)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
+    (re.compile(r"стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\s+(?:Уголовн\w+\s+[Кк]одекс\w*|УК)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
     (re.compile(r"ҚК\w*\s*(?:-\s*)?(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
     (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)(?:[^0-9\n]*?)ҚК", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "uk_article"),
-    
+
     # Ссылки на статьи любого Кодекса (RU + KK)
-    (re.compile(r"(?:в\s+)?стать[яиеюй]\w?\\s+(\d+(?:[-.]?\\d+)?)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
+    (re.compile(r"(?:в\s+)?стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
     (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
     
     # Ссылки на ППРК: Постановление Правительства №142, ППРК №909
@@ -92,8 +93,7 @@ _YEAR_RE = re.compile(r"\b(202[0-9])\b")
 _STOP_WORDS_CLAIM = frozenset([
     "и", "в", "на", "с", "по", "от", "до", "за", "при", "о", "об", "из",
     "или", "а", "но", "что", "как", "это", "не", "к", "для", "то",
-    "документ", "утверждает", "строка", "таблица", "закон", "кодекс", "статья",
-    "ст", "стат", "номер", "присутствует", "существует",
+    "документ", "утверждает", "строка", "таблица", "присутствует", "существует",
 ])
 
 # V7.0: Модальные глаголы — если есть, claim НЕ структурный (RU + KK)
@@ -106,6 +106,129 @@ _MODAL_VERBS = frozenset([
     "міндетті", "тиіс", "салынады", "әкеп", "соғады", "белгіленеді", "айқындалады",
     "көзделген", "жауаптылық", "айыппұл", "тоқтатылады", "құқылы", "болады",
 ])
+
+
+# ---------------------------------------------------------------------------
+# V9.6: Target Law Detection (для поправочных актов)
+# ---------------------------------------------------------------------------
+
+# Паттерны для поиска закона-мишени в преамбуле/заголовке документа
+_TARGET_LAW_PREAMBLE_RE = re.compile(
+    # "внести изменения в ... Закон РК № 94-V" / "в ... Кодекс РК"
+    r"(?:вносятся?|внести|внесении)\s+изменений?\s+(?:и\s+дополнений?\s+)?в\s+.{0,80}?(?:№\s*)?(\d{2,4}[-–]\w{1,5})",
+    re.I | re.U | re.S,
+)
+_TARGET_LAW_TITLE_RE = re.compile(
+    # Паттерн "О внесении изменений ... № 261-IV" из названия закона
+    r"(?:Закон\w*|Кодекс\w*)\s+.{0,120}?(?:№\s*)?(\d{2,4}[-–][IVXivxІі]{1,5})\b",
+    re.I | re.U | re.S,
+)
+_TARGET_LAW_FROM_BLOCK_RE = re.compile(
+    # "Закон РК «Об исполнительном производстве и статусе судебных исполнителей»"
+    # — ищем блок до 600 символов: от "изменения в" до конца ссылки
+    r'(?:изменения|дополнения)\s+в\s+(?:[А-ЯЁа-яё\w\s«»"\',-]+?)'
+    r'(?:от\s+\d{1,2}\s+\w+\s+\d{4}|№\s*(\d{2,4}[-–][IVXivxІі]{1,5}))',
+    re.I | re.U | re.S,
+)
+
+# Словарь ключевых фраз названий законов → short ID
+_TITLE_HINT_MAP: dict[str, str] = {
+    "исполнительном производстве": "261-IV",
+    "судебных исполнителей": "261-IV",
+    "атқарушылық іс жүргізу": "261-IV",
+    "сот орындаушылар": "261-IV",
+    "персональных данных": "94-V",
+    "дербес деректер": "94-V",
+    "административных правонарушениях": "235-V",
+    "әкімшілік құқық бұзушылық": "235-V",
+    "уголовный кодекс": "226-V",
+    "қылмыстық кодекс": "226-V",
+    "гражданский кодекс": "1000-XIII",
+    "азаматтық кодекс": "1000-XIII",
+    "земельный кодекс": "442-II",
+    "жер кодекс": "442-II",
+    "трудовой кодекс": "414-I",
+    "еңбек кодекс": "414-I",
+    "налоговый кодекс": "120-VI",
+    "салық кодекс": "120-VI",
+    "об образовании": "319-III",
+    "білім туралы": "319-III",
+    "о государственных закупках": "434-V",
+    "мемлекеттік сатып алу": "434-V",
+    "о противодействии коррупции": "410-V",
+    "сыбайлас жемқорлыққа қарсы": "410-V",
+    "об информатизации": "418-V",
+    "информатизация туралы": "418-V",
+    "о связи": "567-II",
+    "байланыс туралы": "567-II",
+    "о банках": "2444-XII",
+    "банктер туралы": "2444-XII",
+    "об исполнительных документах": "261-IV",
+    "о нотариате": "155-V",
+    "нотариат туралы": "155-V",
+}
+
+
+def _detect_target_laws(text: str) -> list[str]:
+    """
+    V9.6: Определяет законы-мишени поправочного акта по преамбуле/заголовку.
+    Возвращает список short ID (напр. ['261-IV', '235-V']).
+    """
+    from zerde.utils.law_registry import get_registry
+    registry = get_registry()
+
+    # Ищем только в первых 1200 символах (заголовок + преамбула)
+    sample = text[:1200].lower()
+    found: list[str] = []
+
+    # 1. Прямые паттерны "вносятся изменения в ... № N-V"
+    for m in _TARGET_LAW_PREAMBLE_RE.finditer(text[:1200]):
+        raw = m.group(1).replace("–", "-").replace("‑", "-").upper()
+        resolved = registry.resolve(raw)
+        if resolved and resolved not in found:
+            found.append(resolved)
+    for m in _TARGET_LAW_TITLE_RE.finditer(text[:1200]):
+        raw = m.group(1).replace("–", "-").replace("‑", "-").upper()
+        resolved = registry.resolve(raw)
+        if resolved and resolved not in found:
+            found.append(resolved)
+
+    # 2. Ключевые фразы названий законов в заголовке (если явный номер не найден)
+    for hint, short_id in _TITLE_HINT_MAP.items():
+        if hint in sample:
+            resolved = registry.resolve(short_id)
+            canonical = resolved if resolved else short_id
+            if canonical not in found:
+                found.append(canonical)
+
+    return found
+
+
+# ---------------------------------------------------------------------------
+# V9.6: Meta-claim filter (отсев мусорных тривиальных claims)
+# ---------------------------------------------------------------------------
+
+# Паттерны для META claims — заголовков / самоописаний документа
+_META_CLAIM_PATTERNS = (
+    re.compile(r"документ\s+является\s+(?:проектом\s+)?закон", re.I | re.U),
+    re.compile(r"документ\s+представляет\s+собой", re.I | re.U),
+    re.compile(r"это\s+(?:проект\s+)?закон\w*\s+о\s+внесении", re.I | re.U),
+    re.compile(r"настоящий\s+(?:проект\s+)?закон", re.I | re.U),
+    re.compile(r"осы\s+заң", re.I | re.U),
+    re.compile(r"законопроект\s+(?:вносит|направлен|посвящен)", re.I | re.U),
+)
+
+
+def _is_meta_claim(claim: DocumentClaim) -> bool:
+    """V9.6: True если claim — мета-описание документа, а не проверяемое утверждение."""
+    text = claim.claim_text.strip()
+    # Слишком короткие/общие
+    if len(text) < 20:
+        return True
+    for pat in _META_CLAIM_PATTERNS:
+        if pat.search(text):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -148,13 +271,13 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
     if any(m in text_lower for m in commencement_markers):
         return True
 
-    # 0.5. Если содержит глаголы процессуальных поправок, это НЕ структурный claim
+    # 0.5. Если содержит глаголы процессуальных поправок, это структурный claim (инструкция по изменению текста)
     amendment_verbs = [
         "дополнить", "исключить", "изложить", "после слов", "словами", "точку заменить",
         "толықтырылсын", "алып тасталсын", "ауыстырылсын", "сөздерінен кейін"
     ]
     if any(v in text_lower for v in amendment_verbs):
-        return False
+        return True
 
     # 1. Если есть модальные глаголы — всегда нормативное, не структурное
     if any(v in text_lower for v in _MODAL_VERBS):
@@ -164,8 +287,26 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
     if _NORMATIVE_UNITS_RE.search(text_lower):
         return False
 
-    # 3. Ссылки на статьи/законы без модальных глаголов и без числовых норм — структурные
-    if claim.claim_type in (ClaimType.LEGAL_REF, ClaimType.LEGAL_ID):
+    # 2.5 Если явно указано, что это фактическое или нормативное утверждение
+    if claim.claim_type in (ClaimType.FACTUAL, ClaimType.NORMATIVE):
+        return False
+
+    # 3. Ссылки на законы (LEGAL_ID) — всегда структурные (просто упоминание)
+    if claim.claim_type == ClaimType.LEGAL_ID:
+        if claim.deterministic_verdict:
+            return False
+        return True
+
+    # 3.5 Ссылки на статьи (LEGAL_REF): простые "ст. 207" — структурные,
+    # но если есть описание содержания (например, "ст. 207 УК о лжепредпринимательстве") — это factual
+    if claim.claim_type == ClaimType.LEGAL_REF:
+        if claim.deterministic_verdict:
+            return False
+        # V9.6: если знаем целевой закон, простую ссылку на статью можно верифицировать
+        if getattr(claim, "target_law_ids", None):
+            return False
+        if re.search(r'стать[яи]\s*\d+.*[а-яё\s]{10,}', text_lower):
+            return False
         return True
 
     # 4. Простые констатации присутствия/упоминания/изменения структуры
@@ -180,23 +321,96 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
     return False
 
 
+# V9.6: Karaim-ный регекс для извлечения article reference из любого языка.
+# Ловит "статья 47", "ст. 47-1", "47-бап", "47-баптың", "(47-1)" и т.д.
+_ARTICLE_REF_RE = re.compile(
+    r"(?:стать[яиеюй]\s*|ст\.?\s*|(?:^|\s))(\d{1,4}(?:[-]\d{1,3})?)\s*(?:-?\s*(?:бап|бабы|бабының|бапта|баптың|бабына))?",
+    re.I | re.U,
+)
+
+# V9.6: Ключевые "юр.события" — для группировки claims разных языков об одной поправке
+_SEMANTIC_EVENT_KEYWORDS = (
+    # Каждый кортеж = (ключи поиска, нормализованный ID события)
+    (("амнист", "рақымшылық"), "amnesty"),
+    (("согласи", "келісім"), "consent"),
+    (("ЭЦП", "цифрлық қолтаңба", "электронн", "электрондық"), "edsig"),
+    (("реестр", "тізілім"), "registry"),
+    (("прекращ", "тоқтат"), "termination"),
+    (("освобожд", "босату"), "release"),
+    (("исполнен", "орындал", "атқарушылық"), "enforcement"),
+    (("штраф", "айыппұл"), "fine"),
+    (("уведомл", "хабарлам"), "notification"),
+    (("конституц"), "constitution"),
+)
+
+
+def _extract_article_ref_for_key(text: str) -> str | None:
+    """Извлекает первую ссылку на статью (например '47' или '889-1') для нормализации ключа."""
+    m = _ARTICLE_REF_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _extract_semantic_events(text: str) -> list[str]:
+    """Возвращает нормализованные ID юридических событий, упомянутых в claim."""
+    text_lower = text.lower()
+    events = []
+    for keys, event_id in _SEMANTIC_EVENT_KEYWORDS:
+        if isinstance(keys, str):
+            keys = (keys,)
+        if any(k in text_lower for k in keys):
+            events.append(event_id)
+    return sorted(set(events))
+
+
+def _semantic_dedup_key(claim: DocumentClaim) -> str | None:
+    """
+    V9.6: Строит кросс-языковой ключ дедупликации.
+    Возвращает None, если claim слишком общий (нет article + events).
+
+    Идея: claims "В статью 61 добавляется абзац: согласие не требуется"
+    и "61-бап ... келісімі талап етілмейді" → одинаковый ключ
+    `art61|consent`.
+    """
+    text = (claim.claim_text + " " + claim.quote).lower()
+    article = _extract_article_ref_for_key(text)
+    events = _extract_semantic_events(text)
+    if not article and not events:
+        return None
+    parts = []
+    if article:
+        parts.append(f"art{article}")
+    if events:
+        parts.append("|".join(events))
+    return ":".join(parts)
+
+
 def _dedup_claims(claims: list[DocumentClaim]) -> list[DocumentClaim]:
-    """V7.0: Детерминированная дедупликация по нормализованному тексту."""
+    """V7.0+V9.6: Детерминированная дедупликация по нормализованному тексту + кросс-языковая по семантическому ключу."""
     groups: dict[str, list[DocumentClaim]] = {}
     for c in claims:
-        if c.entities:
+        if c.entities and c.deterministic_verdict is not None:
             sorted_ents = sorted(str(e).strip().replace(" ", "").upper() for e in c.entities)
             key = f"regex_{c.claim_type.value}_{'_'.join(sorted_ents)}"
         else:
-            key = _normalize_claim_text(c.claim_text)
-            if not key:
-                key = c.claim_text.lower()[:40]
+            # V9.6: сначала пробуем семантический ключ (кросс-язык),
+            # потом fallback на нормализованный текст
+            sem_key = _semantic_dedup_key(c)
+            if sem_key:
+                key = f"sem_{sem_key}"
+            else:
+                key = _normalize_claim_text(c.claim_text)
+                if not key:
+                    key = c.claim_text.lower()[:40]
         groups.setdefault(key, []).append(c)
 
     result: list[DocumentClaim] = []
     for group in groups.values():
+        # Предпочитаем claim с большим контентом и непустым target_law_ids
         best = max(group, key=lambda c: (
             bool(c.deterministic_verdict),
+            bool(getattr(c, "target_law_ids", None)),
             len(c.entities),
             len(c.claim_text),
         ))
@@ -395,7 +609,13 @@ _LLM_CLAIM_PROMPT = """
 2. NORMATIVE claims — что закон/норма разрешает/запрещает/требует:
    - "Оператор обязан уведомить субъекта в течение X часов" → temporal, critical
 
-3. НЕ извлекай:
+3. ПОПРАВОЧНЫЕ ЗАКОНЫ ("О внесении изменений..."):
+   - Если документ вносит изменения в действующий закон — извлекай СУТЬ вносимых изменений:
+   - "Документ вводит новое основание для прекращения исполнительного производства (ст. 47 пп. 5-3)" → factual, high
+   - "Документ освобождает должника от уплаты расходов ЧСИ при амнистии (ст. 118)" → normative, high
+   - "Документ добавляет в ст. 821 КоАП постановление об освобождении от наказания по амнистии" → legal_ref, critical
+
+4. НЕ извлекай:
    - Общие рассуждения: "Закон защищает права граждан"
    - Описания без конкретных значений
    - Дубли уже найденных утверждений
@@ -425,24 +645,44 @@ async def _llm_extract_chunk(
         {"role": "user", "content": prompt},
     ]
 
-    try:
-        parsed = await cached_llm_call(
-            client=client,
-            model=settings.llm_model_extractor,
-            messages=messages,
-            settings=settings,
-            ttl_seconds=None,
-            max_tokens=3000,
-        )
-        if isinstance(parsed, list):
-            raw_claims = parsed
-        elif "_raw" in parsed and isinstance(parsed["_raw"], list):
-            raw_claims = parsed["_raw"]
-        else:
-            raw_claims = parsed.get("claims", [])
-    except Exception as e:
-        logger.warning(f"[S2.5/LLM] Failed to extract contextual claims from window: {e}")
-        return []
+    MAX_RETRIES = 2
+    raw_claims: list = []
+    for attempt in range(1, MAX_RETRIES + 1):
+        # V9.6: На повторной попытке повышаем температуру чтобы получить другой ответ
+        temperature = 0.0 if attempt == 1 else 0.4
+        try:
+            parsed = await cached_llm_call(
+                client=client,
+                model=settings.llm_model_extractor,
+                messages=messages,
+                settings=settings,
+                ttl_seconds=None,
+                max_tokens=3000,
+                temperature=temperature,
+            )
+            if isinstance(parsed, list):
+                raw_claims = parsed
+            elif "_raw" in parsed and isinstance(parsed["_raw"], list):
+                raw_claims = parsed["_raw"]
+            else:
+                raw_claims = parsed.get("claims", [])
+
+            if raw_claims:
+                break
+
+            logger.warning(
+                f"[S2.5/LLM] Attempt {attempt}/{MAX_RETRIES}: empty claims, retrying (temp={temperature})..."
+            )
+            # Инвалидируем кэш чтобы получить новый ответ
+            from zerde.utils.cache import LLMCache
+            llm_cache = LLMCache(settings.cache_db_path)
+            prompt_key = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+            cache_key = LLMCache._make_key(settings.llm_model_extractor, prompt_key)
+            await llm_cache._delete(cache_key)
+        except Exception as e:
+            logger.warning(f"[S2.5/LLM] Failed attempt {attempt}/{MAX_RETRIES}: {e}")
+            if attempt == MAX_RETRIES:
+                return []
 
     result: list[DocumentClaim] = []
     for i, raw in enumerate(raw_claims):
@@ -526,6 +766,11 @@ async def extract_claims(doc_state: DocumentState) -> ClaimExtractionResult:
 
     logger.info(f"[S2.5] Claim extraction start. doc_id={doc_state.doc_id[:8]}…")
 
+    # V9.6: Определяем законы-мишени документа (для поправочных актов)
+    target_law_ids = _detect_target_laws(text)
+    if target_law_ids:
+        logger.info(f"[S2.5] Detected target laws: {target_law_ids}")
+
     # Шаг 1: Детерминированный regex
     regex_claims = _regex_extract(text)
     logger.info(f"[S2.5] Regex extracted {len(regex_claims)} claims")
@@ -536,7 +781,19 @@ async def extract_claims(doc_state: DocumentState) -> ClaimExtractionResult:
 
     all_claims = regex_claims + llm_claims
 
-    # V7.0: Детерминированная дедупликация
+    # V9.6: Проставляем target_law_ids во все claims (чтобы S6 знал контекст закона)
+    if target_law_ids:
+        for c in all_claims:
+            if not c.target_law_ids:
+                c.target_law_ids = target_law_ids
+
+    # V9.6: Фильтр мусорных meta-claims
+    before_meta = len(all_claims)
+    all_claims = [c for c in all_claims if not _is_meta_claim(c)]
+    if before_meta != len(all_claims):
+        logger.info(f"[S2.5] Meta-filter: dropped {before_meta - len(all_claims)} trivial claims")
+
+    # V7.0+V9.6: Детерминированная дедупликация (включая кросс-языковую)
     deduped = _dedup_claims(all_claims)
     logger.info(f"[S2.5] Dedup: {len(all_claims)} → {len(deduped)} unique claims")
 

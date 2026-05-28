@@ -41,15 +41,15 @@ class Settings(BaseSettings):
     )
 
     # -----------------------------------------------------------------------
-    # LLM Provider (OpenRouter или OpenAI)
+    # LLM Provider (OpenRouter, OpenAI, или Gemini)
     # -----------------------------------------------------------------------
     openai_base_url: str = Field(
-        default="https://api.openai.com/v1",
+        default="https://generativelanguage.googleapis.com/v1beta/openai/",
         description=(
             "Base URL LLM провайдера.\n"
+            "  Gemini: https://generativelanguage.googleapis.com/v1beta/openai/\n"
             "  OpenRouter: https://openrouter.ai/api/v1\n"
-            "  OpenAI (default): https://api.openai.com/v1\n"
-            "  Local Ollama: http://localhost:11434/v1"
+            "  OpenAI: https://api.openai.com/v1\n"
         ),
     )
 
@@ -57,24 +57,24 @@ class Settings(BaseSettings):
     # LLM Models
     # -----------------------------------------------------------------------
     llm_model_planner: str = Field(
-        default="moonshotai/kimi-k2.6",
-        description="ID модели для Этапа 2 (Planner). Kimi K2.6 — стабильный JSON, не обрезает вывод.",
+        default="gemini-3.5-flash",
+        description="ID модели для Этапа 2 (Planner).",
     )
     llm_model_extractor: str = Field(
-        default="moonshotai/kimi-k2.6",
-        description="ID модели для Этапа 2.5 (Claim Extractor). Kimi K2.6 — стабильный JSON mode.",
+        default="gemini-3.5-flash",
+        description="ID модели для Этапа 2.5 (Claim Extractor).",
     )
     llm_model_analyst: str = Field(
-        default="moonshotai/kimi-k2.6",
-        description="ID модели для Этапа 5 (Auditor). Kimi K2.6 — стабильный JSON, reasoning.",
+        default="gemini-3.5-flash",
+        description="ID модели для Этапа 5 (Auditor).",
     )
     llm_model_policy_analyst: str = Field(
-        default="openai/gpt-5-nano",
-        description="ID модели для Этапа 5.5 (Policy Analyst). Лёгкая модель для аналитики.",
+        default="gemini-3.5-flash",
+        description="ID модели для Этапа 5.5 (Policy Analyst).",
     )
     llm_model_renderer: str = Field(
-        default="deepseek/deepseek-chat",
-        description="ID модели для Этапа 7 (Renderer) и форматирования. Лёгкая быстрая модель.",
+        default="gemini-3.5-flash",
+        description="ID модели для Этапа 7 (Renderer) и форматирования.",
     )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=0.0)  # Zero — locked
     llm_max_tokens_planner: int = Field(default=8192, description="Увеличено с 4096: QueryPlan с 10+ запросами занимает 5-7K токенов")
@@ -132,19 +132,19 @@ class Settings(BaseSettings):
     # Auditor / BM25
     # -----------------------------------------------------------------------
     validation_threshold: float = Field(
-        default=0.35,
+        default=0.25,
         ge=0.0,
         le=1.0,
         description="BM25 порог для статуса HIGH (VALIDATION_THRESHOLD). Калибруй через scripts/calibrate_bm25.py",
     )
     bm25_medium_threshold: float = Field(
-        default=0.15,
+        default=0.12,
         ge=0.0,
         le=1.0,
         description="BM25 порог для статуса MEDIUM (ниже → LOW)",
     )
     bm25_fallback_threshold: float = Field(
-        default=0.40,
+        default=0.20,
         ge=0.0,
         le=1.0,
         description="BM25 порог для автоматического corpus-wide поиска (fallback).",

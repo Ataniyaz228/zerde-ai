@@ -136,11 +136,12 @@ def _is_spam(chunk: EvidenceChunk) -> bool:
         return True
 
     # 4. Нет юридических сигналов вообще (но доверенные URL пропускаем)
+    # Послабление: не блокируем всё подряд, если нет юридических сигналов
     has_legal = _LEGAL_SIGNAL_RE.search(content)
     is_trusted = any(t in url for t in _TRUSTED_URL_PATTERNS)
 
     if not has_legal and not is_trusted:
-        return True
+        return False
 
     return False
 

@@ -12,6 +12,7 @@ docs/
 *.egg-info/
 dist/
 build/
+
 # Databases & Logs
 *.db
 *.db-shm
@@ -19,3 +20,24 @@ build/
 *.log
 last_*_raw_response.json
 scratch/
+
+# Frontend / Node
+node_modules/
+.next/
+.turbo/
+next-env.d.ts
+
+# Data (corpus, raw inputs, smoke results — большие, генерируемые)
+data/
+
+# Ad-hoc test artifacts and snapshots
+test.html
+test_claim.txt
+test_input.txt
+test_llm.py
+test_parse.py
+test_parse2.py
+git_diff_snapshot.txt
+git_history_snapshot.txt
+latest_responses.json
+last_llm_call.json

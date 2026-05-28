@@ -1,0 +1,133 @@
+.wrap {
+  width: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.totalBar {
+  height: 2px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: 2rem;
+}
+
+.totalBarFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width 0.5s var(--ease-out);
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 0;
+  position: relative;
+}
+
+.step + .step::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 17px;
+  width: 1px;
+  height: 100%;
+  background: var(--border);
+  z-index: 0;
+}
+
+.stepIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  transition: all 0.3s;
+}
+
+.stepIconActive {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.stepIconDone {
+  border-color: var(--status-ok);
+  background: var(--status-ok-bg);
+  color: var(--status-ok);
+  animation: none;
+}
+
+.stepIconError {
+  border-color: var(--status-err);
+  background: var(--status-err-bg);
+  color: var(--status-err);
+}
+
+.stepBody {
+  flex: 1;
+  padding-top: 6px;
+}
+
+.stepName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: color 0.2s;
+}
+
+.stepNameActive {
+  color: var(--text-primary);
+}
+
+.stepNameDone {
+  color: var(--text-secondary);
+}
+
+.stepMsg {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.stepStatus {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 99px;
+  margin-top: 6px;
+  align-self: flex-start;
+}
+
+.stepNum {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}

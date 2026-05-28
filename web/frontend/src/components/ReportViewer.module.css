@@ -1,0 +1,190 @@
+.wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.section {
+  border-bottom: 1px solid var(--border);
+}
+
+.section:last-child {
+  border-bottom: none;
+}
+
+.sectionHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  cursor: pointer;
+  background: transparent;
+  text-align: left;
+  transition: background var(--duration);
+}
+
+.sectionHeader:hover {
+  background: var(--bg-elevated);
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.sectionChevron {
+  color: var(--text-tertiary);
+  transition: transform 0.25s var(--ease-out);
+  flex-shrink: 0;
+}
+
+.sectionChevronOpen {
+  transform: rotate(180deg);
+}
+
+.sectionBody {
+  padding: 0 20px 20px;
+  overflow: hidden;
+}
+
+/* ===== MARKDOWN TYPOGRAPHY ===== */
+
+.md {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-primary);
+}
+
+.md h1, .md h2, .md h3 {
+  display: none; /* handled by accordion */
+}
+
+.md h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 1.25rem 0 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.md p {
+  margin-bottom: 0.875rem;
+  color: var(--text-primary);
+}
+
+.md p:last-child { margin-bottom: 0; }
+
+.md ul, .md ol {
+  padding-left: 1.25rem;
+  margin-bottom: 0.875rem;
+}
+
+.md li {
+  margin-bottom: 0.375rem;
+  color: var(--text-primary);
+}
+
+.md li::marker {
+  color: var(--accent-dim);
+}
+
+.md strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.md em {
+  color: var(--text-secondary);
+}
+
+.md blockquote {
+  border-left: 2px solid var(--accent);
+  padding: 0.5rem 0 0.5rem 1rem;
+  margin: 1rem 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.md code {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--accent);
+}
+
+.md pre {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+.md pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-primary);
+}
+
+.md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 1rem;
+}
+
+.md th {
+  text-align: left;
+  padding: 8px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+.md td {
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.md tr:hover td {
+  background: var(--bg-elevated);
+}
+
+.md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+
+/* Verdict badges */
+.md :is(p, li) > strong:first-child {
+  display: inline-block;
+}
+
+.md a {
+  color: #3b82f6;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.2s;
+  cursor: pointer;
+}
+
+.md a:hover {
+  text-decoration-color: currentColor;
+}

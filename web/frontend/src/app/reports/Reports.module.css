@@ -1,0 +1,178 @@
+.page {
+  min-height: calc(100vh - 56px);
+  padding: 3rem 1.5rem 5rem;
+}
+
+.inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.pageHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.count {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ─── Table ─── */
+
+.tableWrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.thead {}
+
+.th {
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.tr {
+  cursor: pointer;
+  transition: background var(--duration);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tr:last-child { border-bottom: none; }
+.tr:hover { background: var(--bg-elevated); }
+
+.td {
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.fileCell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fileIcon {
+  width: 30px; height: 30px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-dim);
+  flex-shrink: 0;
+}
+
+.fileName {
+  font-weight: 500;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.dateText {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.score {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.scoreGood { color: var(--status-ok); }
+.scoreWarn { color: var(--status-warn); }
+.scoreBad  { color: var(--status-err); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.badgeDone {
+  background: var(--status-ok-bg);
+  color: var(--status-ok);
+}
+
+.badgePending {
+  background: var(--status-warn-bg);
+  color: var(--status-warn);
+}
+
+/* ─── Empty state ─── */
+
+.empty {
+  padding: 5rem 2rem;
+  text-align: center;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.emptyIcon {
+  width: 48px; height: 48px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.emptyTitle {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.emptyLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 20px;
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity var(--duration);
+}
+.emptyLink:hover { opacity: 0.85; }
+
+.loadingRow {
+  padding: 3rem;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}

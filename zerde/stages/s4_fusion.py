@@ -81,7 +81,7 @@ _SPAM_CONTENT_RE = re.compile(
 # Юридические сигналы — если нет НИ ОДНОГО из них → web-чанк бесполезен
 _LEGAL_SIGNAL_RE = re.compile(
     r"стать[яиью]\s*\d+"
-    r"|№\s*\d+.{1,5}[IVXVIIIVIII]+"
+    r"|№\s*\d+.{1,5}[IVXLC]+"
     r"|Кодекс\s*РК|Закон\s*РК|УК\s*РК|КоАП\s*РК"
     r"|МРП|месячн\w+\s*расчетн"
     r"|штраф|санкци|ответственност"
@@ -135,14 +135,11 @@ def _is_spam(chunk: EvidenceChunk) -> bool:
     if len(content) < 150:
         return True
 
-    # 4. Нет юридических сигналов вообще (но доверенные URL пропускаем)
-    # Послабление: не блокируем всё подряд, если нет юридических сигналов
-    has_legal = _LEGAL_SIGNAL_RE.search(content)
-    is_trusted = any(t in url for t in _TRUSTED_URL_PATTERNS)
-
-    if not has_legal and not is_trusted:
-        return False
-
+    # NB: раньше здесь был шаг 4 (блокировка при отсутствии юр.сигналов), но он
+    # был намеренно ослаблен до no-op (всегда return False), т.е. фактически
+    # ничего не фильтровал — удалён, чтобы код не вводил в заблуждение. Если
+    # понадобится фильтр по юр.сигналам, восстанавливать через eval-метрику
+    # на веб-чанках. _LEGAL_SIGNAL_RE / _TRUSTED_URL_PATTERNS пока не используются здесь.
     return False
 
 
@@ -234,7 +231,7 @@ async def _dedup_by_cosine(chunks: list[EvidenceChunk], threshold: float) -> lis
 
     embeddings = None
     try:
-        cache = CacheManager()
+        cache = CacheManager(get_settings().cache_db_path)
         # Use asyncio.to_thread to run sync embedding computation in a thread pool
         embeddings = await asyncio.to_thread(cache.get_embeddings, active)
         logger.info(f"[S4/Cosine] Generated {len(embeddings)} local BGE-M3 embeddings successfully.")

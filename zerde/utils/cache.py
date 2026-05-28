@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 _db_lock = asyncio.Lock()
 _STEM_CACHE = {}
 
+# Версия LLM-кэша. Bump при изменении промптов/контракта ответа, чтобы
+# инвалидировать устаревшие закэшированные ответы (входит в _make_key).
+PROMPT_CACHE_VERSION = 1
+
 # ───────────────────────────────────────────────────────────────────────────
 # Fix #3: BGE-M3 Синглтон на уровне модуля
 # Все инстансы CacheManager разделяют одну модель через глобальные переменные
@@ -940,7 +944,9 @@ class LLMCache:
 
     @staticmethod
     def _make_key(model: str, prompt_key: str) -> str:
-        raw = f"{model}:{prompt_key}"
+        # PROMPT_CACHE_VERSION включён в ключ: bump инвалидирует все старые
+        # записи при изменении промптов/контракта (см. модульную константу).
+        raw = f"v{PROMPT_CACHE_VERSION}:{model}:{prompt_key}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def stats(self) -> dict:

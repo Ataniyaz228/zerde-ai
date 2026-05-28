@@ -248,7 +248,7 @@ def _rank_by_relevance(
     if other_chunks:
         from rank_bm25 import BM25Okapi
         from zerde.utils.cache import CacheManager
-        cache = CacheManager()
+        cache = CacheManager(get_settings().cache_db_path)
         
         corpus = [cache._tokenize_for_bm25((c.content or "") + " " + (c.source_title or "")) for c in other_chunks]
         query = cache._tokenize_for_bm25(doc_text)

@@ -174,8 +174,14 @@ async def cached_llm_call(
     # Очищаем устаревшие при каждом вызове (дёшево — O(idx))
     await cache.invalidate_expired()
 
-    # Ключ = model + все messages (system + user)
-    prompt_key = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+    # Ключ = model + messages + параметры генерации, влияющие на ответ.
+    # БЕЗ temperature/max_tokens смена этих настроек вернула бы устаревший
+    # закэшированный ответ (cache.py:_make_key добавляет ещё версию промпта).
+    prompt_key = json.dumps(
+        {"messages": messages, "temperature": temperature, "max_tokens": max_tokens},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
 
     # Проверяем кэш
     cached = await cache.get(model, prompt_key)

@@ -207,8 +207,18 @@ def _are_law_ids_synonymous(law_a: str, law_b: str) -> bool:
 
 
 def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
+    # V9.7: если S2.5 определил target_law_ids (поправочный закон с явной
+    # привязкой к закону-мишени), считаем это authoritative и игнорируем
+    # law_id'ы из entities/text/regex. Иначе alias-карты подмешивают чужие
+    # законы (напр. "акт амнистии"/"исполнительном производстве" → 261-IV
+    # в КоАП-документе), и LLM-аудитор привязывает claim к статье из
+    # неправильного кодекса с BM25=1.0 (ложное подтверждение).
+    target = getattr(claim, "target_law_ids", None) or []
+    if target:
+        return list(set(target))
+
     law_ids = []
-    
+
     # 1. Search entities
     for ent in claim.entities:
         ent_clean = str(ent).strip().upper().replace(" ", "")
@@ -238,10 +248,8 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
         clean_m = m.upper().replace(" ", "").replace("\u0406", "I").replace("\u0456", "i")
         law_ids.append(clean_m)
 
-    # 4. V9.6: Fallback \u2014 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u043c target_law_ids \u0438\u0437 claim (\u0434\u043b\u044f \u043f\u043e\u043f\u0440\u0430\u0432\u043e\u0447\u043d\u044b\u0445 \u0430\u043a\u0442\u043e\u0432).
-    # \u041f\u0440\u0438\u043c\u0435\u043d\u044f\u0435\u043c \u0442\u043e\u043b\u044c\u043a\u043e \u0435\u0441\u043b\u0438 text/entities \u043d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u0434\u0430\u043b\u0438.
-    if not law_ids and getattr(claim, "target_law_ids", None):
-        law_ids.extend(claim.target_law_ids)
+    # Fallback \u043d\u0430 target_law_ids \u0443\u0431\u0440\u0430\u043d \u0432 V9.7 \u2014 strict mode \u0432\u044b\u043f\u043e\u043b\u043d\u044f\u0435\u0442\u0441\u044f \u0432
+    # \u043d\u0430\u0447\u0430\u043b\u0435 \u0444\u0443\u043d\u043a\u0446\u0438\u0438 (\u0441\u043c. \u0431\u043b\u043e\u043a V9.7 \u0432\u044b\u0448\u0435).
 
     return list(set(law_ids))
 

@@ -7,9 +7,15 @@ OpenRouter: используй OPENROUTER_API_KEY + OPENAI_BASE_URL=https://open
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Корень проекта — позволяет резолвить пути независимо от cwd процесса.
+# config.py лежит в zerde/, поэтому корень — на два уровня выше (zerde/.. = repo root).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_CACHE_DB = str(_PROJECT_ROOT / "zerde_cache.db")
 
 
 class Settings(BaseSettings):
@@ -154,8 +160,12 @@ class Settings(BaseSettings):
     # Cache (SQLite)
     # -----------------------------------------------------------------------
     cache_db_path: str = Field(
-        default="zerde_cache.db",
-        description="Путь к SQLite кэшу. Ключ — SHA256 контента. Без TTL.",
+        default=_DEFAULT_CACHE_DB,
+        description=(
+            "Путь к SQLite кэшу. По умолчанию — <project_root>/zerde_cache.db, "
+            "чтобы CLI и web/backend смотрели в один кеш независимо от cwd. "
+            "Переопределяется через .env: CACHE_DB_PATH=..."
+        ),
     )
 
     # -----------------------------------------------------------------------

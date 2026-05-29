@@ -638,9 +638,12 @@ class CacheManager:
         import re
         import numpy as np
 
-        # 1. Normalize law_ids
+        # 1. Normalize law_ids. Adilet code \u0431\u0435\u0440\u0451\u043c \u0438\u0437 \u0420\u0415\u0415\u0421\u0422\u0420\u0410 (\u0430\u0432\u0442\u043e\u0440\u0438\u0442\u0435\u0442\u043d\u043e,
+        #    law_metadata); _LAW_ID_KNOWN \u2014 legacy-fallback \u0434\u043b\u044f \u043d\u0435\u0438\u043d\u0433\u0435\u0441\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0445.
         normalized_law_ids = []
         if law_ids:
+            from zerde.utils.law_registry import get_registry
+            registry = get_registry()
             try:
                 from zerde.stages.s3_gather import _LAW_ID_KNOWN
             except ImportError:
@@ -648,7 +651,7 @@ class CacheManager:
             for lid in law_ids:
                 lid_norm = lid.strip().replace("\u0406", "I").replace("\u0456", "i").upper()
                 normalized_law_ids.append(lid_norm)
-                known_code = _LAW_ID_KNOWN.get(lid_norm)
+                known_code = registry.get_adilet_code(lid) or _LAW_ID_KNOWN.get(lid_norm)
                 if known_code:
                     normalized_law_ids.append(known_code.upper())
                 if known_code and known_code.endswith("_"):

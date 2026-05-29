@@ -151,9 +151,12 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
     law_id = _resolve_law_name(law_id)
     urls = []
     
-    # 1. Known mapping
-    if law_id in _LAW_ID_KNOWN:
-        adilet_code = _LAW_ID_KNOWN[law_id]
+    # 1. Adilet code: РЕЕСТР авторитетен (law_metadata). _LAW_ID_KNOWN — лишь
+    #    legacy-fallback для неингестированных законов (их коды не верифицированы
+    #    против Adilet; будут ретайрены при систематическом ингесте — Фаза 4).
+    from zerde.utils.law_registry import get_registry
+    adilet_code = get_registry().get_adilet_code(law_id) or _LAW_ID_KNOWN.get(law_id)
+    if adilet_code:
         urls.append(f"{base}/rus/docs/{adilet_code}")
         # also append without trailing underscore
         if adilet_code.endswith("_"):

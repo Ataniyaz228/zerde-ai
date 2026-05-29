@@ -78,7 +78,9 @@ _LAW_NAME_TO_SHORT_ID = {
 
 _LAW_ID_KNOWN = {
     "94-V": "Z1300000094",
-    "87-IV": "Z1300000094",
+    # NB: "87-IV" НЕ существует для Закона о ПД (правильный — 94-V). Раньше был
+    # десинк: 87-IV маппился на тот же adilet-код Z1300000094, из-за чего ссылка
+    # на несуществующий закон молча тянула текст 94-V. Удалён.
     "418-V": "Z1500000418",
     "370-II": "Z030000370_",
     "550-IV": "Z1300000550",
@@ -167,24 +169,19 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
             urls.append(f"{base}/rus/docs/{law_id}_")
         return urls
         
-    # 3. Guessing/generating variants for standard format like "999-VI" or "94-V"
-    match = re.match(r"^(\d+)-([IVX]+)$", law_id, re.IGNORECASE)
-    if match:
-        num = match.group(1)
-        roman = match.group(2).upper()
-        # Guessing prefixes like Z1300000000 or similar
-        # Let's generate a couple of variants:
-        # Z1300000 + num, Z1500000 + num, Z1600000 + num, etc.
-        num_padded = num.zfill(4)
-        for yr in ["13", "14", "15", "16", "20", "23"]:
-            urls.append(f"{base}/rus/docs/Z{yr}0000{num_padded}")
-            urls.append(f"{base}/rus/docs/Z{yr}0000{num}")
-            
-    # 4. As-is fallback
+    # 3. Неизвестный short ID. Раньше здесь фабриковались URL перебором префиксов
+    #    годов (Z13.., Z15.., Z16..) — это плодило мёртвые 404-запросы и могло молча
+    #    попасть в чужой закон. Удалено: нет в _LAW_ID_KNOWN/реестре → не угадываем.
+    #    Известные законы покрыты шагом 1 + реестром + локальным кешем (search_local).
+    if re.match(r"^\d+-[IVXLCDM]+$", law_id, re.IGNORECASE):
+        logger.debug(f"[S3/Adilet] Unknown law_id '{law_id}' — no adilet code; skipping URL fabrication.")
+        return urls
+
+    # 4. As-is fallback (для adilet-подобных строк, не пойманных шагом 2).
     as_is = f"{base}/rus/docs/{law_id}"
     if as_is not in urls:
         urls.append(as_is)
-        
+
     return urls
 
 async def gather_evidence(plan: QueryPlan) -> list[EvidenceChunk]:

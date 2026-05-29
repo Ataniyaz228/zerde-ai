@@ -171,15 +171,21 @@ async def _run_analysis_async(analysis_id: str, file_path: str, main_loop: async
 
         await stage_done("report")
 
-        # Extract score from report
-        import re
-        score = 0
-        score_match = re.search(
-            r"Надёжность анализа:\*?\*?\s*(?:🔴|🟡|🟢|⚫)\s*(\d+)%",
-            result.report_md or "",
-        )
-        if score_match:
-            score = int(score_match.group(1))
+        # Структурная надёжность — берём из объекта анализа, НЕ выскребаем
+        # regex'ом из Markdown. Пишем сайдкар <report>.meta.json для storage.
+        import json as _json
+        from zerde.stages.s7_render import build_reliability_summary
+
+        summary = build_reliability_summary(result.analysis)
+        score = summary["reliability_pct"] or 0
+        meta_path = output_path.parent / (output_path.name + ".meta.json")
+        try:
+            meta_path.write_text(
+                _json.dumps({"report_id": output_path.name, **summary}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as e:
+            logger.warning(f"[Analysis] Could not write meta sidecar {meta_path}: {e}")
 
         analysis_status[analysis_id] = "completed"
         await _broadcast(analysis_id, {

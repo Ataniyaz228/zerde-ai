@@ -1,9 +1,29 @@
 import os
 import glob
+import json
 import re
 from datetime import datetime
 
 OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "output"))
+
+
+def _read_score(filepath: str, content: str) -> int:
+    """Reliability score for a report.
+
+    Prefers the structural sidecar `<report>.meta.json` written by the
+    pipeline; falls back to regex-scraping the Markdown for old reports
+    that predate the sidecar.
+    """
+    meta_path = filepath + ".meta.json"
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        pct = meta.get("reliability_pct")
+        if pct is not None:
+            return int(pct)
+    except (OSError, ValueError):
+        pass
+    return _extract_score(content)
 
 
 def _parse_date(filename: str) -> str:
@@ -54,7 +74,7 @@ def list_reports() -> list[dict]:
             "id": filename,
             "filename": filename,
             "date": _parse_date(filename),
-            "reliability_score": _extract_score(content),
+            "reliability_score": _read_score(filepath, content),
             "status": "done",
         })
 
@@ -73,7 +93,7 @@ def get_report(report_id: str) -> dict | None:
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
-    score = _extract_score(content)
+    score = _read_score(filepath, content)
 
     return {
         "id": report_id,

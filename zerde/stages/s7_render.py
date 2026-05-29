@@ -586,6 +586,28 @@ def _render_recommendation(analysis: AnalysisJSON) -> str:
     )
 
 
+def build_reliability_summary(analysis: AnalysisJSON) -> dict:
+    """Структурная сводка надёжности — единый источник числа для UI/хранилища.
+
+    Заменяет выскребание процента regex'ом из готового Markdown. Счётчики
+    берутся из `analysis.verdicts` (та же логика, что в executive summary).
+    """
+    confirmed = sum(1 for v in analysis.verdicts if v.status.value == "CONFIRMED")
+    contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
+    unverified = sum(1 for v in analysis.verdicts if v.status.value == "UNVERIFIED")
+    total = confirmed + contradicted + unverified
+    score = analysis.overall_reliability
+    return {
+        "reliability": score,  # float 0..1 | None
+        "reliability_pct": int(score * 100) if score is not None else None,
+        "confirmed": confirmed,
+        "contradicted": contradicted,
+        "unverified": unverified,
+        "total": total,
+        "coverage_pct": int((confirmed + contradicted) / total * 100) if total else 0,
+    }
+
+
 def _render_how_to_read(analysis: AnalysisJSON) -> str:
     """
     Объяснение что значит Reliability Score, почему он бывает низким,

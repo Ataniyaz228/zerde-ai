@@ -53,6 +53,30 @@ remove the short-id fuzzy match and re-measure — expect this number to collaps
 - `94-V`, `434-V` grounding 0.00 — law absent / under-ingested in cache (coverage, Phase 4).
 - `261-IV` grounding 0.24–0.43 — partial cache coverage for ЧСИ articles.
 
+## Gather-path safety net (law_id ↔ adilet consistency)
+
+`python scripts/eval/lawid_consistency.py` — guards the dict-unification refactor
+(Phase 1.1) by comparing law_id→adilet_code across all sources. No LLM/network.
+
+Baseline (2026-05-29):
+
+| metric | value | note |
+|---|---|---|
+| `drift_count` | **0** | sources agree on adilet codes where they overlap (the `87-IV` desync was the one known case, fixed in 1.1b) |
+| `registry get_adilet_url match` | **35/35** | registry reproduces every `law_metadata` law's code |
+| law_ids in dicts but NOT in `law_metadata` | **21** | would lose coverage if dicts deleted |
+| of those, **migration blockers** | **16** | registry can't reproduce → must be ingested into `law_metadata` first |
+
+The refactor risk is therefore **coverage, not drift**. Deleting `_LAW_ID_KNOWN`
+(54 entries) today would drop 16 laws onto the registry's `get_adilet_url`
+year/zero-pad fabrication, yielding WRONG codes (e.g. `138-IV` → `Z0000000138`).
+
+Pre-deletion checklist (Phase 1.1 unification):
+1. Remove `get_adilet_url`'s code fabrication (return None for unknown, like 1.1b did for s3).
+2. Migrate the 16 blocker law codes into `law_metadata` (verify against Adilet — note
+   `_LAW_ID_KNOWN` has a suspect `309-II → K990000409`, which is 409-I's code).
+3. Re-run this checker: `only_in_dicts`/`blockers` → 0, then delete the dicts.
+
 ## Caveats
 
 - Large "Сравнительная таблица" documents contribute hundreds of claims each and

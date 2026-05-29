@@ -38,10 +38,6 @@ async def run_auditor(
     active = [c for c in chunks if not c.is_duplicate]
     conflict_ids = [c.chunk_id for c in active if c.is_conflict]
 
-    # Rank chunks by BM25 relevance to document text so LLM sees the most relevant ones first
-    if doc_text and len(active) > 30:
-        active = _rank_by_relevance(active, doc_text, conflict_ids, top_k=30)
-
     batch_size = 5
     claim_list = claims.claims
     all_analysis_jsons = []
@@ -53,8 +49,15 @@ async def run_auditor(
             claims=batch_claims_list,
         )
 
+        # Per-claim retrieval: контекст этого батча = объединение релевантных
+        # чанков КАЖДОГО claim'а (точное совпадение law_id+article + BM25 по
+        # тексту claim'а) + forced (adilet/conflict). Раньше во все батчи слался
+        # один и тот же doc-level top-30 — чанк-первоисточник для claim'а №38 мог
+        # вообще не попасть в контекст.
+        batch_chunks = _retrieve_for_claims(active, batch_claims_list, conflict_ids)
+
         prompt = build_auditor_prompt(
-            chunks=active,
+            chunks=batch_chunks,
             claims=batch_claims,
             plan=plan,
             doc_text=doc_text,
@@ -214,6 +217,90 @@ def _validate_claim_coverage(analysis: AnalysisJSON, claims: ClaimExtractionResu
             confidence="LOW",
             severity=claim.severity,
         ))
+
+
+def _retrieve_for_claims(
+    chunks: list[EvidenceChunk],
+    claims: list,
+    conflict_ids: list[str],
+    per_claim_k: int = 8,
+    max_total: int = 50,
+) -> list[EvidenceChunk]:
+    """Per-claim retrieval для одного батча аудитора.
+
+    Контекст = forced (adilet/conflict) + точные метаданные-совпадения каждого
+    claim'а (law_id+article — это и есть первоисточник, НИКОГДА не отбрасываем)
+    + добивка по BM25 (по тексту каждого claim'а) до max_total.
+
+    BM25-индекс строится один раз по всем чанкам, затем скорится под текст
+    каждого claim'а отдельно (get_scores).
+    """
+    if not chunks:
+        return []
+
+    from zerde.stages.s6_auditor import (
+        _are_law_ids_synonymous,
+        _extract_article_from_claim,
+        _extract_referenced_law_ids,
+    )
+    from zerde.utils.cache import CacheManager
+
+    cache = CacheManager(get_settings().cache_db_path)
+    by_id = {c.chunk_id: c for c in chunks}
+
+    selected: dict[str, EvidenceChunk] = {}
+
+    # 1. Forced: adilet + conflict — всегда.
+    for c in chunks:
+        if c.chunk_id in conflict_ids or c.adilet_fallback_used is not None:
+            selected[c.chunk_id] = c
+
+    # 2. Точные метаданные-совпадения каждого claim'а (первоисточник) — всегда.
+    for claim in claims:
+        ref_ids = _extract_referenced_law_ids(claim)
+        article = _extract_article_from_claim(claim)
+        if not (ref_ids and article):
+            continue
+        for c in chunks:
+            if c.article == article and any(_are_law_ids_synonymous(c.law_id, r) for r in ref_ids):
+                selected[c.chunk_id] = c
+
+    # 3. BM25-добивка по тексту каждого claim'а (индекс строим один раз).
+    bm25 = None
+    corpus_tokens = [
+        cache._tokenize_for_bm25((c.content or "") + " " + (c.source_title or ""))
+        for c in chunks
+    ]
+    if any(corpus_tokens):
+        try:
+            from rank_bm25 import BM25Okapi
+            bm25 = BM25Okapi(corpus_tokens)
+        except Exception:
+            bm25 = None
+
+    if bm25 is not None:
+        for claim in claims:
+            if len(selected) >= max_total:
+                break
+            q = cache._tokenize_for_bm25(
+                (getattr(claim, "claim_text", "") or "") + " " + (getattr(claim, "quote", "") or "")
+            )
+            if not q:
+                continue
+            scores = bm25.get_scores(q)
+            ranked = sorted(range(len(chunks)), key=lambda idx: scores[idx], reverse=True)
+            added = 0
+            for idx in ranked:
+                if added >= per_claim_k or len(selected) >= max_total:
+                    break
+                if scores[idx] <= 0:
+                    break
+                c = chunks[idx]
+                if c.chunk_id not in selected:
+                    selected[c.chunk_id] = c
+                    added += 1
+
+    return list(selected.values())
 
 
 def _rank_by_relevance(

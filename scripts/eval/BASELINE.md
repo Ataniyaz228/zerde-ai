@@ -20,6 +20,22 @@ the committed reference Phase 1 compares against.
 | `article_false_grounding_rate` | **0.00** ✅ | → 0 | impossible article (99999) never grounds |
 | `stability_all_pass` | **True** ✅ | True | deterministic path identical across two runs |
 
+## Phase 1.1a result (fuzzy-resolve fix)
+
+After replacing `LawRegistry.resolve()`'s `difflib` short-id fuzzy match with
+strict base-ID matching + an explicit renumbering-alias table (commit in Phase 1):
+
+| metric | baseline | after 1.1a |
+|---|---|---|
+| `grounding_rate` (clean) | 0.70 | **0.729** ↑ (base-ID bridging fixed `414-I`→`414-I-NEW`, `226-V`→`226-V-UK`) |
+| `law_false_grounding_rate` | 0.704 | **0.000** ✅ |
+| `article_false_grounding_rate` | 0.00 | 0.00 |
+| `stability_all_pass` | True | True |
+
+(The mutation engine was also corrected to corrupt *all* law refs in a multi-law
+claim; corrupting only the first inflated the rate with a harness artifact, not a
+resolve bug.)
+
 ## Headline finding
 
 `law_false_grounding_rate ≈ 0.70` is driven by `LawRegistry.resolve()`'s `difflib`

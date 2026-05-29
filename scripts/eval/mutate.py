@@ -51,20 +51,29 @@ def mutate_law(claim: DocumentClaim) -> tuple[DocumentClaim, str] | None:
     targets = list(getattr(claim, "target_law_ids", None) or [])
     if not targets:
         return None
+    # Corrupt EVERY law reference, so the mutated claim has NO valid law. If we
+    # corrupted only the first, a multi-law claim would still ground via an intact
+    # law id and inflate false_grounding with a harness artifact (not a resolve bug).
     new_targets: list[str] = []
     changed: tuple[str, str] | None = None
+    any_corrupted = False
     for lid in targets:
         corrupted = _corrupt_law_id(lid)
-        if corrupted and changed is None:
+        if corrupted:
             new_targets.append(corrupted)
-            changed = (lid, corrupted)
+            any_corrupted = True
+            if changed is None:
+                changed = (lid, corrupted)
         else:
             new_targets.append(lid)
-    if changed is None:
+    if not any_corrupted:
         return None
     mutated = claim.model_copy(deep=True)
     mutated.target_law_ids = new_targets
-    return mutated, f"law:{changed[0]}->{changed[1]}"
+    label = f"law:{changed[0]}->{changed[1]}"
+    if len(targets) > 1:
+        label += f" (+{len(targets) - 1} more)"
+    return mutated, label
 
 
 def mutate_article(claim: DocumentClaim) -> tuple[DocumentClaim, str] | None:

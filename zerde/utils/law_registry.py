@@ -77,6 +77,24 @@ _ADILET_CODE_TO_SHORT: dict[str, str] = {
 # Короткий ID → полный код Адилет
 _SHORT_TO_ADILET_CODE: dict[str, str] = {v: k for k, v in _ADILET_CODE_TO_SHORT.items()}
 
+# Ядро law_id = "<число>-<римское>", без тег-суффикса (-UK, -NEW и т.п.).
+# Используется для безопасного base-ID матчинга: "226-V" ↔ "226-V-UK",
+# "414-I" ↔ "414-I-NEW" — БЕЗ fuzzy (транспозиция цифр не должна матчить).
+_LAW_ID_CORE_RE = re.compile(r"^(\d+-[IVXLCDM]+)(?:-[A-Z]+)?$")
+
+
+def _law_id_core(s: str) -> str | None:
+    m = _LAW_ID_CORE_RE.match(s.strip().upper())
+    return m.group(1) if m else None
+
+
+# Явные alias'ы перенумерованных законов (короткий ID → канонический короткий ID).
+# Заменяют опасный fuzzy-матчинг коротких ID. Дополнять по мере обнаружения.
+# 233-IV — прежний номер Закона об исполнительном производстве (ныне 261-IV).
+_LAW_ID_ALIASES: dict[str, str] = {
+    "233-IV": "261-IV",
+}
+
 # Паттерны для извлечения ссылок из текста законопроекта
 _LAW_REF_PATTERNS = [
     # «от 2 апреля 2010 года № 261-IV»
@@ -206,17 +224,31 @@ class LawRegistry:
         if clean_code in _ADILET_CODE_TO_SHORT:
             return _ADILET_CODE_TO_SHORT[clean_code]
 
-        # 4. Fuzzy по short ID (обрабатывает "233-IV" → "261-IV" и другие опечатки)
-        all_law_ids = list(self._by_law_id.keys())
-        if all_law_ids:
-            close = difflib.get_close_matches(upper, [x.upper() for x in all_law_ids], n=1, cutoff=0.75)
-            if close:
-                # Восстанавливаем оригинальный регистр
-                matched_upper = close[0]
-                for lid in all_law_ids:
-                    if lid.upper() == matched_upper:
-                        logger.info(f"[LawRegistry] Fuzzy resolved '{raw}' → '{lid}' (short ID match)")
-                        return lid
+        # 4. Base-ID match: ссылка без тег-суффикса ("226-V", "414-I") сопоставляется
+        #    с хранимым ID, имеющим то же <число>-<римское> ядро, но с суффиксом
+        #    ("226-V-UK", "414-I-NEW"). СТРОГО по ядру, БЕЗ fuzzy — иначе транспозиция
+        #    цифр (253-V) ложно резолвится в реальный закон (235-V) → false-grounding
+        #    (см. eval Фазы 0: law_false_grounding_rate). Опечатки/перенумерации законов
+        #    должны жить в явных alias-таблицах, а не угадываться по похожести.
+        core = _law_id_core(upper)
+        if core:
+            for lid in self._by_law_id:
+                if _law_id_core(lid.upper()) == core:
+                    if lid.upper() != upper:
+                        logger.info(f"[LawRegistry] Base-ID resolved '{raw}' → '{lid}'")
+                    return lid
+
+        # 4b. Явные alias'ы перенумерованных законов (вместо fuzzy).
+        if upper in _LAW_ID_ALIASES:
+            return _LAW_ID_ALIASES[upper]
+
+        # 4c. Вход выглядит как law_id ("253-V"), но не совпал ни с чем известным —
+        #     возвращаем как есть. НЕ уходим в title-матчинг (шаги 5-7): он ложно
+        #     резолвит короткие ID-строки в реальные законы ("253-V"→"261-IV") и
+        #     даёт false-grounding. Title-матчинг только для текстовых названий.
+        if core or re.match(r"^\d+-[IVXLCDM]+$", upper):
+            logger.debug(f"[LawRegistry] Unknown law_id '{raw}', returning as-is.")
+            return raw
 
         # 5. Точное совпадение заголовка
         norm_raw = _normalize(raw)

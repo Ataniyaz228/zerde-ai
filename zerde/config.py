@@ -113,6 +113,14 @@ class Settings(BaseSettings):
     )
     adilet_timeout_seconds: int = Field(default=30)
     adilet_max_articles_per_law: int = Field(default=50)
+    adilet_tls_verify: bool = Field(
+        default=False,
+        description=(
+            "Проверять TLS-сертификат adilet.zan.kz. По умолчанию False: цепочка "
+            "сертификатов Adilet часто не валидируется (запрос падает в HTTP 000). "
+            "scripts/update_corpus.py исторически тоже отключает проверку."
+        ),
+    )
 
     # -----------------------------------------------------------------------
     # Web Agent

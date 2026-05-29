@@ -244,7 +244,9 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager, res
         urls_to_try.extend(_normalize_law_id_to_adilet_urls(law_id, base)[:3])
     if not urls_to_try:
         urls_to_try = await _search_adilet_for_query(query, base)
-    async with httpx.AsyncClient(timeout=settings.adilet_timeout_seconds, follow_redirects=True) as client:
+    # verify=settings.adilet_tls_verify (default False): сертификат Adilet часто не
+    # валидируется → без этого запрос падает в HTTP 000 и live-fetch не работает вовсе.
+    async with httpx.AsyncClient(timeout=settings.adilet_timeout_seconds, follow_redirects=True, verify=settings.adilet_tls_verify) as client:
         for url in urls_to_try[:6]:
             try:
                 resp = await client.get(url)
@@ -259,7 +261,8 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager, res
 
 async def _search_adilet_for_query(query: AdiletQuery, base: str) -> list[str]:
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        verify_tls = get_settings().adilet_tls_verify
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=verify_tls) as client:
             resp = await client.get(f"{base}/rus/search", params={"q": query.query_text, "type": "docs"})
             if resp.status_code != 200:
                 return []
@@ -274,6 +277,49 @@ async def _search_adilet_for_query(query: AdiletQuery, base: str) -> list[str]:
     except Exception:
         return []
 
+# Заголовок статьи в реальной разметке Adilet: <p><b>Статья N. Название</b></p>
+# (рус) или <p><b>N-бап. Атауы</b></p> (каз). Тело — последующие <p> до след. заголовка.
+_ADILET_ARTICLE_HEAD_RE = re.compile(
+    r"^(?:Стать[яи]\s+(\d+(?:-\d+)?)|(\d+(?:-\d+)?)\s*-?\s*бап)\.?\s*(.*)",
+    re.IGNORECASE | re.UNICODE | re.DOTALL,
+)
+
+
+def _extract_adilet_articles(tree) -> list[dict]:
+    """Извлекает статьи из реальной структуры Adilet (server-rendered HTML).
+
+    Старый парсер искал `p[id^='st']` — на актуальных страницах таких узлов 0,
+    поэтому он всегда проваливался в грубый regex по всему тексту body. Здесь
+    идём по <p> в порядке документа: <p> с жирным «Статья N. …» открывает статью,
+    последующие <p> копятся в её тело до следующего заголовка.
+
+    Возвращает [{article_num, title, body(list[str])}].
+    """
+    articles: list[dict] = []
+    cur: dict | None = None
+    for p in tree.css("p"):
+        txt = p.text(strip=True)
+        if not txt:
+            continue
+        m = _ADILET_ARTICLE_HEAD_RE.match(txt)
+        # Заголовок = совпадение + жирный <b>: отсекает обычные абзацы,
+        # начинающиеся со слова «Статья …» в перекрёстных ссылках.
+        is_heading = bool(m) and p.css_first("b") is not None
+        if is_heading:
+            if cur:
+                articles.append(cur)
+            cur = {
+                "article_num": (m.group(1) or m.group(2) or "").strip(),
+                "title": (m.group(3) or "").strip(),
+                "body": [],
+            }
+        elif cur is not None:
+            cur["body"].append(txt)
+    if cur:
+        articles.append(cur)
+    return articles
+
+
 def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[EvidenceChunk]:
     from selectolax.parser import HTMLParser
     tree = HTMLParser(html)
@@ -284,29 +330,34 @@ def _parse_adilet_html(html: str, source_url: str, query: AdiletQuery) -> list[E
         law_title = node.text(strip=True)
     law_id_match = re.search(r"/docs/([A-Z]\d+)", source_url, re.IGNORECASE)
     law_id = law_id_match.group(1) if law_id_match else ""
-    
-    nodes = tree.css("p[id^='st']")
-    if nodes:
-        for node in nodes[:80]:
-            article_text = node.text(strip=True)
-            if len(article_text) < 30:
-                continue
-            article_num = _extract_article_number(node.attributes.get("id", ""), article_text)
+
+    articles = _extract_adilet_articles(tree)
+    if articles:
+        max_articles = get_settings().adilet_max_articles_per_law
+        lang = "ru" if "/rus/" in source_url else "kk" if "/kaz/" in source_url else None
+        for art in articles:
+            article_num = art["article_num"]
             if query.articles and article_num not in query.articles:
                 continue
-            chunk_id = hashlib.sha256(article_text.encode()).hexdigest()
-            lang = "ru" if "/rus/" in source_url else "kk" if "/kaz/" in source_url else None
+            body = "\n".join(art["body"]).strip()
+            content = f"Статья {article_num}. {art['title']}\n{body}".strip()
+            if len(content) < 30:
+                continue
+            chunk_id = hashlib.sha256(content.encode()).hexdigest()
             chunks.append(EvidenceChunk(
                 chunk_id=chunk_id,
-                source_url=source_url + f"#{node.attributes.get('id', '')}",
+                source_url=source_url,
                 source_title=f"{law_title} | Ст. {article_num}" if article_num else law_title,
-                content=article_text,
+                content=content,
                 legal_rank=_infer_adilet_rank(law_title),
                 law_id=law_id,
                 article=article_num,
                 adilet_fallback_used=AdiletFallbackStrategy.CSS_SELECTOR,
                 language=lang,
             ))
+            # Без фильтра по статьям ограничиваем объём, чтобы не раздуть один закон.
+            if not query.articles and len(chunks) >= max_articles:
+                break
         return chunks
 
     # Fallback to regex splitting

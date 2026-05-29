@@ -275,41 +275,35 @@ class LawRegistry:
         logger.debug(f"[LawRegistry] Could not resolve '{raw}', returning as-is.")
         return raw
 
-    def get_adilet_url(self, law_id: str, lang: str = "rus") -> str:
-        """
-        Возвращает URL на adilet.zan.kz для данного закона.
+    def get_adilet_code(self, law_id: str) -> str | None:
+        """Возвращает adilet_code закона из БД/статики. None если неизвестен.
 
-        Args:
-            law_id: Канонический short ID ("261-IV") или adilet_code.
-            lang: "rus" или "kaz".
-
-        Returns:
-            URL вида https://adilet.zan.kz/rus/docs/Z100000261_
+        НЕ фабрикует код. Раньше get_adilet_url угадывал `Z{num.zfill(10)}_`,
+        что давало НЕВЕРНЫЕ коды для неингестированных законов (напр. 138-IV →
+        Z0000000138). Единый источник — law_metadata (БД) + минимальная статика.
         """
-        base = f"https://adilet.zan.kz/{lang}/docs"
         canon = self.resolve(law_id)
-
-        # Из БД
         if canon in self._by_law_id:
             code = self._by_law_id[canon].get("adilet_code")
             if code:
-                return f"{base}/{code}"
-
-        # Из статического
+                return code
         if canon in _SHORT_TO_ADILET_CODE:
-            return f"{base}/{_SHORT_TO_ADILET_CODE[canon]}"
-
-        # Генерируем по паттерну (эвристика)
-        m = re.match(r"^(\d+)-([IVXLCD]+)$", canon, re.IGNORECASE)
-        if m:
-            num, roman = m.groups()
-            return f"{base}/Z{num.zfill(10)}_"
-
-        # Если уже adilet_code
+            return _SHORT_TO_ADILET_CODE[canon]
+        # Вход уже является adilet_code.
         if re.match(r"^[A-Z]\d{8,10}_?$", canon):
-            return f"{base}/{canon}"
+            return canon
+        return None
 
-        return f"{base}/{canon}"
+    def get_adilet_url(self, law_id: str, lang: str = "rus") -> str:
+        """URL на adilet.zan.kz для закона; "" если код неизвестен (без фабрикации).
+
+        Раньше для неизвестных законов возвращался угаданный (неверный) URL.
+        Теперь — пусто: "нет в реестре = явный пробел", а не фальшивая ссылка.
+        """
+        code = self.get_adilet_code(law_id)
+        if not code:
+            return ""
+        return f"https://adilet.zan.kz/{lang}/docs/{code}"
 
     def get_all_law_ids(self) -> list[str]:
         """Возвращает все известные law_id."""

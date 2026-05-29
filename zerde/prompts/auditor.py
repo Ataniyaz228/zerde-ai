@@ -16,7 +16,7 @@ _AUDITOR_VERDICT_SCHEMA = """
     {
       "claim_id": "claim_0000",
       "status": "CONFIRMED|CONTRADICTED|UNVERIFIED",
-      "source_ids": ["chunk_id_1"],
+      "source_ids": ["S1", "S3"],
       "found_value": "Что реально говорят источники (конкретно)",
       "document_value": "Что утверждает документ (конкретно)",
       "contradiction_detail": "Подробное описание противоречия если статус CONTRADICTED, иначе null",
@@ -116,7 +116,7 @@ __CORPUS_TEXT__
 - Галлюцинировать противоречия и ставить CONTRADICTED без точной цитаты — категорически запрещено!
 
 ⛔ **ПРАВИЛО ПРИВЯЗКИ ИСТОЧНИКОВ (source_ids):**
-- Для каждого вердикта в поле `source_ids` укажи массив 16-символьных идентификаторов (например, `["cf08a1c97ef08a1c"]`), которые написаны сразу после `### ` в начале каждого источника в разделе «Корпус доказательств».
+- Для каждого вердикта в поле `source_ids` укажи массив коротких ID источников (например, `["S1","S3"]`), которые написаны сразу после `### ` в начале каждого источника в разделе «Корпус доказательств». Копируй ID точно, как `S<число>`.
 - Если вердикт вынесен на основе «Справочных данных», используй `"reference_data"`.
 - Не оставляй `source_ids` пустым для CONFIRMED/CONTRADICTED вердиктов, иначе они будут автоматически отклонены как недостоверные!
 
@@ -137,9 +137,12 @@ def build_auditor_prompt(
     doc_text: str = "",
     max_corpus_chars: int = 80_000,
     max_doc_chars: int = 5_000,
-) -> str:
+) -> tuple[str, dict[str, str]]:
     """
     Строит промпт для LLM Auditor v2 (чеклист-режим).
+
+    Returns: (prompt, id_map), где id_map: короткий label "S1".. → полный chunk_id
+    (для обратного маппинга source_ids из ответа LLM).
 
     Args:
         chunks: Активные EvidenceChunk из корпуса.
@@ -163,16 +166,19 @@ def build_auditor_prompt(
         return 0 if is_kaz else 1
 
     corpus_parts = []
+    id_map: dict[str, str] = {}  # короткий label (S1..) → полный chunk_id
     total_chars = 0
-    # Chunks are assumed BM25-ranked by caller (run_auditor); only prioritize conflicts + language match
+    # Chunks are assumed retrieved per-claim by caller (run_auditor); only prioritize conflicts + language match
     sorted_chunks = sorted(chunks, key=lambda c: (not c.is_conflict, _lang_penalty(c)))
 
     for chunk in sorted_chunks:
-        chunk_text = _format_chunk(chunk)
+        label = f"S{len(id_map) + 1}"
+        chunk_text = _format_chunk(chunk, label)
         if total_chars + len(chunk_text) > max_corpus_chars:
             corpus_parts.append(f"\n[... корпус обрезан — лимит {max_corpus_chars} символов ...]")
             break
         corpus_parts.append(chunk_text)
+        id_map[label] = chunk.chunk_id
         total_chars += len(chunk_text)
 
     corpus_str = "\n\n".join(corpus_parts)
@@ -210,7 +216,7 @@ def build_auditor_prompt(
     ref_text = build_reference_corpus_text()
 
     # .replace() вместо str.format(): JSON-схема и юр.тексты содержат {} скобки
-    return (
+    prompt = (
         _AUDITOR_USER_TEMPLATE
         .replace("__DOCUMENT_EXCERPT__", doc_excerpt)
         .replace("__CLAIM_COUNT__", str(claims.total_count))
@@ -221,10 +227,14 @@ def build_auditor_prompt(
         .replace("__CORPUS_TEXT__", corpus_str)
         .replace("__SCHEMA__", _AUDITOR_VERDICT_SCHEMA)
     )
+    return prompt, id_map
 
 
-def _format_chunk(chunk: EvidenceChunk) -> str:
+def _format_chunk(chunk: EvidenceChunk, label: str) -> str:
     """
+    Источник для промпта. `label` — короткий ID (S1, S2, …), который LLM
+    указывает в source_ids (раньше копировался 16-символьный hex chunk_id,
+    что путало модель и требовало prefix-recovery костыля в S6).
     ID-формат чанка: [AD|law_id|article|status] или [WB|tier|domain|status]
     """
     if chunk.law_id:
@@ -243,7 +253,7 @@ def _format_chunk(chunk: EvidenceChunk) -> str:
     conflict_marker = " ⚠️КОНФЛИКТ" if chunk.is_conflict else ""
 
     return (
-        f"### {chunk.chunk_id[:16]}{conflict_marker}\n"
+        f"### {label}{conflict_marker}\n"
         f"{prefix} {chunk.source_title[:60]}\n"
         f"---\n"
         f"{chunk.content[:3000]}"

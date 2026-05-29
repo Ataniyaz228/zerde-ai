@@ -56,7 +56,7 @@ async def run_auditor(
         # вообще не попасть в контекст.
         batch_chunks = _retrieve_for_claims(active, batch_claims_list, conflict_ids)
 
-        prompt = build_auditor_prompt(
+        prompt, id_map = build_auditor_prompt(
             chunks=batch_chunks,
             claims=batch_claims,
             plan=plan,
@@ -82,6 +82,8 @@ async def run_auditor(
         )
 
         analysis = _parse_auditor_response(raw_json, plan, batch_claims, settings.llm_model_analyst)
+        # Короткие ID источников (S1..) из ответа → полные chunk_id (по карте батча).
+        _remap_source_ids(analysis, id_map)
         all_analysis_jsons.append(analysis)
 
     if not all_analysis_jsons:
@@ -217,6 +219,29 @@ def _validate_claim_coverage(analysis: AnalysisJSON, claims: ClaimExtractionResu
             confidence="LOW",
             severity=claim.severity,
         ))
+
+
+def _remap_source_ids(analysis: AnalysisJSON, id_map: dict[str, str]) -> None:
+    """Переводит короткие ID источников (S1..) из ответа LLM в полные chunk_id.
+
+    `reference_data`/`UNLINKED` сохраняются как есть. Неизвестные метки (модель
+    выдумала S99) отбрасываются — иначе они всё равно не зарезолвятся в S6.
+    """
+    _keep = {"reference_data", "UNLINKED"}
+
+    def _remap(ids: list[str] | None) -> list[str]:
+        out: list[str] = []
+        for sid in ids or []:
+            if sid in id_map:
+                out.append(id_map[sid])
+            elif sid in _keep:
+                out.append(sid)
+        return out
+
+    for v in analysis.verdicts:
+        v.source_ids = _remap(v.source_ids)
+    for f in analysis.facts:
+        f.source_ids = _remap(f.source_ids)
 
 
 def _retrieve_for_claims(

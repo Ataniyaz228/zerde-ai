@@ -237,7 +237,9 @@ class TestResolveLawName:
         from zerde.stages.s3_gather import _resolve_law_name
         assert _resolve_law_name("ГК РК (Общая часть)") == "1000-XIII"
         assert _resolve_law_name("Земельный кодекс РК") == "442-II"
-        assert _resolve_law_name("Бюджетный кодекс РК") == "95-IV"
+        # 95-IV (Бюджетный кодекс 2008) утратил силу; действует 171-VIII (2025).
+        # Проверено scripts/verify_law_registry.py против adilet.zan.kz.
+        assert _resolve_law_name("Бюджетный кодекс РК") == "171-VIII"
 
     def test_full_name_to_id(self):
         from zerde.stages.s3_gather import _resolve_law_name

@@ -156,14 +156,6 @@ def check_law_id(law_id: str) -> dict | None:
     return LAW_REGISTRY.get(law_id)
 
 
-def is_law_valid(law_id: str) -> bool | None:
-    """True если закон существует, False если ошибка, None если неизвестен."""
-    entry = LAW_REGISTRY.get(law_id)
-    if entry is None:
-        return None
-    return entry["valid"]
-
-
 def get_koap_article(article: str) -> dict | None:
     """Возвращает информацию о статье КоАП."""
     return KOAP_ARTICLES.get(article)

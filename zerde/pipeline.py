@@ -241,7 +241,7 @@ async def run_pipeline(
     try:
         from zerde.config import get_settings as _gs2
         from zerde.utils.cache import CacheManager as _CM2
-        from zerde.stages.s6_auditor import _extract_article_from_claim, _are_law_ids_synonymous
+        from zerde.stages.s6_auditor import _extract_article_from_claim
         import json as _json2
         registry = get_registry()
         _cache_for_claims = _CM2(_gs2().cache_db_path)

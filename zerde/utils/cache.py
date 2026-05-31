@@ -475,10 +475,9 @@ class CacheManager:
                 return
             
             logger.info("[Cache/Vector] Initializing BGE-M3 model and pre-loading embeddings...")
-            # Fix #3: Используем глобальный синглтон вместо создания новой модели
-            self._embed_model, device = _get_bge_model()
-            self._device_type = device
-            
+            # Используем глобальный синглтон вместо создания новой модели
+            self._embed_model, _device = _get_bge_model()
+
             # 2. Pre-load all embeddings from SQLite
             self._embeddings_keys = []
             embeddings_list = []

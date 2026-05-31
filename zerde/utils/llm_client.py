@@ -1,11 +1,11 @@
 """
-LLM Client Factory + Cached Calls + Model Routing
+LLM Client Factory + Cached Calls
 Создаёт AsyncOpenAI клиентов с кэшированием ответов.
 
-Model Routing:
-  heavy  → llm_model_analyst  (DeepSeek V4 Pro / Kimi) — только Stage 5 Auditor
-  medium → llm_model_planner  (DeepSeek Flash)          — Stage 2, 2.5
-  cheap  → llm_model_renderer (DeepSeek Chat)           — Stage 7 Renderer
+Каждый стейдж выбирает модель напрямую через settings.llm_model_* :
+  Stage 2/2.5 → llm_model_planner / llm_model_extractor
+  Stage 5     → llm_model_analyst (reasoning)
+  Stage 5.5   → llm_model_policy_analyst
 """
 
 from __future__ import annotations
@@ -121,23 +121,6 @@ def make_embedding_client(settings: Settings | None = None) -> AsyncOpenAI | Non
     )
 
 
-def get_model_for_tier(tier: str, settings: Settings | None = None) -> str:
-    """
-    Model Routing: выбирает модель по весу задачи.
-
-    Tiers:
-      heavy  → llm_model_analyst  (reasoning, deep analysis)
-      medium → llm_model_planner  (structured output, JSON)
-      cheap  → llm_model_renderer (formatting, templating)
-    """
-    s = settings or get_settings()
-    return {
-        "heavy": s.llm_model_analyst,
-        "medium": s.llm_model_planner,
-        "cheap": s.llm_model_renderer,
-    }.get(tier, s.llm_model_planner)
-
-
 async def cached_llm_call(
     client: AsyncOpenAI,
     model: str,
@@ -205,7 +188,14 @@ async def cached_llm_call(
                     kwargs["response_format"] = {"type": "json_object"}
 
                 response = await client.chat.completions.create(**kwargs)
-                content = response.choices[0].message.content or "{}"
+                # Защита от 200-ответа без choices (transient upstream 429 через
+                # OpenRouter отдаёт пустой choices): не падаем с
+                # 'NoneType'/'IndexError', а пробуем следующий режим → "{}".
+                choices = getattr(response, "choices", None)
+                if not choices:
+                    logger.warning("[LLMCall] response has no choices (transient upstream error?), retrying...")
+                    continue
+                content = choices[0].message.content or "{}"
                 break  # Успех — выходим
             except Exception as e:
                 err_str = str(e)

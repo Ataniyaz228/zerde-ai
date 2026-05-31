@@ -48,13 +48,16 @@ _LAW_NAME_TO_SHORT_ID = {
     "гк рк (особенная часть)": "409-I",
     "гражданский кодекс рк (особенная часть)": "409-I",
     "земельный кодекс рк": "442-II",
-    "бюджетный кодекс рк": "95-IV",
-    "трудовой кодекс рк": "414-I",
+    # 95-IV утратил силу → действует 171-VIII (проверено verify_law_registry.py)
+    "бюджетный кодекс рк": "171-VIII",
+    "трудовой кодекс рк": "414-I-NEW",
     "коап": "235-V",
     "коап рк": "235-V",
     "ук рк": "226-V",
     "уголовный кодекс рк": "226-V",
-    "упк рк": "350-VI",
+    "упк рк": "231-V",
+    "уголовно-процессуальный кодекс рк": "231-V",
+    "аппк рк": "350-VI",
     "налоговый кодекс рк": "120-VI",
     "закон о персональных данных": "94-V",
     "закон о персональных данных рк": "94-V",
@@ -531,16 +534,6 @@ def _infer_adilet_rank(law_title: str) -> LegalRank:
     if "кодекс" in title_lower or "кодексі" in title_lower:
         return LegalRank.CODE
     return LegalRank.LAW_RK
-
-def _extract_article_number(node_id: str, text: str) -> str:
-    id_match = re.search(r"st(\d+)", node_id, re.IGNORECASE)
-    if id_match:
-        return id_match.group(1)
-    text_match = re.match(r"(?:Статья|Бап)\s+(\d+)", text[:50], re.IGNORECASE)
-    if text_match:
-        return text_match.group(1)
-    return ""
-
 
 def _extract_law_id_from_text(title: str, content: str) -> str | None:
     """

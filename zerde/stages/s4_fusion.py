@@ -135,11 +135,13 @@ def _is_spam(chunk: EvidenceChunk) -> bool:
     if len(content) < 150:
         return True
 
-    # NB: раньше здесь был шаг 4 (блокировка при отсутствии юр.сигналов), но он
-    # был намеренно ослаблен до no-op (всегда return False), т.е. фактически
-    # ничего не фильтровал — удалён, чтобы код не вводил в заблуждение. Если
-    # понадобится фильтр по юр.сигналам, восстанавливать через eval-метрику
-    # на веб-чанках. _LEGAL_SIGNAL_RE / _TRUSTED_URL_PATTERNS пока не используются здесь.
+    # 4. Нет ни одного юр.сигнала и источник не из доверённого белого списка →
+    # web-чанк бесполезен для правовой верификации (шум).
+    is_trusted = any(pattern in url for pattern in _TRUSTED_URL_PATTERNS)
+    has_legal_signal = bool(_LEGAL_SIGNAL_RE.search(content))
+    if not has_legal_signal and not is_trusted:
+        return True
+
     return False
 
 

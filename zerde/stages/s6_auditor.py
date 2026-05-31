@@ -325,36 +325,21 @@ def audit_analysis(
     if claims and claims.claims:
         claim_map = {c.claim_id: c for c in claims.claims}
     corpus_index = {c.chunk_id: c for c in chunks if not c.is_duplicate}
-    # Prefix index: префиксы chunk_id (от 8 до 32 символов) → полный chunk_id
-    # LLM может возвращать обрезанные ID разной длины (12, 16 и тд)
-    prefix_index: dict[str, str] = {}
-    for cid in corpus_index:
-        for prefix_len in range(8, 33):
-            pfx = cid[:prefix_len]
-            if pfx not in prefix_index:
-                prefix_index[pfx] = cid
 
-    # H2 Fix: Стандартизируем виртуальные source_ids
-    # LLM может обрезать ID, поэтому проверяем по началу строки ("reference_")
+    # Виртуальные source_ids (не указывают на конкретный chunk).
     VIRTUAL_SOURCES = {"UNLINKED", "reference_data"}
 
-    # FIX 1: Resolve LLM-truncated source_ids to full corpus IDs via prefix_index
-    # LLM gets chunk_ids truncated to 16 chars in the prompt (_format_chunk),
-    # so it returns those truncated IDs. We must resolve them before any checks.
+    # source_ids уже переведены в полные chunk_id в S5 (_remap_source_ids:
+    # короткие метки S1.. → chunk_id), поэтому здесь достаточно точного совпадения
+    # по corpus_index — обрезанных hex-ID и prefix-recovery больше нет.
     for v in analysis.verdicts:
         resolved_ids = []
         for sid in v.source_ids:
             if sid in VIRTUAL_SOURCES or sid.startswith("reference_"):
                 resolved_ids.append(sid)
                 continue
-            # Try exact match first, then prefix resolution
-            full_id = None
-            if sid in corpus_index:
-                full_id = sid
-            elif sid in prefix_index:
-                full_id = prefix_index[sid]
-                logger.debug(f"[S6/Resolve] Resolved truncated source_id '{sid}' → '{full_id}'")
-            
+            full_id = sid if sid in corpus_index else None
+
             if full_id:
                 # Apply Source Domain Filtering (excluding Wikipedia/non-KZ non-authoritative)
                 chunk = corpus_index[full_id]
@@ -482,7 +467,6 @@ def audit_analysis(
             result = _audit_fact(
                 fact,
                 corpus_index,
-                prefix_index,
                 bm25,
                 settings.validation_threshold,
                 settings.bm25_medium_threshold,
@@ -543,7 +527,7 @@ def audit_analysis(
                     v.source_ids = fact.source_ids
 
     # Audit выводов
-    _audit_conclusions(analysis, corpus_index, prefix_index)
+    _audit_conclusions(analysis, corpus_index)
 
     # V9.4: Calibrated Legal Confidence Metric & Statistics Aggregator
     if analysis.verdicts:
@@ -1037,7 +1021,6 @@ def _tokenize(text: str) -> list[str]:
 def _audit_fact(
     fact: Fact,
     corpus_index: dict[str, EvidenceChunk],
-    prefix_index: dict[str, str],
     bm25: ZerdeBM25,
     high_threshold: float,
     medium_threshold: float,
@@ -1046,8 +1029,7 @@ def _audit_fact(
     """
     Аудит одного факта. Без catch — исключения всплывают наверх.
     """
-    # Резолвим prefix IDs → полные chunk_ids
-    resolved_ids = _resolve_source_ids(fact.source_ids, corpus_index, prefix_index)
+    resolved_ids = _resolve_source_ids(fact.source_ids, corpus_index)
 
     # 1. Topology
     if not _check_topology(fact, resolved_ids, corpus_index, claim):
@@ -1175,11 +1157,13 @@ def _find_closest_source_id(
 def _resolve_source_ids(
     source_ids: list[str],
     corpus_index: dict[str, EvidenceChunk],
-    prefix_index: dict[str, str],
 ) -> list[str]:
     """
-    Резолвит короткие (prefix) source_ids в полные chunk_ids.
-    LLM возвращает '12-символьные' ID — ищем в prefix_index.
+    Нормализует source_ids фактов/выводов.
+
+    source_ids уже переведены в полные chunk_id в S5 (_remap_source_ids), так что
+    обычно это точное совпадение по corpus_index либо виртуальный источник.
+    Fuzzy-fallback оставлен как страховка для не-ремапленных путей (выводы).
     """
     virtual = {"UNLINKED", "reference_data"}
     resolved = []
@@ -1188,8 +1172,6 @@ def _resolve_source_ids(
             resolved.append(sid)
         elif sid in corpus_index:
             resolved.append(sid)  # Уже полный ID
-        elif sid in prefix_index:
-            resolved.append(prefix_index[sid])  # Найден по префиксу
         else:
             # Fuzzy matching fallback
             fuzzy_cid = _find_closest_source_id(sid, corpus_index)
@@ -1364,14 +1346,12 @@ def _normalize_numbers(num_strings: set[str]) -> set[float]:
 def _audit_conclusions(
     analysis: AnalysisJSON,
     corpus_index: dict[str, EvidenceChunk],
-    prefix_index: dict[str, str],
 ) -> None:
     """Простой аудит выводов: topology + проверка fact_ids."""
     fact_ids = {f.fact_id for f in analysis.facts}
 
     for conclusion in analysis.conclusions:
-        # Резолвим prefix IDs
-        resolved = _resolve_source_ids(conclusion.source_ids, corpus_index, prefix_index)
+        resolved = _resolve_source_ids(conclusion.source_ids, corpus_index)
         valid_sources = [
             sid for sid in resolved
             if sid not in ("UNLINKED", "reference_data") and not sid.startswith("reference_") and sid in corpus_index

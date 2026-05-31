@@ -691,9 +691,12 @@ async def _llm_extract_chunk(
         if not isinstance(raw, dict):
             continue
         try:
+            # Всегда используем детерминированный cid и игнорируем raw["claim_id"]:
+            # модель иногда отдаёт свою нумерацию ("claim_007"), которая сталкивается
+            # с нашей зеро-паддинговой ("claim_0007") и ломает сопоставление в S6/S7.
             cid = f"claim_{start_idx + i:04d}"
             claim = DocumentClaim(
-                claim_id=raw.get("claim_id", cid),
+                claim_id=cid,
                 claim_text=raw.get("claim_text", ""),
                 quote=raw.get("quote", "")[:200],
                 claim_type=ClaimType(raw.get("claim_type", "factual")),

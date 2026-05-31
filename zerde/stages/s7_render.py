@@ -119,23 +119,16 @@ async def render_report(
 
     # Индекс чанков для быстрого доступа
     corpus_index: dict[str, EvidenceChunk] = {c.chunk_id: c for c in chunks}
-    # Prefix index: префиксы chunk_id (от 8 до 32 символов) → полный chunk_id
-    # LLM может возвращать обрезанные IDs разной длины
-    prefix_index: dict[str, str] = {}
-    for cid in corpus_index:
-        for prefix_len in range(8, 33):
-            pfx = cid[:prefix_len]
-            if pfx not in prefix_index:
-                prefix_index[pfx] = cid
 
+    # source_ids фактов уже переведены в полные chunk_id в S5 (_remap_source_ids),
+    # поэтому prefix-recovery больше не нужен — берём sid как есть.
     virtual_ids = {"UNLINKED", "reference_data"}
     referenced_ids = set()
     for fact in analysis.facts:
         for sid in fact.source_ids:
             if sid in virtual_ids or sid.startswith("reference_"):
                 continue
-            full_id = prefix_index.get(sid, sid)
-            referenced_ids.add(full_id)
+            referenced_ids.add(sid)
 
     # Нормативная база содержит только чанки, которые реально привязаны к фактам в отчёте или имеют конфликты.
     active_chunks = [
@@ -151,7 +144,7 @@ async def render_report(
         _render_structural_checklist(analysis),
         _render_normative_base(active_chunks),
         _render_conflicts(conflict_chunks, analysis.conflicts),
-        _render_facts_and_conclusions(analysis, corpus_index, prefix_index),
+        _render_facts_and_conclusions(analysis, corpus_index),
         _render_negative_space(analysis),
         _render_normative_assessments(analysis),
         _render_pros_cons(analysis),
@@ -432,7 +425,6 @@ def _render_conflicts(
 def _render_facts_and_conclusions(
     analysis: AnalysisJSON,
     corpus_index: dict[str, EvidenceChunk],
-    prefix_index: dict[str, str],
 ) -> str:
     """Факты и выводы с источниками и статусами."""
     virtual_ids = {"UNLINKED", "reference_data"}
@@ -473,8 +465,7 @@ def _render_facts_and_conclusions(
             for sid in fact.source_ids:
                 if sid in virtual_ids or sid.startswith("reference_"):
                     continue  # reference_data / UNLINKED — не показываем
-                # Резолвим prefix → full ID
-                full_id = prefix_index.get(sid, sid)
+                full_id = sid  # уже полный chunk_id (ремап в S5)
                 chunk = corpus_index.get(full_id)
                 if chunk:
                     real_source_lines.append(
@@ -613,11 +604,13 @@ def _render_how_to_read(analysis: AnalysisJSON) -> str:
     Объяснение что значит Reliability Score, почему он бывает низким,
     и на что смотреть пользователю. Цель — не отпугнуть низкими %.
     """
-    facts = analysis.facts or []
-    n_total = len(facts)
-    confirmed = sum(1 for f in facts if str(getattr(f, "status", "")).upper().endswith("CONFIRMED"))
-    unverified = sum(1 for f in facts if str(getattr(f, "status", "")).upper().endswith("UNVERIFIED"))
-    contradicted = sum(1 for f in facts if str(getattr(f, "status", "")).upper().endswith("CONTRADICTED"))
+    # Считаем из verdicts (как executive summary), а не из facts: у facts поле
+    # status не нормализовано, из-за чего блок раньше всегда печатал 0/0/0.
+    summary = build_reliability_summary(analysis)
+    n_total = summary["total"]
+    confirmed = summary["confirmed"]
+    unverified = summary["unverified"]
+    contradicted = summary["contradicted"]
 
     return (
         "## ℹ️ Как читать этот отчёт\n\n"

@@ -475,10 +475,9 @@ class CacheManager:
                 return
             
             logger.info("[Cache/Vector] Initializing BGE-M3 model and pre-loading embeddings...")
-            # Fix #3: Используем глобальный синглтон вместо создания новой модели
-            self._embed_model, device = _get_bge_model()
-            self._device_type = device
-            
+            # Используем глобальный синглтон вместо создания новой модели
+            self._embed_model, _device = _get_bge_model()
+
             # 2. Pre-load all embeddings from SQLite
             self._embeddings_keys = []
             embeddings_list = []
@@ -644,14 +643,10 @@ class CacheManager:
         if law_ids:
             from zerde.utils.law_registry import get_registry
             registry = get_registry()
-            try:
-                from zerde.stages.s3_gather import _LAW_ID_KNOWN
-            except ImportError:
-                _LAW_ID_KNOWN = {}
             for lid in law_ids:
                 lid_norm = lid.strip().replace("\u0406", "I").replace("\u0456", "i").upper()
                 normalized_law_ids.append(lid_norm)
-                known_code = registry.get_adilet_code(lid) or _LAW_ID_KNOWN.get(lid_norm)
+                known_code = registry.get_adilet_code(lid)
                 if known_code:
                     normalized_law_ids.append(known_code.upper())
                 if known_code and known_code.endswith("_"):

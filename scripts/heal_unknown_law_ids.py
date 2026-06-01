@@ -13,22 +13,10 @@ from collections import Counter
 sys.path.append(str(Path(__file__).parent.parent))
 
 from zerde.models import EvidenceChunk, LegalRank
-# Inline to avoid importing s3_gather which needs ddgs
-_LAW_ID_KNOWN = {
-    "94-V": "Z1300000094", "87-IV": "Z1300000094", "418-V": "Z1500000418",
-    "370-II": "Z030000370_", "550-IV": "Z1300000550", "274-IV": "Z100000274_",
-    "11-VI": "Z1600000011", "239-VII": "Z2500000239", "401-II": "Z0300000401",
-    "73-V": "Z1300000073", "223-VIII": "Z1700000223", "240-IV": "Z1100000240",
-    "148-II": "Z010000148_", "368-II": "Z030000368_", "95-IV": "Z080000095_",
-    "138-IV": "Z060000138_", "413-IV": "Z1100000413", "414-IV": "Z1100000414",
-    "235-V": "K1400000235", "226-V": "K1400000226", "231-V": "K1400000231",
-    "377-V": "K1500000377", "214-VII": "K2500000214", "414-I-NEW": "K1500000414",
-    "350-VI": "K2000000350", "212-IV": "K070000212_", "1000-XIII": "K940001000_",
-    "409-I": "K990000409_", "442-II": "K030000442_", "414-I": "K150000414_",
-    "226-V-UK": "K1400000226", "152-VII": "Z2200000152",
-    "400-VI": "K210000400_", "375-V": "K1500000375_", "481-II": "K030000481_",
-    "360-VI": "K200000360_", "125-VI": "K170000125_",
-}
+# law_registry не тянет ddgs (в отличие от s3_gather) → используем его как единый
+# источник law_id↔adilet_code вместо локальной копии словаря (в ней жил стейл
+# 87-IV→Z1300000094, тот самый десинк, что удалён из пайплайна).
+from zerde.utils.law_registry import get_registry
 
 
 # Extended content-based law_id detection
@@ -102,19 +90,17 @@ def detect_law_from_content(content: str, source_title: str = "") -> tuple[str |
     match = _SHORT_ID_PATTERN.search(content[:1000])
     if match:
         short_id = match.group(1).upper()
-        if short_id in _LAW_ID_KNOWN:
-            return short_id, LegalRank.LAW_RK
         return short_id, LegalRank.LAW_RK
 
     # 3. Check for Adilet code pattern like K1400000235
     match = _ADILET_CODE_PATTERN.search(content[:1000])
     if match:
         code = match.group(1)
-        # Reverse lookup
-        for short_id, adilet_code in _LAW_ID_KNOWN.items():
-            if adilet_code.rstrip("_") == code.rstrip("_"):
-                rank = LegalRank.CODE if code.startswith("K") else LegalRank.LAW_RK
-                return short_id, rank
+        # Reverse lookup через реестр: adilet-код → канонический short_id.
+        rank = LegalRank.CODE if code.startswith("K") else LegalRank.LAW_RK
+        resolved = get_registry().resolve(code)
+        if resolved and resolved != code:
+            return resolved, rank
         return code, LegalRank.LAW_RK
 
     return None, None
@@ -156,7 +142,7 @@ def heal_db():
             # Update source_url to include actual law_id
             old_url = data.get("source_url", "")
             if "UNKNOWN" in old_url:
-                adilet_code = _LAW_ID_KNOWN.get(new_law_id, new_law_id)
+                adilet_code = get_registry().get_adilet_code(new_law_id) or new_law_id
                 art = data.get("article", "")
                 data["source_url"] = f"https://adilet.zan.kz/rus/docs/{adilet_code}#{art}"
                 data["source_title"] = f"НПА {new_law_id} | Ст. {art}"

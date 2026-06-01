@@ -41,100 +41,11 @@ logger = logging.getLogger(__name__)
 _ADILET_SEMAPHORE = asyncio.Semaphore(3)
 _WEB_SEMAPHORE = asyncio.Semaphore(2)
 
-# Reverse lookup for known codes
-_LAW_NAME_TO_SHORT_ID = {
-    "гк рк (общая часть)": "1000-XIII",
-    "гражданский кодекс рк (общая часть)": "1000-XIII",
-    "гк рк (особенная часть)": "409-I",
-    "гражданский кодекс рк (особенная часть)": "409-I",
-    "земельный кодекс рк": "442-II",
-    "бюджетный кодекс рк": "95-IV",
-    "трудовой кодекс рк": "414-I",
-    "коап": "235-V",
-    "коап рк": "235-V",
-    "ук рк": "226-V",
-    "уголовный кодекс рк": "226-V",
-    "упк рк": "350-VI",
-    "налоговый кодекс рк": "120-VI",
-    "закон о персональных данных": "94-V",
-    "закон о персональных данных рк": "94-V",
-    "закон о государственном имуществе": "413-IV",
-    "закон о местном государственном управлении": "148-II",
-    "закон об оценочной деятельности": "368-II",
-    "закон о государственном регулировании": "138-IV",
-    "закон об образовании": "319-III",
-    "закон о науке": "407-II",
-    "закон о секьюритизации": "122-IV",
-    "закон об эцп": "370-II",
-    "закон о государственных закупках": "434-V",
-    "закон о жилищных отношениях": "94-I",
-    "закон о банках": "2444-XII",
-    "закон о языках": "151-I",
-    "закон о нотариате": "155-V",
-    "закон о связи": "567-II",
-    "закон о разрешениях и уведомлениях": "202-V",
-    "закон о противодействии коррупции": "410-V",
-}
+# Резолв названий/ID и law_id→adilet_code полностью делегирован LawRegistry
+# (БД law_metadata + единый статический fallback внутри реестра). Раньше тут жили
+# дублирующие словари _LAW_NAME_TO_SHORT_ID (стейл: налоговый=120-VI, нотариат=155-V,
+# закупки=434-V) и _LAW_ID_KNOWN (адилет-коды) — оба удалены как источник дрейфа.
 
-_LAW_ID_KNOWN = {
-    "94-V": "Z1300000094",
-    # NB: "87-IV" НЕ существует для Закона о ПД (правильный — 94-V). Раньше был
-    # десинк: 87-IV маппился на тот же adilet-код Z1300000094, из-за чего ссылка
-    # на несуществующий закон молча тянула текст 94-V. Удалён.
-    "418-V": "Z1500000418",
-    "370-II": "Z030000370_",
-    "550-IV": "Z1300000550",
-    "274-IV": "Z100000274_",
-    "11-VI": "Z1600000011",
-    "239-VII": "Z2500000239",
-    "401-II": "Z0300000401",
-    "73-V": "Z1300000073",
-    "223-VIII": "Z1700000223",
-    "240-IV": "Z1100000240",
-    "148-II": "Z010000148_",
-    "368-II": "Z030000368_",
-    "95-IV": "Z080000095_",
-    "138-IV": "Z060000138_",
-    "413-IV": "Z1100000413",
-    "414-IV": "Z1100000414",
-    "235-V": "K1400000235",
-    "226-V": "K1400000226",
-    "231-V": "K1400000231",
-    "377-V": "K1500000377",
-    "214-VII": "K2500000214",
-    "414-I-NEW": "K1500000414",
-    "350-VI": "K2000000350",
-    "212-IV": "K070000212_",
-    "1000-XIII": "K940001000_",
-    "409-I": "K990000409_",
-    "442-II": "K030000442_",
-    "414-I": "K150000414_",
-    "226-V-UK": "K1400000226",
-    "152-VII": "Z2200000152",
-    "400-VI": "K210000400_",
-    "375-V": "K1500000375_",
-    "481-II": "K030000481_",
-    "360-VI": "K200000360_",
-    "125-VI": "K170000125_",
-    "171-VIII": "K2500000171",
-    "178-VIII": "K2500000178",
-    "360-VI-NEW": "K2000000360",
-    "125-VI-NEW": "K1700000125",
-    "261-IV": "Z100000261_",
-    "258-VIII": "Z2600000258",
-    "66-III": "Z050000066_",
-    "106-VIII": "Z2400000106",
-    "94-I": "Z970000094_",
-    "155-I": "Z970000155_",
-    "410-V-NEW": "Z1500000410",
-    "202-V-NEW": "Z1400000202",
-    "567-II-NEW": "Z040000567_",
-    "151-I": "Z970000151_",
-    "319-III": "Z070000319_",
-    "133-VI": "Z1800000133",
-    "375-V-NEW": "K1500000375",
-    "400-VI-NEW": "K2100000400",
-}
 
 def _resolve_law_name(raw_id: str) -> str:
     """
@@ -151,11 +62,10 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
     law_id = _resolve_law_name(law_id)
     urls = []
     
-    # 1. Adilet code: РЕЕСТР авторитетен (law_metadata). _LAW_ID_KNOWN — лишь
-    #    legacy-fallback для неингестированных законов (их коды не верифицированы
-    #    против Adilet; будут ретайрены при систематическом ингесте — Фаза 4).
+    # 1. Adilet code: РЕЕСТР авторитетен (law_metadata + его внутренний
+    #    legacy-fallback для неингестированных законов). Единый источник.
     from zerde.utils.law_registry import get_registry
-    adilet_code = get_registry().get_adilet_code(law_id) or _LAW_ID_KNOWN.get(law_id)
+    adilet_code = get_registry().get_adilet_code(law_id)
     if adilet_code:
         urls.append(f"{base}/rus/docs/{adilet_code}")
         # also append without trailing underscore
@@ -532,16 +442,6 @@ def _infer_adilet_rank(law_title: str) -> LegalRank:
         return LegalRank.CODE
     return LegalRank.LAW_RK
 
-def _extract_article_number(node_id: str, text: str) -> str:
-    id_match = re.search(r"st(\d+)", node_id, re.IGNORECASE)
-    if id_match:
-        return id_match.group(1)
-    text_match = re.match(r"(?:Статья|Бап)\s+(\d+)", text[:50], re.IGNORECASE)
-    if text_match:
-        return text_match.group(1)
-    return ""
-
-
 def _extract_law_id_from_text(title: str, content: str) -> str | None:
     """
     Парсит и извлекает law_id из названия (title) или текста (content) веб-страницы/документа.
@@ -552,40 +452,31 @@ def _extract_law_id_from_text(title: str, content: str) -> str | None:
     combined = (title or "") + " " + (content or "")
     combined_lower = combined.lower()
 
-    # 1. Поиск известных названий/аббревиатур из _LAW_NAME_TO_SHORT_ID
-    # Отсортируем по длине ключа по убыванию, чтобы сначала сопоставить самые специфичные фразы
-    sorted_names = sorted(_LAW_NAME_TO_SHORT_ID.keys(), key=len, reverse=True)
-    for name in sorted_names:
-        # Для аббревиатур типа "коап рк", "ук рк", "гк рк" или полных названий
-        # Проверяем границы слов или просто вхождение с пробелами/знаками препинания
-        pattern = r"\b" + re.escape(name) + r"\b"
-        if re.search(pattern, combined_lower):
-            return _LAW_NAME_TO_SHORT_ID[name]
+    from zerde.utils.law_registry import get_registry
+    registry = get_registry()
 
-    # Отдельно проверим краткие/русские/казахские кодовые слова, которые могут не быть в словаре:
-    # "гражданский кодекс" -> "1000-XIII"
-    # "уголовный кодекс" -> "226-V"
-    # "коап" / "административных правонарушениях" -> "235-V"
-    # "трудовой кодекс" -> "414-I"
-    # "земельный кодекс" -> "442-II"
-    if "гражданск" in combined_lower or " гк" in combined_lower:
-        return "1000-XIII"
-    if "уголовн" in combined_lower or " ук" in combined_lower or " қк" in combined_lower:
-        return "226-V"
-    if "коап" in combined_lower or "административн" in combined_lower:
-        return "235-V"
-    if "трудов" in combined_lower:
-        return "414-I"
-    if "земельн" in combined_lower:
-        return "442-II"
+    # 1. Обиходные кодовые слова кодексов → канонический law_id через реестр
+    #    (а не локальный словарь). Реестр канонизирует короткое ядро в форму из
+    #    law_metadata: 226-V → 226-V-UK, 414-I → 414-I-NEW и т.п.
+    keyword_hints: list[tuple[tuple[str, ...], str]] = [
+        (("гражданск", " гк"), "1000-XIII"),
+        (("уголовн", " ук", " қк"), "226-V-UK"),
+        (("коап", "административн", "әкімшілік құқық бұзушылық"), "235-V"),
+        (("трудов", "еңбек кодекс"), "414-I-NEW"),
+        (("земельн", "жер кодекс"), "442-II"),
+        (("налогов", "салық кодекс"), "214-VII"),
+        (("исполнительном производстве", "судебных исполнителей",
+          "атқарушылық іс жүргізу"), "261-IV"),
+    ]
+    for needles, lid in keyword_hints:
+        if any(n in combined_lower for n in needles):
+            return registry.resolve(lid)
 
-    # 2. Поиск стандартного паттерна вида: 94-V, 1000-XIII, 413-IV, 122-IV, etc.
-    # Паттерн: число, за которым следует дефис, а затем римские цифры I, V, X, L, C, D, M (в верхнем или нижнем регистре)
-    pattern = r"\b\d+-[IVX]+(?:-NEW)?\b"
-    matches = re.findall(pattern, combined, re.IGNORECASE)
-    if matches:
-        # Возвращаем в верхнем регистре
-        return matches[0].upper()
+    # 2. Явный ID закона в тексте (94-V, 1000-XIII, 413-IV-NEW) → канонизируем
+    #    через реестр (он же отбросит транспозиции, не совпавшие с известным).
+    m = re.search(r"\b\d+-[IVXLCDM]+(?:-[A-Z]+)?\b", combined, re.IGNORECASE)
+    if m:
+        return registry.resolve(m.group(0).upper())
 
     return None
 

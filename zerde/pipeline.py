@@ -241,7 +241,7 @@ async def run_pipeline(
     try:
         from zerde.config import get_settings as _gs2
         from zerde.utils.cache import CacheManager as _CM2
-        from zerde.stages.s6_auditor import _extract_article_from_claim, _are_law_ids_synonymous
+        from zerde.stages.s6_auditor import _extract_article_from_claim
         import json as _json2
         registry = get_registry()
         _cache_for_claims = _CM2(_gs2().cache_db_path)
@@ -262,13 +262,11 @@ async def run_pipeline(
         if claim_pairs:
             logger.info(f"[Pipeline/S3.6] Claim-driven запросы: {len(claim_pairs)} пар (law_id × article)")
             injected_c = 0
-            # Получаем все синонимы law_id (включая полные Adilet IDs типа K1400000235)
-            from zerde.stages.s6_auditor import _LAW_ID_SYNONYMS
             with _cache_for_claims._conn() as conn:
                 for lid, art in claim_pairs:
-                    # Расширяем list синонимов для устойчивости (например, 261-IV ↔ 233-IV)
-                    lid_variants = set(_LAW_ID_SYNONYMS.get(lid, {lid}))
-                    lid_variants.add(lid)
+                    # Все эквивалентные написания law_id (short ID + adilet-код)
+                    # из реестра — устойчивый матчинг чанков в кеше.
+                    lid_variants = registry.id_variants(lid)
                     for variant in lid_variants:
                         rows = conn.execute(
                             """SELECT chunk_json FROM evidence_cache

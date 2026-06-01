@@ -12,11 +12,17 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from zerde.models import EvidenceChunk, LegalRank, WebTier
 from zerde.utils.cache import CacheManager
-from zerde.stages.s3_gather import _regex_split_articles, _LAW_ID_KNOWN
-from zerde.utils.law_registry import reload_registry
+from zerde.stages.s3_gather import _regex_split_articles
+from zerde.utils.law_registry import (
+    reload_registry,
+    get_registry,
+    _SHORT_TO_ADILET_CODE,
+    _LEGACY_FALLBACK_CODES,
+)
 
-# Reverse lookup for known codes from s3_gather
-_CODE_TO_LAW_ID = {v.upper(): k for k, v in _LAW_ID_KNOWN.items()}
+# Reverse lookup code→law_id из реестра (единый владелец кодов).
+_KNOWN_CODES = {**_SHORT_TO_ADILET_CODE, **_LEGACY_FALLBACK_CODES}
+_CODE_TO_LAW_ID = {v.upper(): k for k, v in _KNOWN_CODES.items()}
 
 
 def _extract_title_from_text(text: str, lang: str = "ru") -> str:
@@ -103,8 +109,6 @@ def detect_law_id(file_path: Path, text: str = "") -> str:
             match = re.search(pat, header_sample, re.IGNORECASE)
             if match:
                 val = match.group(1).upper()
-                if val in _LAW_ID_KNOWN:
-                    return val
                 return val
             
     return "UNKNOWN"
@@ -338,8 +342,8 @@ async def ingest_all_docs():
         for lid, stats in law_stats.items():
             if lid == "UNKNOWN":
                 continue
-            # Получаем adilet_code из статического словаря
-            adilet_code = _LAW_ID_KNOWN.get(lid, "")
+            # adilet_code из реестра (единый владелец кодов)
+            adilet_code = get_registry().get_adilet_code(lid) or ""
             cache.upsert_law_metadata(
                 law_id=lid,
                 adilet_code=adilet_code,

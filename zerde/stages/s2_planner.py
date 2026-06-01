@@ -5,7 +5,7 @@ Stage 2: LLM Planner
 
 Особенности:
   - temperature=0, response_format=json_object
-  - tenacity retry (max 3 попытки, exponential backoff)
+  - Кэшируемый вызов через cached_llm_call с ручной инвалидацией кэша
   - Schema validation с fallback на пустой план
   - Автоматическое разбиение длинных документов
 """
@@ -18,12 +18,6 @@ import logging
 from datetime import date
 
 from openai import AsyncOpenAI
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from zerde.config import get_settings
 from zerde.models import AdiletQuery, DocumentState, QueryPlan, WebQuery
@@ -106,48 +100,6 @@ async def build_query_plan(doc_state: DocumentState) -> QueryPlan:
         f"web_en={len(plan.web_queries_en)}"
     )
     return plan
-
-
-# ---------------------------------------------------------------------------
-# LLM Call with Retry
-# ---------------------------------------------------------------------------
-
-
-async def _call_llm_with_retry(
-    client: AsyncOpenAI,
-    prompt: str,
-    model: str,
-    max_tokens: int,
-    system_msg: str,
-) -> dict:
-    """
-    Вызывает LLM с tenacity retry: 3 попытки, экспоненциальный backoff 2–10s.
-    """
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(Exception),
-        reraise=True,
-    )
-    async def _call() -> dict:
-        response = await client.chat.completions.create(
-            model=model,
-            temperature=0.0,
-            response_format={"type": "json_object"},
-            max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        content = response.choices[0].message.content or "{}"
-        parsed = json.loads(content)
-        if not isinstance(parsed, dict):
-            raise ValueError(f"LLM returned non-dict: {type(parsed)}")
-        return parsed
-
-    return await _call()
 
 
 # ---------------------------------------------------------------------------

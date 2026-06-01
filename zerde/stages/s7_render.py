@@ -352,8 +352,14 @@ def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
             representative = law_chunks[0]
             law_title = representative.law_title or representative.source_title
             lines.append(f"- **{law_title}**")
-            # Подпункты — статьи/ссылки
+            # Подпункты — статьи/ссылки (дедуп: один и тот же (URL, статья) не повторяем —
+            # у одной статьи бывает несколько чанков: рус/каз/сегменты).
+            seen_refs: set[tuple[str, str]] = set()
             for c in law_chunks:
+                key = (c.source_url or "", str(c.article or ""))
+                if key in seen_refs:
+                    continue
+                seen_refs.add(key)
                 conflict_flag = " ⚠️ КОНФЛИКТ" if c.is_conflict else ""
                 art_ref = f" (ст. {c.article})" if c.article else ""
                 lines.append(
@@ -460,16 +466,24 @@ def _render_facts_and_conclusions(
             else:
                 lines.append(f"> **[НЕ ПРОВЕРЕНО]** {fact.claim}\n")
 
-            # Рендерим только реальные источники (не виртуальные)
+            # Рендерим только реальные источники (не виртуальные); дедуп по
+            # (URL, статья) — у одной статьи бывает несколько чанков (рус/каз/сегменты),
+            # для читателя это одна и та же ссылка.
             real_source_lines = []
+            seen_fact_refs: set[tuple[str, str]] = set()
             for sid in fact.source_ids:
                 if sid in virtual_ids or sid.startswith("reference_"):
                     continue  # reference_data / UNLINKED — не показываем
                 full_id = sid  # уже полный chunk_id (ремап в S5)
                 chunk = corpus_index.get(full_id)
                 if chunk:
+                    ref_key = (chunk.source_url or "", str(chunk.article or ""))
+                    if ref_key in seen_fact_refs:
+                        continue
+                    seen_fact_refs.add(ref_key)
+                    art_ref = f" (ст. {chunk.article})" if chunk.article else ""
                     real_source_lines.append(
-                        f"- [{chunk.source_title}]({chunk.source_url}) `{full_id[:12]}…`"
+                        f"- [{chunk.source_title}]({chunk.source_url}){art_ref}"
                     )
                 # Не нашли — просто пропускаем (не засоряем отчёт)
 

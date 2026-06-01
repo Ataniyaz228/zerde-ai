@@ -15,7 +15,6 @@ from zerde.models import DocumentClaim, EvidenceChunk
 from zerde.utils.cache import CacheManager
 from zerde.utils.law_registry import get_registry
 from zerde.stages.s6_auditor import (
-    _LAW_ID_SYNONYMS,
     _exact_metadata_search,
     _extract_article_from_claim,
     _extract_referenced_law_ids,
@@ -57,8 +56,7 @@ def check_grounding(claim: DocumentClaim, article_index: ArticleIndex) -> dict:
     corpus: dict[str, EvidenceChunk] = {}
     if article and resolved:
         for lid in resolved:
-            variants = set(_LAW_ID_SYNONYMS.get(lid, {lid})) | {lid}
-            for variant in variants:
+            for variant in registry.id_variants(lid):
                 corpus.update(article_index.get((variant, article), {}))
 
     candidates = _exact_metadata_search(claim, corpus) if corpus else []

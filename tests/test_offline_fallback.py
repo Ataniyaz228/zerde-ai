@@ -264,10 +264,11 @@ class TestResolveLawName:
         assert _resolve_law_name("94-V") == "94-V"
         assert _resolve_law_name("1000-XIII") == "1000-XIII"
 
-    def test_adilet_code_passthrough(self):
+    def test_adilet_code_resolves_to_short_id(self):
+        # Реестр канонизирует adilet-код в short law_id (единый источник).
         from zerde.stages.s3_gather import _resolve_law_name
-        assert _resolve_law_name("K940001000_") == "K940001000_"
-        assert _resolve_law_name("Z1300000094") == "Z1300000094"
+        assert _resolve_law_name("K940001000_") == "1000-XIII"
+        assert _resolve_law_name("Z1300000094") == "94-V"
 
     def test_case_insensitive(self):
         from zerde.stages.s3_gather import _resolve_law_name
@@ -414,7 +415,7 @@ def test_v9_3_bugfixes():
     # 2. Проверяем извлечение law_id из веб-результатов (BUG-4)
     assert _extract_law_id_from_text("О внесении изменений в Гражданский Кодекс РК", "нормы статьи 207...") == "1000-XIII"
     assert _extract_law_id_from_text("Нарушения по КоАП РК штрафы", "согласно статье 79...") == "235-V"
-    assert _extract_law_id_from_text("Уголовный кодекс РК", "статья 207...") == "226-V"
+    assert _extract_law_id_from_text("Уголовный кодекс РК", "статья 207...") == "226-V-UK"
     assert _extract_law_id_from_text("закон о персональных данных 94-V", "согласие субъекта...") == "94-V"
     
     # 3. Проверяем, что reliability = None, если 0 реальных подтверждений (BUG-1)

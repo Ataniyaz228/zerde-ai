@@ -27,9 +27,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from zerde.config import get_settings
 from zerde.utils.cache import CacheManager
-from zerde.utils.law_registry import get_registry, _SHORT_TO_ADILET_CODE
-from zerde.stages.s3_gather import _LAW_ID_KNOWN
-from zerde.stages.s6_auditor import _LAW_ID_SYNONYMS
+from zerde.utils.law_registry import (
+    get_registry,
+    _SHORT_TO_ADILET_CODE,
+    _LEGACY_FALLBACK_CODES,
+)
 
 _ADILET_CODE_RE = re.compile(r"^[A-Z]\d{6,}_?$")
 
@@ -38,18 +40,6 @@ def _norm_code(code: str | None) -> str | None:
     if not code:
         return None
     return code.strip().rstrip("_").upper() or None
-
-
-def _syn_pairs() -> dict[str, str]:
-    """Extract short_id -> adilet_code from s6 _LAW_ID_SYNONYMS groups."""
-    out: dict[str, str] = {}
-    for group in _LAW_ID_SYNONYMS.values():
-        codes = [m for m in group if _ADILET_CODE_RE.match(m.upper())]
-        shorts = [m for m in group if not _ADILET_CODE_RE.match(m.upper())]
-        if codes and shorts:
-            for s in shorts:
-                out[s.upper()] = codes[0]
-    return out
 
 
 def run_consistency() -> dict:
@@ -64,11 +54,14 @@ def run_consistency() -> dict:
         if r.get("law_id") and r.get("adilet_code")
     }
 
+    # After Phase 1.1 there is a single owner of law identity — the registry:
+    # law_metadata (DB, authoritative) + its two internal static maps. No stage
+    # keeps its own law dict anymore, so this now checks registry-internal
+    # consistency against the DB rather than cross-stage drift.
     sources: dict[str, dict[str, str | None]] = {
         "law_metadata": meta,
-        "s3._LAW_ID_KNOWN": {k.upper(): _norm_code(v) for k, v in _LAW_ID_KNOWN.items()},
         "registry._SHORT_TO_ADILET_CODE": {k.upper(): _norm_code(v) for k, v in _SHORT_TO_ADILET_CODE.items()},
-        "s6._LAW_ID_SYNONYMS": {k: _norm_code(v) for k, v in _syn_pairs().items()},
+        "registry._LEGACY_FALLBACK_CODES": {k.upper(): _norm_code(v) for k, v in _LEGACY_FALLBACK_CODES.items()},
     }
 
     # Per law_id: {source: code}.
@@ -102,7 +95,7 @@ def run_consistency() -> dict:
     # else they lose their adilet mapping. For each, check whether the registry
     # can already reproduce the dict's code (then it's safe) or not (then it blocks).
     dict_codes: dict[str, str] = {}
-    for src in ("s3._LAW_ID_KNOWN", "registry._SHORT_TO_ADILET_CODE", "s6._LAW_ID_SYNONYMS"):
+    for src in ("registry._SHORT_TO_ADILET_CODE", "registry._LEGACY_FALLBACK_CODES"):
         for lid, code in sources[src].items():
             if code:
                 dict_codes.setdefault(lid, code)

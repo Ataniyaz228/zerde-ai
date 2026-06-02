@@ -30,7 +30,6 @@ from zerde.utils.cache import CacheManager
 from zerde.utils.law_registry import (
     get_registry,
     _SHORT_TO_ADILET_CODE,
-    _LEGACY_FALLBACK_CODES,
 )
 
 _ADILET_CODE_RE = re.compile(r"^[A-Z]\d{6,}_?$")
@@ -61,7 +60,6 @@ def run_consistency() -> dict:
     sources: dict[str, dict[str, str | None]] = {
         "law_metadata": meta,
         "registry._SHORT_TO_ADILET_CODE": {k.upper(): _norm_code(v) for k, v in _SHORT_TO_ADILET_CODE.items()},
-        "registry._LEGACY_FALLBACK_CODES": {k.upper(): _norm_code(v) for k, v in _LEGACY_FALLBACK_CODES.items()},
     }
 
     # Per law_id: {source: code}.
@@ -95,7 +93,7 @@ def run_consistency() -> dict:
     # else they lose their adilet mapping. For each, check whether the registry
     # can already reproduce the dict's code (then it's safe) or not (then it blocks).
     dict_codes: dict[str, str] = {}
-    for src in ("registry._SHORT_TO_ADILET_CODE", "registry._LEGACY_FALLBACK_CODES"):
+    for src in ("registry._SHORT_TO_ADILET_CODE",):
         for lid, code in sources[src].items():
             if code:
                 dict_codes.setdefault(lid, code)

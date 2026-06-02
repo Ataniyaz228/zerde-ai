@@ -17,12 +17,12 @@ from zerde.utils.law_registry import (
     reload_registry,
     get_registry,
     _SHORT_TO_ADILET_CODE,
-    _LEGACY_FALLBACK_CODES,
 )
 
-# Reverse lookup code→law_id из реестра (единый владелец кодов).
-_KNOWN_CODES = {**_SHORT_TO_ADILET_CODE, **_LEGACY_FALLBACK_CODES}
-_CODE_TO_LAW_ID = {v.upper(): k for k, v in _KNOWN_CODES.items()}
+# Reverse lookup code→law_id из реестра (единый владелец кодов). Только
+# верифицированная статика — _LEGACY_FALLBACK_CODES удалён (его коды не
+# проверялись против adilet и оказались 9/10 битыми).
+_CODE_TO_LAW_ID = {v.upper(): k for k, v in _SHORT_TO_ADILET_CODE.items()}
 
 
 def _extract_title_from_text(text: str, lang: str = "ru") -> str:

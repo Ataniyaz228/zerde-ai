@@ -73,23 +73,17 @@ _ADILET_CODE_TO_SHORT: dict[str, str] = {
 # Короткий ID → полный код Адилет
 _SHORT_TO_ADILET_CODE: dict[str, str] = {v: k for k, v in _ADILET_CODE_TO_SHORT.items()}
 
-# Legacy-fallback adilet-кодов для законов, которых ПОКА нет в law_metadata.
-# Единственное место в кодовой базе, где живут эти коды (раньше были размазаны по
-# s3._LAW_ID_KNOWN / s6._LAW_ID_SYNONYMS). НЕ верифицированы против adilet — будут
-# ретайрены по мере систематического инджеста (Фаза 4). Реестр консультирует их
-# последними, после БД и _SHORT_TO_ADILET_CODE.
-_LEGACY_FALLBACK_CODES: dict[str, str] = {
-    "550-IV": "Z1300000550",
-    "401-II": "Z0300000401",
-    "73-V": "Z1300000073",
-    "223-VIII": "Z1700000223",
-    "240-IV": "Z1100000240",
-    "368-II": "Z030000368_",
-    "138-IV": "Z060000138_",
-    "414-IV": "Z1100000414",
-    "152-VII": "Z2200000152",
-    "481-II": "K030000481_",
-}
+# NB: больше нет _LEGACY_FALLBACK_CODES. Это был словарь «угаданных» adilet-кодов
+# для неингестированных законов — ИМЕННО он не попадал в verify_law_registry
+# (_collect_entries проверяет только law_metadata + _ADILET_CODE_TO_SHORT), поэтому
+# его дрейф не ловился. Аудит против adilet показал: 9 из 10 кодов были битыми
+# (5×HTTP 404, 4× указывали на ЧУЖОЙ закон) — прямое нарушение CITE-OR-ABSTAIN
+# (уверенный фетч возможно-неверной нормы). У law_id теперь ровно два состояния:
+# (а) заингестирован в law_metadata из adilet (реальный код+заголовок+чанки) или
+# (б) неизвестен → get_adilet_code() вернёт None → честный UNVERIFIED, без фетча.
+# Покрытие добавляется ТОЛЬКО через инджест (scripts/ingest_single_law.py), не
+# через рукотворную таблицу. Мета-гард tests/test_registry_codes_verified.py не
+# даёт завести новый непроверяемый код-словарь.
 
 # Ядро law_id = "<число>-<римское>", без тег-суффикса (-UK, -NEW и т.п.).
 # Используется для безопасного base-ID матчинга: "226-V" ↔ "226-V-UK",
@@ -307,9 +301,6 @@ class LawRegistry:
                 return code
         if canon in _SHORT_TO_ADILET_CODE:
             return _SHORT_TO_ADILET_CODE[canon]
-        # Legacy-fallback для неингестированных законов (неверифицированные коды).
-        if canon in _LEGACY_FALLBACK_CODES:
-            return _LEGACY_FALLBACK_CODES[canon]
         # Вход уже является adilet_code.
         if re.match(r"^[A-Z]\d{8,10}_?$", canon):
             return canon

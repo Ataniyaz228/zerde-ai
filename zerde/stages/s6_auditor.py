@@ -33,7 +33,6 @@ from zerde.models import (
     DocumentClaim,
     ClaimExtractionResult,
 )
-from zerde.reference_data import LAW_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -191,12 +190,15 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
         return list(set(target))
 
     law_ids = []
+    from zerde.utils.law_registry import get_registry
+    registry = get_registry()
 
-    # 1. Search entities
+    # 1. Search entities: id-форма ИЛИ закон, локализуемый реестром (единый
+    #    источник вместо membership по reference_data.LAW_REGISTRY).
     for ent in claim.entities:
         ent_clean = str(ent).strip().upper().replace(" ", "")
         ent_clean = re.sub(r"ЗРК|зрк", "", ent_clean).strip("-").strip()
-        if re.match(r"^\d+-[-‐–A-Z]+$", ent_clean) or ent_clean in LAW_REGISTRY:
+        if re.match(r"^\d+-[-‐–A-Z]+$", ent_clean) or registry.get_adilet_code(ent_clean):
             law_ids.append(ent_clean)
             
     # 2. Search text and entities for common aliases

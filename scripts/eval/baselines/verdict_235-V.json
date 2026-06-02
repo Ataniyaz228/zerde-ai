@@ -1,0 +1,40 @@
+{
+  "law": "235-V",
+  "canonical": "235-V",
+  "chunks_loaded": 2286,
+  "real_article_used": "741",
+  "false_confirm_rate": 0.0,
+  "true_confirm_rate": 0.0,
+  "planted_total": 3,
+  "planted_confirmed": 0,
+  "results": [
+    {
+      "claim_id": "true_real_article",
+      "kind": "true",
+      "status": "UNVERIFIED",
+      "ok": false,
+      "label": "real art.741 verbatim → expect CONFIRMED"
+    },
+    {
+      "claim_id": "planted_new_article",
+      "kind": "planted",
+      "status": "UNVERIFIED",
+      "ok": true,
+      "label": "NEW art.889-1 (does not exist) → must NOT be CONFIRMED"
+    },
+    {
+      "claim_id": "planted_absurd_article",
+      "kind": "planted",
+      "status": "UNVERIFIED",
+      "ok": true,
+      "label": "absurd art.99999 → must NOT be CONFIRMED"
+    },
+    {
+      "claim_id": "planted_fabricated_fact",
+      "kind": "planted",
+      "status": "UNVERIFIED",
+      "ok": true,
+      "label": "fabricated content on real art.741 → must NOT be CONFIRMED"
+    }
+  ]
+}

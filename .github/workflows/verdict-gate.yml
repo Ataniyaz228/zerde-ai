@@ -1,0 +1,81 @@
+# Budget-aware false-confirm gate.
+#
+# WHY MANUAL-ONLY: scripts/eval/verdict_eval.py calls the auditor LLM via
+# OpenRouter and costs real money. Running it on every push / PR would burn the
+# (small, protected) API budget automatically. So this workflow is triggered
+# ONLY by workflow_dispatch — a human clicks "Run workflow" and accepts the cost.
+# There is deliberately NO `on: push` / `on: pull_request`.
+#
+# The pure $0 comparison (scripts/eval/verdict_gate.py) is unit-tested in
+# tests/test_verdict_gate.py and runs for free under the normal test job; this
+# workflow only exists to refresh the LLM-backed numbers on demand and gate them.
+#
+# REQUIRED REPO SECRET:
+#   OPENAI_API_KEY   — OpenRouter key (OpenAI-compatible). Without it verdict_eval
+#                      cannot call the auditor. Set under Settings → Secrets and
+#                      variables → Actions. (OPENAI_BASE_URL / LLM_MODEL_* have
+#                      working defaults in zerde.config; override via env if needed.)
+#
+# COMMITTED BASELINE:
+#   scripts/eval/baselines/verdict_<law>.json  — one per law, produced by a known-good
+#   run of verdict_eval (`--json`). The gate fails if the fresh false_confirm_rate
+#   rises above the baseline, or above 0 for any law.
+
+name: verdict-gate (manual, costs API budget)
+
+on:
+  workflow_dispatch:
+    inputs:
+      laws:
+        description: "Space-separated law short ids to eval (LLM cost scales with count)"
+        required: false
+        default: "235-V 214-VII"
+
+permissions:
+  contents: read
+
+jobs:
+  verdict-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Project deps live in pyproject.toml (requires-python >=3.12).
+          pip install -e .
+
+      - name: Run verdict_eval on the fixed law set (calls the LLM — costs budget)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          mkdir -p data/eval
+          # Default law set is 235-V (КоАП) and 214-VII (Tax Code); overridable
+          # via the workflow_dispatch `laws` input. One JSON per law.
+          for law in ${{ github.event.inputs.laws }}; do
+            echo "::group::verdict_eval $law"
+            PYTHONPATH=. python scripts/eval/verdict_eval.py \
+              --law "$law" --json "data/eval/verdict_${law}.json" || true
+            echo "::endgroup::"
+          done
+
+      - name: Gate fresh results against committed baseline ($0, no LLM)
+        run: |
+          PYTHONPATH=. python scripts/eval/verdict_gate.py \
+            --baseline-dir scripts/eval/baselines \
+            --fresh-dir data/eval
+
+      - name: Upload fresh verdict reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-reports
+          path: data/eval/verdict_*.json
+          if-no-files-found: warn

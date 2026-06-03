@@ -223,6 +223,7 @@ def _dedup_by_hash(chunks: list[EvidenceChunk]) -> list[EvidenceChunk]:
 async def _dedup_by_cosine(chunks: list[EvidenceChunk], threshold: float) -> list[EvidenceChunk]:
     """Семантическая дедупликация через BGE-M3 (локально) или OpenAI embeddings."""
     import asyncio
+
     from zerde.utils.cache import CacheManager
 
     active = [c for c in chunks if not c.is_duplicate]
@@ -239,7 +240,7 @@ async def _dedup_by_cosine(chunks: list[EvidenceChunk], threshold: float) -> lis
         logger.info(f"[S4/Cosine] Generated {len(embeddings)} local BGE-M3 embeddings successfully.")
     except Exception as e:
         logger.warning(f"[S4/Cosine] Local BGE-M3 embeddings failed: {e}. Trying OpenAI fallback...")
-        
+
         settings = get_settings()
         client = make_embedding_client(settings)
         if client:

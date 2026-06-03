@@ -8,20 +8,18 @@
   - Utils: kz_translit, legal_scorer
 """
 
+
 import pytest
-from datetime import datetime, date
 
 # ---------------------------------------------------------------------------
 # Фикстуры
 # ---------------------------------------------------------------------------
-
 from zerde.models import (
+    AdiletFallbackStrategy,
+    DocumentFormat,
     EvidenceChunk,
     LegalRank,
     WebTier,
-    AdiletFallbackStrategy,
-    DocumentFormat,
-    DocumentState,
 )
 
 
@@ -56,23 +54,27 @@ class TestS1Ingest:
     """Тесты для s1_ingest.py."""
 
     def test_detect_format_docx(self):
-        from zerde.stages.s1_ingest import _detect_format
         from pathlib import Path
+
+        from zerde.stages.s1_ingest import _detect_format
         assert _detect_format(Path("test.docx")) == DocumentFormat.DOCX
 
     def test_detect_format_pdf(self):
-        from zerde.stages.s1_ingest import _detect_format
         from pathlib import Path
+
+        from zerde.stages.s1_ingest import _detect_format
         assert _detect_format(Path("test.pdf")) == DocumentFormat.PDF
 
     def test_detect_format_txt(self):
-        from zerde.stages.s1_ingest import _detect_format
         from pathlib import Path
+
+        from zerde.stages.s1_ingest import _detect_format
         assert _detect_format(Path("test.txt")) == DocumentFormat.TXT
 
     def test_detect_format_unsupported(self):
-        from zerde.stages.s1_ingest import _detect_format
         from pathlib import Path
+
+        from zerde.stages.s1_ingest import _detect_format
         with pytest.raises(ValueError, match="Unsupported format"):
             _detect_format(Path("test.xlsx"))
 

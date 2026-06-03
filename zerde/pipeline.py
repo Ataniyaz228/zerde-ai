@@ -56,7 +56,7 @@ class ZerdePipelineResult(dict):
     report_path: str
     elapsed_seconds: float
 
-    def __getattr__(self, name: str) -> any:
+    def __getattr__(self, name: str) -> object:
         if name.startswith("_"):
             raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
         import typing
@@ -68,7 +68,7 @@ class ZerdePipelineResult(dict):
         except KeyError:
             raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
 
-    def __setattr__(self, name: str, value: any) -> None:
+    def __setattr__(self, name: str, value: object) -> None:
         if name.startswith("_"):
             super().__setattr__(name, value)
             return
@@ -145,15 +145,15 @@ async def run_pipeline(
         law_id_to_articles: dict[str, set[str] | None] = {}
         for aq in query_plan.adilet_queries:
             aq_lids = [registry.resolve(lid) for lid in (aq.law_ids or []) if lid]
-            
+
             for lid in aq_lids:
                 if not lid:
                     continue
-                
+
                 # Если уже стоит None (взять всё), не ограничиваем статьями
                 if law_id_to_articles.get(lid) is None:
                     continue
-                
+
                 if not aq.articles:
                     law_id_to_articles[lid] = None
                 else:
@@ -167,7 +167,6 @@ async def run_pipeline(
 
             # ── Шаг A: Прямой SQL по метаданным (гарантированное попадание) ──
             import json as _json
-            import sqlite3 as _sqlite3
             injected = 0
             with _cache_for_rag._conn() as conn:
                 for lid, arts in law_id_to_articles.items():
@@ -220,9 +219,9 @@ async def run_pipeline(
                 for aq in query_plan.adilet_queries
             ]
             rag_results = await asyncio.gather(*rag_tasks, return_exceptions=True)
-            for result in rag_results:
-                if isinstance(result, list):
-                    for c in result:
+            for rag_result in rag_results:
+                if isinstance(rag_result, list):
+                    for c in rag_result:
                         if c.chunk_id not in existing_chunk_ids:
                             c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
                             raw_chunks.append(c)
@@ -239,10 +238,11 @@ async def run_pipeline(
     # упоминаемые ТОЛЬКО в S2.5 claim extractor. Здесь догружаем chunks по
     # парам (target_law_id × article из claim).
     try:
-        from zerde.config import get_settings as _gs2
-        from zerde.utils.cache import CacheManager as _CM2
-        from zerde.stages.s6_auditor import _extract_article_from_claim
         import json as _json2
+
+        from zerde.config import get_settings as _gs2
+        from zerde.stages.s6_auditor import _extract_article_from_claim
+        from zerde.utils.cache import CacheManager as _CM2
         registry = get_registry()
         _cache_for_claims = _CM2(_gs2().cache_db_path)
         existing_chunk_ids = {c.chunk_id for c in raw_chunks}
@@ -250,11 +250,11 @@ async def run_pipeline(
         # Собираем пары (resolved_law_id, article) из всех claims
         claim_pairs: set[tuple[str, str]] = set()
         all_claims = list(claims.claims) + list(claims.structural_claims)
-        for c in all_claims:
-            article = _extract_article_from_claim(c)
+        for claim_obj in all_claims:
+            article = _extract_article_from_claim(claim_obj)
             if not article:
                 continue
-            for raw_lid in (c.target_law_ids or []):
+            for raw_lid in (claim_obj.target_law_ids or []):
                 resolved = registry.resolve(raw_lid)
                 if resolved:
                     claim_pairs.add((resolved, article))
@@ -297,7 +297,7 @@ async def run_pipeline(
     # ─── ЭТАП 4: Fusion & Validation ─────────────────────────────────────
     t4 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 4: Fusion & Conflict Detection")
-    
+
     # Language filtering removed as it was dropping cross-lingual web results
     fused_chunks = await fuse_and_validate(raw_chunks)
     active_chunks = [c for c in fused_chunks if not c.is_duplicate]
@@ -354,7 +354,7 @@ async def run_pipeline(
     analysis_for_audit = analysis.model_copy(deep=True)
     active_chunks_for_audit = [c.model_copy(deep=True) for c in active_chunks]
 
-    async def _run_s6():
+    async def _run_s6() -> AnalysisJSON:
         return audit_analysis(analysis_for_audit, active_chunks_for_audit, claims)
 
     policy_analysis, audited_analysis = await asyncio.gather(

@@ -144,7 +144,7 @@ def _extract_pdf(path: Path) -> str:
 
     # Если и blocks пустой — это скан, запускаем настоящий OCR (Tesseract via pymupdf)
     if len(full_text.strip()) < _PDF_MIN_TEXT_CHARS:
-        logger.warning(f"[S1/PDF] Blocks fallback also sparse. Trying Tesseract OCR.")
+        logger.warning("[S1/PDF] Blocks fallback also sparse. Trying Tesseract OCR.")
         full_text = _extract_pdf_via_ocr(path)
 
     # Пост-процессинг: склеиваем разнесённые буквы (Adilet PDF артефакт)

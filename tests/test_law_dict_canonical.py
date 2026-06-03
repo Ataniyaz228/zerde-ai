@@ -12,9 +12,9 @@ law_id-форму, и (кроме явно ещё-не-инджестирова�
 
 import re
 
-from zerde.utils.law_registry import get_registry, _STATIC_FALLBACK
 from zerde.stages.s2_5_claim_extractor import _TITLE_HINT_MAP
 from zerde.stages.s6_auditor import _COMMON_LAW_NAME_MAP
+from zerde.utils.law_registry import _STATIC_FALLBACK, get_registry
 
 # Реальные законы РК, которых пока нет в корпусе (law_metadata). Допустимы как
 # значения для кросс-отсылок (claim к ним не заземлится — это не стейл, а пробел

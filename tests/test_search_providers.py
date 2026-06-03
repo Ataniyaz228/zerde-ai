@@ -4,10 +4,11 @@ test_search_providers.py
 Использует только mock'u (asyncio/unittest.mock) — без сетевых запросов.
 """
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from zerde.models import WebQuery, WebTier
+
+from zerde.models import WebQuery
 
 # ---------------------------------------------------------------------------
 # Моки для каждого провайдера

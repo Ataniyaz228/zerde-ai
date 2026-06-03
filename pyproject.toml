@@ -55,7 +55,7 @@ dev = [
 ]
 
 [project.scripts]
-zerde = "main:main"
+zerde = "main:cli"
 
 [tool.ruff]
 target-version = "py312"

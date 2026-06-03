@@ -8,15 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import re
-from datetime import date, datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import httpx
-from duckduckgo_search import DDGS as _DDGS
-from openai import AsyncOpenAI
+
+try:
+    # `ddgs` — текущий пакет (объявлен в pyproject); тот же DDGS().text() API.
+    from ddgs import DDGS as _DDGS
+except ImportError:  # совместимость со старым пакетом duckduckgo-search
+    from duckduckgo_search import DDGS as _DDGS
 
 from zerde.config import get_settings
 from zerde.models import (
@@ -33,7 +35,6 @@ from zerde.utils.legal_scorer import (
     classify_web_tier,
     infer_legal_rank_from_web_content,
 )
-from zerde.utils.llm_client import make_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
     law_id = law_id.replace("\u0406", "I").replace("\u0456", "i").strip()
     law_id = _resolve_law_name(law_id)
     urls = []
-    
+
     # 1. Adilet code: РЕЕСТР авторитетен (law_metadata + его внутренний
     #    legacy-fallback для неингестированных законов). Единый источник.
     from zerde.utils.law_registry import get_registry
@@ -72,7 +73,7 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
         if adilet_code.endswith("_"):
             urls.append(f"{base}/rus/docs/{adilet_code[:-1]}")
         return urls
-        
+
     # 2. If it is already an Adilet ID
     if re.match(r"^[A-Z]\d{9}", law_id):
         urls.append(f"{base}/rus/docs/{law_id}")
@@ -81,7 +82,7 @@ def _normalize_law_id_to_adilet_urls(law_id: str, base: str) -> list[str]:
         else:
             urls.append(f"{base}/rus/docs/{law_id}_")
         return urls
-        
+
     # 3. Неизвестный short ID. Раньше здесь фабриковались URL перебором префиксов
     #    годов (Z13.., Z15.., Z16..) — это плодило мёртвые 404-запросы и могло молча
     #    попасть в чужой закон. Удалено: нет в _LAW_ID_KNOWN/реестре → не угадываем.
@@ -331,7 +332,7 @@ async def _search_tavily(query: str, max_results: int) -> list[dict]:
     settings = get_settings()
     if not settings.tavily_api_key:
         raise ValueError("Tavily API key not set in config")
-    
+
     import httpx
     url = f"{settings.tavily_base_url}/search"
     payload = {
@@ -341,12 +342,12 @@ async def _search_tavily(query: str, max_results: int) -> list[dict]:
         "max_results": max_results,
         "include_raw_content": False
     }
-    
+
     async with httpx.AsyncClient() as client:
         response = await client.post(url, json=payload, timeout=20.0)
         response.raise_for_status()
         data = response.json()
-        
+
     results = []
     for item in data.get("results", []):
         results.append({
@@ -365,7 +366,7 @@ async def _search_google(query: str, max_results: int) -> list[dict]:
 async def _search_web(query: WebQuery) -> tuple[list[dict], str]:
     settings = get_settings()
     provider = settings.search_provider.lower()
-    
+
     if provider == "tavily":
         try:
             res = await _search_tavily(query.query_text, query.max_results)
@@ -373,7 +374,7 @@ async def _search_web(query: WebQuery) -> tuple[list[dict], str]:
         except Exception as e:
             logger.warning(f"[S3/Web] Tavily search failed (limit reached?): {e}. Falling back to DuckDuckGo.")
             # Fall through to DDG
-    
+
     # Fallback / Default: DuckDuckGo
     try:
         res = await _search_duckduckgo(query.query_text, query.max_results)

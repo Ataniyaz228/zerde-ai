@@ -5,17 +5,16 @@ import logging
 import os
 import sqlite3
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Generator
-
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 import torch
+from sentence_transformers import SentenceTransformer
 
-from zerde.models import EvidenceChunk, LegalRank, WebTier
+from zerde.models import EvidenceChunk, LegalRank
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +112,7 @@ class CacheManager:
         if self._shared_conn is None:
             self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._shared_conn.execute("PRAGMA journal_mode=WAL")
+            self._shared_conn.execute("PRAGMA foreign_keys=ON")  # L5: ON DELETE CASCADE для embeddings
             self._shared_conn.row_factory = sqlite3.Row
         with self._shared_conn:
             self._shared_conn.executescript(_CREATE_TABLE_SQL)
@@ -124,6 +124,7 @@ class CacheManager:
         if getattr(self, "_shared_conn", None) is None:
             self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._shared_conn.execute("PRAGMA journal_mode=WAL")
+            self._shared_conn.execute("PRAGMA foreign_keys=ON")  # L5: ON DELETE CASCADE для embeddings
             self._shared_conn.row_factory = sqlite3.Row
         try:
             yield self._shared_conn
@@ -338,7 +339,7 @@ class CacheManager:
                         (cid, emb.tobytes()),
                     )
             logger.info(f"[Cache/Vector] Stored {len(chunks)} embeddings in DB.")
-            
+
             # Sync to in-memory representation!
             new_keys = []
             new_embs = []
@@ -347,7 +348,7 @@ class CacheManager:
                     self._embeddings_keys.append(cid)
                     new_keys.append(cid)
                     new_embs.append(emb)
-            
+
             if new_embs:
                 if self._embeddings_matrix.shape[0] == 0:
                     self._embeddings_matrix = np.array(new_embs, dtype=np.float32)
@@ -362,7 +363,7 @@ class CacheManager:
                     if tokens:
                         self._bm25_keys.append(c.chunk_id)
                         self._bm25_tokens.append(tokens)
-            
+
             if self._bm25_tokens:
                 from rank_bm25 import BM25Okapi
                 self._bm25_index = BM25Okapi(self._bm25_tokens)
@@ -379,10 +380,10 @@ class CacheManager:
             return []
 
         self._lazy_init_embeddings()
-        
+
         # Ensure they are synced first
         self._sync_new_chunks(chunks)
-        
+
         # Map each chunk_id to its index in self._embeddings_keys to get the vector from self._embeddings_matrix
         results = []
         for c in chunks:
@@ -393,13 +394,13 @@ class CacheManager:
                 # Fallback: if not found, generate on the fly
                 text = (c.content or "") + " " + (c.source_title or "")
                 emb = self._embed_model.encode(
-                    [text], 
-                    show_progress_bar=False, 
+                    [text],
+                    show_progress_bar=False,
                     normalize_embeddings=True
                 )[0]
                 emb = np.array(emb, dtype=np.float32)
                 results.append(emb)
-                
+
         return results
 
     def _stem_word(self, w: str) -> str:
@@ -473,7 +474,7 @@ class CacheManager:
         with self._init_lock:
             if getattr(self, "_embeddings_loaded", False):
                 return
-            
+
             logger.info("[Cache/Vector] Initializing BGE-M3 model and pre-loading embeddings...")
             # Используем глобальный синглтон вместо создания новой модели
             self._embed_model, _device = _get_bge_model()
@@ -481,26 +482,26 @@ class CacheManager:
             # 2. Pre-load all embeddings from SQLite
             self._embeddings_keys = []
             embeddings_list = []
-            
+
             with self._conn() as conn:
                 rows = conn.execute("SELECT chunk_id, embedding FROM evidence_embeddings").fetchall()
                 for row in rows:
                     self._embeddings_keys.append(row["chunk_id"])
                     vec = np.frombuffer(row["embedding"], dtype=np.float32)
                     embeddings_list.append(vec)
-                    
+
             if embeddings_list:
                 self._embeddings_matrix = np.array(embeddings_list, dtype=np.float32)
                 self._embeddings_norms = np.linalg.norm(self._embeddings_matrix, axis=1)
             else:
                 self._embeddings_matrix = np.empty((0, 1024), dtype=np.float32)
                 self._embeddings_norms = np.empty((0,), dtype=np.float32)
-                
+
             # 3. Pre-load and construct BM25 index for all cached chunks
             logger.info("[Cache/Vector] Constructing BM25 index for all chunks...")
             self._bm25_keys = []
             tokenized_corpus = []
-            
+
             with self._conn() as conn:
                 rows = conn.execute("SELECT chunk_id, chunk_json FROM evidence_cache").fetchall()
                 for row in rows:
@@ -512,9 +513,9 @@ class CacheManager:
                         if tokens:
                             self._bm25_keys.append(row["chunk_id"])
                             tokenized_corpus.append(tokens)
-                    except Exception as ex:
+                    except Exception:
                         pass
-                        
+
             if tokenized_corpus:
                 from rank_bm25 import BM25Okapi
                 self._bm25_index = BM25Okapi(tokenized_corpus)
@@ -522,7 +523,7 @@ class CacheManager:
             else:
                 self._bm25_index = None
                 self._bm25_tokens = []
-                
+
             self._embeddings_loaded = True
             logger.info(f"[Cache/Vector] Initialized successfully. Loaded {len(self._embeddings_keys)} embeddings and {len(self._bm25_keys)} BM25 documents.")
 
@@ -532,10 +533,10 @@ class CacheManager:
             return
 
         import numpy as np
-        
+
         new_chunk_ids = []
         new_texts = []
-        
+
         for c in chunks:
             if c.chunk_id not in self._embeddings_keys:
                 new_chunk_ids.append(c.chunk_id)
@@ -549,13 +550,13 @@ class CacheManager:
         try:
             # Generate normalized BGE-M3 embeddings
             embeddings = self._embed_model.encode(
-                new_texts, 
-                batch_size=32, 
-                show_progress_bar=False, 
+                new_texts,
+                batch_size=32,
+                show_progress_bar=False,
                 normalize_embeddings=True
             )
             embeddings = np.array(embeddings, dtype=np.float32)
-            
+
             # Store in SQLite evidence_embeddings
             with self._conn() as conn:
                 for cid, emb in zip(new_chunk_ids, embeddings):
@@ -563,7 +564,7 @@ class CacheManager:
                         "INSERT OR REPLACE INTO evidence_embeddings (chunk_id, embedding) VALUES (?, ?)",
                         (cid, emb.tobytes()),
                     )
-            
+
             # Append to in-memory matrix
             self._embeddings_keys.extend(new_chunk_ids)
             if self._embeddings_matrix.shape[0] == 0:
@@ -578,11 +579,11 @@ class CacheManager:
                 if tokens:
                     self._bm25_keys.append(c.chunk_id)
                     self._bm25_tokens.append(tokens)
-            
+
             if self._bm25_tokens:
                 from rank_bm25 import BM25Okapi
                 self._bm25_index = BM25Okapi(self._bm25_tokens)
-                
+
             logger.info(f"[Cache/Vector] Dynamic sync complete. New active keys count: {len(self._embeddings_keys)}")
         except Exception as e:
             logger.error(f"[Cache/Vector] Dynamic sync failed: {e}")
@@ -634,7 +635,7 @@ class CacheManager:
         fused via Weighted Linear Combination (WLC) and reranked using BAAI/bge-reranker-v2-m3.
         """
         import json
-        import re
+
         import numpy as np
 
         # 1. Normalize law_ids. Adilet code \u0431\u0435\u0440\u0451\u043c \u0438\u0437 \u0420\u0415\u0415\u0421\u0422\u0420\u0410 (\u0430\u0432\u0442\u043e\u0440\u0438\u0442\u0435\u0442\u043d\u043e,
@@ -714,8 +715,8 @@ class CacheManager:
             try:
                 # 1. Embed query
                 query_vector = self._embed_model.encode(
-                    query_text, 
-                    show_progress_bar=False, 
+                    query_text,
+                    show_progress_bar=False,
                     normalize_embeddings=True
                 ).astype(np.float32)
 
@@ -788,13 +789,13 @@ class CacheManager:
             chunk_obj = await self.get(cid)
             if not chunk_obj:
                 continue
-            
+
             # Language match boost
             lang_factor = 1.0
             if detected_lang and chunk_obj.language:
                 if chunk_obj.language != detected_lang:
                     lang_factor = 0.85  # Slight penalty for cross-lingual matches, preserves BGE-M3 cross-lingual capability
-            
+
             # Version freshness boost (recent version gets a slight boost)
             version_boost = 0.0
             if chunk_obj.source_version:
@@ -804,7 +805,7 @@ class CacheManager:
                     version_boost = max(0.0, (year - 2020) * 0.01)
                 except Exception:
                     pass
-                    
+
             adjusted_score = score * lang_factor + version_boost
             adjusted_wlc.append((chunk_obj, adjusted_score))
 
@@ -863,6 +864,7 @@ class LLMCache:
         if self._shared_conn is None:
             self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._shared_conn.execute("PRAGMA journal_mode=WAL")
+            self._shared_conn.execute("PRAGMA foreign_keys=ON")  # L5: ON DELETE CASCADE для embeddings
             self._shared_conn.row_factory = sqlite3.Row
         with self._shared_conn:
             self._shared_conn.executescript(_CREATE_TABLE_SQL)
@@ -872,6 +874,7 @@ class LLMCache:
         if getattr(self, "_shared_conn", None) is None:
             self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._shared_conn.execute("PRAGMA journal_mode=WAL")
+            self._shared_conn.execute("PRAGMA foreign_keys=ON")  # L5: ON DELETE CASCADE для embeddings
             self._shared_conn.row_factory = sqlite3.Row
         try:
             yield self._shared_conn
@@ -913,7 +916,7 @@ class LLMCache:
         cache_key = self._make_key(model, actual_prompt)
         response_json = json.dumps(response, ensure_ascii=False)
         cached_at = datetime.now(UTC).isoformat()
-        
+
         expires_at = None
         if ttl_seconds is not None:
             expires_at = (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat()

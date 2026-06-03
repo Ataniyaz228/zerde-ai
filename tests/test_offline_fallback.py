@@ -5,12 +5,18 @@ test_offline_fallback.py
 1. Отсутствие утечки предыдущего рана (нормативные документы о персданных)
 2. Новая формула reliability_score (V8.0)
 """
-import asyncio
 from pathlib import Path
 
 import pytest
-from zerde.models import ClaimSeverity, ClaimVerdict, EvidenceChunk, LegalRank, WebTier, VerdictStatus
-from zerde.stages.s6_auditor import _build_conflicts_from_verdicts
+
+from zerde.models import (
+    ClaimSeverity,
+    ClaimVerdict,
+    EvidenceChunk,
+    LegalRank,
+    VerdictStatus,
+    WebTier,
+)
 from zerde.utils.cache import CacheManager
 
 # --- Вспомогательные функции ---
@@ -284,7 +290,7 @@ class TestResolveLawName:
 def test_computed_fields_in_analysis_json():
     """Проверяет динамическое вычисление pros и recommendation в AnalysisJSON."""
     from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus
-    
+
     # 1. С дефолтными пустыми значениями
     verdicts = [
         ClaimVerdict(claim_id="claim_0001", status=VerdictStatus.CONFIRMED),
@@ -297,13 +303,13 @@ def test_computed_fields_in_analysis_json():
         plan_id="test_plan",
         verdicts=verdicts,
     )
-    
+
     # Должен вычисляться динамически
     assert "Подтверждено 1 из 3" in analysis.pros[0]
     assert "1 подтверждено" in analysis.recommendation
     assert "1 опровергнуто" in analysis.recommendation
     assert "1 не верифицировано" in analysis.recommendation
-    
+
     # 2. При мутации verdicts (вручную меняем статус одного вердикта)
     verdicts[1].status = VerdictStatus.CONFIRMED
     # И свойства pros / recommendation мгновенно отражают изменения!
@@ -311,11 +317,11 @@ def test_computed_fields_in_analysis_json():
     assert "2 подтверждено" in analysis.recommendation
     assert "1 опровергнуто" in analysis.recommendation
     assert "0 не верифицировано" in analysis.recommendation
-    
+
     # 3. При задании пользовательских custom значений
     analysis.custom_pros = ["Мой кастомный про"]
     analysis.custom_recommendation = "Моя кастомная рекомендация"
-    
+
     assert analysis.pros == ["Мой кастомный про"]
     assert analysis.recommendation == "Моя кастомная рекомендация"
 
@@ -323,12 +329,12 @@ def test_computed_fields_in_analysis_json():
 def test_boilerplate_stopwords_tokenization():
     """Проверяет, что юридический канцелярит фильтруется в _tokenize, а ключевые слова сохраняются."""
     from zerde.stages.s6_auditor import _tokenize
-    
+
     # Чистый бесполезный канцелярит (без "закон" / "кодекс") должен превращаться в пустой список
     cliche_text = "Настоящий вводится в действие по истечении"
     tokens = _tokenize(cliche_text)
     assert not tokens, f"Boilerplate clichés should yield empty tokens, got {tokens}"
-    
+
     # Смешанный текст должен сохранять содержательные слова и ключевые юридические термины (закон/кодекс)
     mixed_text = "Настоящий Закон вводится в действие по истечении шести месяцев"
     tokens_mixed = _tokenize(mixed_text)
@@ -339,9 +345,9 @@ def test_boilerplate_stopwords_tokenization():
 
 def test_check_topology_metadata_filtering():
     """Проверяет фильтрацию по law_id в _check_topology."""
-    from zerde.models import DocumentClaim, ClaimType, ClaimSeverity, Fact, ValidationStatus
+    from zerde.models import ClaimSeverity, ClaimType, DocumentClaim, Fact
     from zerde.stages.s6_auditor import _check_topology
-    
+
     claim = DocumentClaim(
         claim_id="claim_0001",
         claim_text="Изменения в Гражданский кодекс статьи 207",
@@ -349,14 +355,14 @@ def test_check_topology_metadata_filtering():
         severity=ClaimSeverity.CRITICAL,
         entities=["1000-XIII"],
     )
-    
+
     fact = Fact(
         fact_id="fact_0001",
         claim_id="claim_0001",
         claim=claim.claim_text,
         source_ids=["gk_chunk_1"],
     )
-    
+
     # 1. Корректный law_id -> Проходит проверку
     corpus_index = {
         "gk_chunk_1": EvidenceChunk(
@@ -369,9 +375,9 @@ def test_check_topology_metadata_filtering():
             law_id="1000-XIII",
         )
     }
-    
+
     assert _check_topology(fact, ["gk_chunk_1"], corpus_index, claim) is True
-    
+
     # 2. Неверный law_id (Закон о политических партиях) -> Отклоняется
     corpus_index_mismatch = {
         "gk_chunk_1": EvidenceChunk(
@@ -384,17 +390,26 @@ def test_check_topology_metadata_filtering():
             law_id="Z090000122_",
         )
     }
-    
+
     assert _check_topology(fact, ["gk_chunk_1"], corpus_index_mismatch, claim) is False
 
 
 def test_v9_3_bugfixes():
     """Проверяет новые исправления v9.3: обратную совместимость кэша, парсинг law_id веб-чанков, reliability и косвенные ссылки."""
-    from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus, ClaimSeverity
+    from zerde.models import (
+        AnalysisJSON,
+        ClaimSeverity,
+        ClaimType,
+        ClaimVerdict,
+        DocumentClaim,
+        VerdictStatus,
+    )
     from zerde.stages.s3_gather import _extract_law_id_from_text
-    from zerde.stages.s6_auditor import audit_analysis, _extract_referenced_law_ids, _COMMON_LAW_NAME_MAP
-    from zerde.models import DocumentClaim, ClaimType
-    
+    from zerde.stages.s6_auditor import (
+        _extract_referenced_law_ids,
+        audit_analysis,
+    )
+
     # 1. Проверяем обратную совместимость десериализации (BUG-5)
     legacy_data = {
         "analysis_id": "test_legacy",
@@ -411,13 +426,13 @@ def test_v9_3_bugfixes():
     assert model.custom_recommendation == "Старая общая рекомендация"
     assert model.pros == ["Старый плюс 1", "Старый плюс 2"]
     assert model.recommendation == "Старая общая рекомендация"
-    
+
     # 2. Проверяем извлечение law_id из веб-результатов (BUG-4)
     assert _extract_law_id_from_text("О внесении изменений в Гражданский Кодекс РК", "нормы статьи 207...") == "1000-XIII"
     assert _extract_law_id_from_text("Нарушения по КоАП РК штрафы", "согласно статье 79...") == "235-V"
     assert _extract_law_id_from_text("Уголовный кодекс РК", "статья 207...") == "226-V-UK"
     assert _extract_law_id_from_text("закон о персональных данных 94-V", "согласие субъекта...") == "94-V"
-    
+
     # 3. Проверяем, что reliability = None, если 0 реальных подтверждений (BUG-1)
     analysis = AnalysisJSON(
         analysis_id="test_rel",
@@ -431,7 +446,7 @@ def test_v9_3_bugfixes():
     )
     audited = audit_analysis(analysis, [])
     assert audited.overall_reliability is None, "Надежность должна быть None, если нет реальных подтверждений физическим корпусом."
-    
+
     # 4. Проверяем расширенные косвенные ссылки (BUG-6)
     claim_tax = DocumentClaim(
         claim_id="c_tax",
@@ -455,9 +470,9 @@ async def test_v9_4_metadata_first_search():
     Проверяет, что Metadata-first поиск (Шаг 1) точно сопоставляет
     утверждение и чанк по law_id и номеру статьи, минуя BM25.
     """
-    from zerde.models import DocumentClaim, ClaimType, ClaimSeverity
+    from zerde.models import ClaimSeverity, ClaimType, DocumentClaim
     from zerde.stages.s6_auditor import _exact_metadata_search, _extract_article_from_claim
-    
+
     claim = DocumentClaim(
         claim_id="claim_m1",
         claim_text="В соответствии со статьей 44 Гражданского кодекса",
@@ -465,10 +480,10 @@ async def test_v9_4_metadata_first_search():
         claim_type=ClaimType.LEGAL_REF,
         severity=ClaimSeverity.HIGH
     )
-    
+
     # 1. Извлечение статьи
     assert _extract_article_from_claim(claim) == "44"
-    
+
     # 2. Прямой metadata-поиск
     chunk_1 = EvidenceChunk(
         chunk_id="chunk_m1",
@@ -488,7 +503,7 @@ async def test_v9_4_metadata_first_search():
         law_id="1000-XIII",
         article="45"
     )
-    
+
     corpus = {"chunk_m1": chunk_1, "chunk_m2": chunk_2}
     candidates = _exact_metadata_search(claim, corpus)
     assert candidates == ["chunk_m1"]
@@ -499,7 +514,7 @@ def test_v9_4_multi_signal_ranking():
     Проверяет многофакторный LegalRank классификатор для веб-страниц.
     """
     from zerde.utils.legal_scorer import infer_legal_rank_from_web_content
-    
+
     # 1. Точное совпадение Кодекса на Expert домене -> CODE (Rank 2)
     rank, conf, reason = infer_legal_rank_from_web_content(
         tier=WebTier.TIER_2,
@@ -510,7 +525,7 @@ def test_v9_4_multi_signal_ranking():
     assert rank == LegalRank.CODE
     assert conf >= 0.8
     assert "Strict Code pattern match" in reason
-    
+
     # 2. Блог с упоминанием «этического кодекса» -> Fallback к TIER_3 rank (MEDIA_UNKNOWN)
     rank_fp, conf_fp, reason_fp = infer_legal_rank_from_web_content(
         tier=WebTier.TIER_3,
@@ -526,9 +541,16 @@ def test_v9_4_mathematical_reliability_and_stats():
     """
     Проверяет математическую модель калибрации надежности и stats_builder.
     """
-    from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus, ClaimSeverity, Fact, ValidationStatus
+    from zerde.models import (
+        AnalysisJSON,
+        ClaimSeverity,
+        ClaimVerdict,
+        Fact,
+        ValidationStatus,
+        VerdictStatus,
+    )
     from zerde.stages.s6_auditor import audit_analysis
-    
+
     chunk = EvidenceChunk(
         chunk_id="real_c1",
         source_url="http://adilet.zan.kz/docs",
@@ -547,7 +569,7 @@ def test_v9_4_mathematical_reliability_and_stats():
         )
         for i in range(4)
     ]
-    
+
     # Создаем тестовый анализ с:
     # - 1 CONFIRMED (CRITICAL, с реальным источником)
     # - 1 CONTRADICTED (MEDIUM)
@@ -564,20 +586,20 @@ def test_v9_4_mathematical_reliability_and_stats():
             ClaimVerdict(claim_id="claim_2", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.MEDIUM),
         ]
     )
-    
+
     audited = audit_analysis(analysis, [chunk] + dummy)
-    
+
     # 1. Проверяем наличие stats
     assert audited.stats is not None
     assert audited.stats.n_total == 2
     assert audited.stats.n_confirmed == 1
     assert audited.stats.n_contradicted == 1
-    
+
     # 2. Проверяем динамические свойства-делегаты
     assert "Подтверждено 1 из 2" in audited.pros[0]
     assert "1 подтверждено" in audited.recommendation
     assert "1 опровергнуто" in audited.recommendation
-    
+
     # 3. Проверяем надежность (не должна быть None, так как есть реальный подтвержденный источник)
     assert audited.overall_reliability is not None
     assert 0.0 <= audited.overall_reliability <= 1.0
@@ -620,9 +642,16 @@ def test_v9_5_new_features():
     assert r_order == LegalRank.MINISTERIAL_ORDER
 
     # 3. Лимит Reliability 5% при тяжелых коллизиях
-    from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus, ClaimSeverity, Fact, ValidationStatus
+    from zerde.models import (
+        AnalysisJSON,
+        ClaimSeverity,
+        ClaimVerdict,
+        Fact,
+        ValidationStatus,
+        VerdictStatus,
+    )
     from zerde.stages.s6_auditor import audit_analysis
-    
+
     chunk = EvidenceChunk(
         chunk_id="real_c1",
         source_url="http://adilet.zan.kz/docs",
@@ -631,7 +660,7 @@ def test_v9_5_new_features():
         legal_rank=LegalRank.LAW_RK,
         law_id="50-V"
     )
-    
+
     # Конфигурируем экстремальный случай:
     # 1 подтвержденный факт, но ОЧЕНЬ много критических противоречий (p_conflict > 1.0)
     analysis = AnalysisJSON(
@@ -652,12 +681,12 @@ def test_v9_5_new_features():
             ClaimVerdict(claim_id="claim_8", status=VerdictStatus.CONTRADICTED, source_ids=["real_c1"], severity=ClaimSeverity.CRITICAL),
         ]
     )
-    
+
     dummy = [
         EvidenceChunk(chunk_id=f"dummy_{i}", source_url="http://adilet.zan.kz/docs", source_title="Закон", content="Текст", legal_rank=LegalRank.LAW_RK)
         for i in range(4)
     ]
-    
+
     audited = audit_analysis(analysis, [chunk] + dummy)
     # Должно быть строго 0.05 (5%), а не 0.0 из-за лимита надежности снизу
     assert audited.overall_reliability == 0.05

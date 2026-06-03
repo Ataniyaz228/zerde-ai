@@ -232,7 +232,6 @@ def build_auditor_prompt(
         doc_excerpt = "(текст документа не предоставлен)"
 
     # Reference data — детерминированные факты для LLM
-    from zerde.reference_data import build_reference_corpus_text
     ref_text = build_reference_corpus_text()
 
     # .replace() вместо str.format(): JSON-схема и юр.тексты содержат {} скобки

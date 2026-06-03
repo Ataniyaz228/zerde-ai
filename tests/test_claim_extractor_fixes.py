@@ -1,5 +1,10 @@
-import pytest
-from zerde.stages.s2_5_claim_extractor import _is_structural_claim, DocumentClaim, ClaimType, ClaimSeverity
+from zerde.stages.s2_5_claim_extractor import (
+    ClaimSeverity,
+    ClaimType,
+    DocumentClaim,
+    _is_structural_claim,
+)
+
 
 def test_article_118_amendment_is_not_structural():
     # Утверждение о внесении процессуального изменения (изменение ст. 118)
@@ -10,7 +15,7 @@ def test_article_118_amendment_is_not_structural():
         claim_type=ClaimType.LEGAL_REF,
         severity=ClaimSeverity.HIGH
     )
-    
+
     # С новым процессуальным фиксом это утверждение должно классифицироваться как АНАЛИТИЧЕСКОЕ (не структурное)
     assert _is_structural_claim(claim) is False
 
@@ -23,5 +28,5 @@ def test_kazakh_amendment_is_not_structural():
         claim_type=ClaimType.LEGAL_REF,
         severity=ClaimSeverity.HIGH
     )
-    
+
     assert _is_structural_claim(claim) is False

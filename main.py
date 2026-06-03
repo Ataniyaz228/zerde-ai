@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from pathlib import Path
 
 from zerde.config import get_settings
 from zerde.pipeline import run_pipeline
@@ -46,10 +45,15 @@ async def main(file_path: str) -> None:
         sys.exit(1)
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Синхронная точка входа для console-script `zerde` (main() — корутина,
+    поэтому [project.scripts] не может ссылаться на неё напрямую: L4)."""
     if len(sys.argv) < 2:
         print("Использование: python main.py <путь_к_документу>")
         print("Пример:        python main.py docs/contract.pdf")
         sys.exit(1)
-
     asyncio.run(main(sys.argv[1]))
+
+
+if __name__ == "__main__":
+    cli()

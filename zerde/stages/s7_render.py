@@ -132,7 +132,7 @@ async def render_report(
 
     # Нормативная база содержит только чанки, которые реально привязаны к фактам в отчёте или имеют конфликты.
     active_chunks = [
-        c for c in chunks 
+        c for c in chunks
         if not c.is_duplicate and (c.chunk_id in referenced_ids or c.is_conflict)
     ]
     conflict_chunks = [c for c in active_chunks if c.is_conflict]

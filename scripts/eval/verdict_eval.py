@@ -35,12 +35,16 @@ from dataclasses import dataclass
 
 from zerde.config import get_settings
 from zerde.models import (
-    DocumentClaim, ClaimExtractionResult, QueryPlan, EvidenceChunk,
-    ClaimType, ClaimSeverity,
+    ClaimExtractionResult,
+    ClaimSeverity,
+    ClaimType,
+    DocumentClaim,
+    EvidenceChunk,
+    QueryPlan,
 )
-from zerde.utils.law_registry import get_registry
 from zerde.stages.s5_analyst import run_auditor
 from zerde.stages.s6_auditor import audit_analysis
+from zerde.utils.law_registry import get_registry
 
 
 def _load_law_chunks(db_path: str, canonical_id: str) -> list[EvidenceChunk]:

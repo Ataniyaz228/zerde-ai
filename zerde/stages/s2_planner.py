@@ -17,8 +17,6 @@ import json
 import logging
 from datetime import date
 
-from openai import AsyncOpenAI
-
 from zerde.config import get_settings
 from zerde.models import AdiletQuery, DocumentState, QueryPlan, WebQuery
 from zerde.prompts.planner import build_planner_prompt

@@ -4,8 +4,6 @@ Stage 5: The Auditor (Claim-based Verification)
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 
 from zerde.config import get_settings

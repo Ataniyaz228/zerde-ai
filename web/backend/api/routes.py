@@ -1,13 +1,12 @@
+import asyncio
 import os
 import uuid
-import asyncio
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
-from fastapi.responses import JSONResponse
+
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from typing import List, Optional
-from services.analysis import start_analysis, get_analysis_status
-from services.storage import list_reports, get_report
+from services.analysis import get_analysis_status, start_analysis
+from services.storage import get_report, list_reports
 
 router = APIRouter()
 
@@ -75,7 +74,7 @@ async def analyze_document(background_tasks: BackgroundTasks, file: UploadFile =
 
     main_loop = asyncio.get_running_loop()
     background_tasks.add_task(start_analysis, analysis_id, file_path, main_loop)
-    
+
     return {"analysis_id": analysis_id, "status": "started"}
 
 @router.get("/analyze/{analysis_id}")
@@ -86,7 +85,7 @@ async def check_analysis_status(analysis_id: str):
         raise HTTPException(status_code=404, detail="Analysis not found")
     return status
 
-@router.get("/reports", response_model=List[ReportMetadata])
+@router.get("/reports", response_model=list[ReportMetadata])
 async def get_all_reports():
     """Returns a list of all generated reports."""
     reports = list_reports()

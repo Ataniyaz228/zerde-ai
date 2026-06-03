@@ -17,7 +17,6 @@ import logging
 import re
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -383,7 +382,7 @@ class LawRegistry:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_registry: Optional[LawRegistry] = None
+_registry: LawRegistry | None = None
 
 
 def get_registry(db_path: str | Path | None = None) -> LawRegistry:

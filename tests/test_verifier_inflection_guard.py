@@ -12,11 +12,13 @@ guard понижает заведомо-ложные случаи: фраза т
 
 import pytest
 
+from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus
 from zerde.stages.s5_5_verifier import (
     _same_phrase_modulo_inflection as same,
+)
+from zerde.stages.s5_5_verifier import (
     verify_contradictions,
 )
-from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus
 
 
 # --- что ОБЯЗАНО считаться мнимым противоречием (понижаем) -----------------

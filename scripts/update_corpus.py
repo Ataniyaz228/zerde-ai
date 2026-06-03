@@ -1,5 +1,4 @@
 import argparse
-import asyncio
 import datetime
 import json
 import os
@@ -30,13 +29,13 @@ def get_latest_adilet_version(adilet_id: str) -> str | None:
         req = urllib.request.Request(url, headers=HEADERS)
         with urllib.request.urlopen(req, timeout=15) as response:
             html = response.read().decode("utf-8")
-        
+
         # Split by table rows
         tr_blocks = re.findall(r'<tr.*?>.*?</tr>', html, re.DOTALL)
         if not tr_blocks:
             print("   ⚠️ No table rows found in history page!")
             return None
-            
+
         # Traversal from last row (most recent chronological)
         for row in reversed(tr_blocks):
             if adilet_id.lower() in row.lower():
@@ -46,7 +45,7 @@ def get_latest_adilet_version(adilet_id: str) -> str | None:
                     rev_date = f"{year}-{month}-{day}"
                     print(f"   Found latest revision date: {rev_date}")
                     return rev_date
-                    
+
         print("   ⚠️ Could not find a row referencing the adilet_id in history table!")
         return None
     except Exception as e:
@@ -78,7 +77,7 @@ def clean_database_chunks(db_path: str, law_id: str):
     if not os.path.exists(db_path):
         print(f"   [DB] Database {db_path} does not exist yet. No cleanup needed.")
         return
-        
+
     print(f"   [DB] Cleaning old RAG chunks and embeddings for Law ID: {law_id}...")
     try:
         conn = sqlite3.connect(db_path)
@@ -122,7 +121,7 @@ def main():
         print(f"❌ Manifest file {manifest_path} not found!")
         sys.exit(1)
 
-    with open(manifest_path, "r", encoding="utf-8") as f:
+    with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
 
     db_path = os.getenv("ZERDE_CACHE_DB", "zerde_cache.db")
@@ -141,7 +140,7 @@ def main():
         if args.adilet_id and adilet_id != args.adilet_id:
             continue
 
-        print(f"\n─────────────────────────────────────────────────────────────────")
+        print("\n─────────────────────────────────────────────────────────────────")
         print(f"Checking: {title} (Law ID: {law_id}, Adilet: {adilet_id})")
         print(f"Current local version date: {current_version}")
 
@@ -189,7 +188,7 @@ def main():
             # e.g., k1400000235.12-03-2026.rus.pdf
             new_filename = f"{adilet_id.lower()}.{file_date_str}.{lang_suffix}.pdf"
             new_file_path = doc_dir / new_filename
-            
+
             download_url = f"https://adilet.zan.kz/{lang}/docs/{adilet_id}/download"
             success = download_file(download_url, new_file_path)
             if success:
@@ -225,7 +224,7 @@ def main():
 
     if updates_made > 0:
         # Save manifest
-        manifest["last_updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        manifest["last_updated"] = datetime.datetime.now(datetime.UTC).isoformat()
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
         print(f"\n📝 Saved manifest updates to {manifest_path}.")

@@ -391,13 +391,25 @@ def get_registry(db_path: str | Path | None = None) -> LawRegistry:
     Возвращает singleton реестра.
 
     Args:
-        db_path: Путь к БД. Если None — использует ZERDE_CACHE_DB или "zerde_cache.db".
+        db_path: Путь к БД. Если None — ZERDE_CACHE_DB, иначе settings.cache_db_path
+            (абсолютный дефолт), иначе "zerde_cache.db".
     """
     global _registry
     if _registry is None or db_path is not None:
         import os
         if db_path is None:
-            db_path = os.getenv("ZERDE_CACHE_DB", "zerde_cache.db")
+            # Выравниваемся с CacheManager: сначала ZERDE_CACHE_DB, затем АБСОЛЮТНЫЙ
+            # дефолт из конфига (<project_root>/zerde_cache.db). Раньше тут был
+            # относительный "zerde_cache.db": при cwd ≠ корень проекта реестр молча
+            # читал пустую/другую БД, тогда как кэш — настоящую → resolve() деградировал
+            # до статики и грунтинг тихо ухудшался.
+            db_path = os.getenv("ZERDE_CACHE_DB")
+            if not db_path:
+                try:
+                    from zerde.config import get_settings
+                    db_path = get_settings().cache_db_path
+                except Exception:
+                    db_path = "zerde_cache.db"
         _registry = LawRegistry(db_path)
     return _registry
 

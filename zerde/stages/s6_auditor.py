@@ -249,6 +249,25 @@ def _extract_article_from_claim(claim: DocumentClaim) -> str | None:
     return None
 
 
+# Глаголы-правки поправочного акта (RU + KK). Если claim описывает САМО изменение,
+# высокий BM25 к цитируемой статье означает «claim цитирует действующую норму», а НЕ
+# «норма подтверждает суть правки» — поэтому S6 не подтверждает такие claim'ы по одной
+# лексике (C2), а числовое расхождение для них = намеренная замена, не ошибка (M3).
+_AMENDMENT_VERB_RE = re.compile(
+    r"замен|исключ|дополн|изложить|после\s+слов|словами|точку\s+заменить|"
+    r"толықтырылсын|алып\s+тасталсын|ауыстырылсын|сөздерінен\s+кейін",
+    re.I | re.U,
+)
+
+
+def _is_amendment_claim(claim: DocumentClaim | None) -> bool:
+    """True если claim описывает само изменение (поправочный акт)."""
+    if claim is None:
+        return False
+    text = (getattr(claim, "claim_text", "") or "") + " " + (getattr(claim, "quote", "") or "")
+    return bool(_AMENDMENT_VERB_RE.search(text))
+
+
 def _exact_metadata_search(
     claim: DocumentClaim,
     corpus_index: dict[str, EvidenceChunk],
@@ -373,6 +392,9 @@ def audit_analysis(
     bm25 = _build_bm25_index(corpus_index)
 
     scores: list[float] = []
+    # Ранний доступ к вердиктам по claim_id — нужен metadata-first пути (M3),
+    # который выставляет CONTRADICTED при числовом конфликте до основного sync-блока.
+    verdict_by_claim = {v.claim_id: v for v in analysis.verdicts if v.claim_id}
 
     for fact in analysis.facts:
         try:
@@ -395,11 +417,37 @@ def audit_analysis(
                     meta_score = bm25.score(meta_query, exact_candidates)
                     fact.bm25_score = meta_score
 
-                    # Арифметика: числовое расхождение с источником — сигнал ошибки,
-                    # давим в LOW независимо от лексического совпадения.
-                    arithmetic_ok = _arithmetic_check(fact, exact_candidates, corpus_index)
-                    if not arithmetic_ok:
+                    # Арифметика (M3): числовой конфликт считаем по ТЕКСТУ claim'а
+                    # (fact.claim у UNVERIFIED ещё не содержит числа) против процитированной
+                    # статьи. Источник — это и есть цитируемая норма (law+article match).
+                    claim_full_text = (claim.claim_text or "") + " " + (claim.quote or "")
+                    num_conflict = _find_arithmetic_conflict(
+                        claim_full_text, exact_candidates, corpus_index
+                    )
+                    if num_conflict is not None:
+                        # Число claim'а расходится с цитируемой статьёй → давим в LOW.
+                        # Для НЕ поправочных claim'ов это реальная ошибка → CONTRADICTED
+                        # с фактическими значениями источника (CITE-OR-ABSTAIN). Поправки
+                        # меняют число намеренно — для них это норма, не противоречие.
                         fact.validation_status = ValidationStatus.LOW
+                        if not _is_amendment_claim(claim):
+                            doc_val, found_val = num_conflict
+                            _v = verdict_by_claim.get(fact.claim_id)
+                            if _v is not None and _v.status != VerdictStatus.CONTRADICTED:
+                                art = _extract_article_from_claim(claim)
+                                _v.status = VerdictStatus.CONTRADICTED
+                                _v.confidence = "HIGH"
+                                _v.source_ids = exact_candidates
+                                _v.document_value = _v.document_value or doc_val
+                                _v.found_value = found_val
+                                _v.contradiction_detail = (
+                                    f"Документ указывает {doc_val}, но в "
+                                    f"{('ст.' + art + ' ') if art else ''}источника — {found_val}."
+                                )
+                                logger.warning(
+                                    f"[S6/Arithmetic→CONTRADICTED] claim '{fact.claim_id}': "
+                                    f"документ={doc_val} vs источник={found_val}"
+                                )
                     else:
                         fact.validation_status = _score_to_status(
                             meta_score,
@@ -507,6 +555,20 @@ def audit_analysis(
                             logger.info(
                                 f"[S6/Sync] Blocking upgrade of verdict '{v.claim_id}' from UNVERIFIED to CONFIRMED "
                                 f"(bm25={bm25:.3f} < threshold={threshold})"
+                            )
+                            continue
+
+                        # C2: не воскрешаем в CONFIRMED вердикт, который verifier уже
+                        # понизил (чистого подтверждения нет), и поправочные claim'ы —
+                        # высокий BM25 там = цитирование нормы, а не подтверждение сути
+                        # правки (CITE-OR-ABSTAIN: оставляем UNVERIFIED).
+                        if v.verifier_demoted:
+                            logger.info(f"[S6/Sync] Skip upgrade '{v.claim_id}': verifier-demoted (C2).")
+                            continue
+                        if _is_amendment_claim(claim_map.get(v.claim_id)):
+                            logger.info(
+                                f"[S6/Sync] Skip upgrade '{v.claim_id}': поправочный claim, "
+                                f"BM25-лексика не подтверждает суть правки (C2)."
                             )
                             continue
 
@@ -1283,6 +1345,47 @@ def _arithmetic_check(
                     return False
 
     return True
+
+
+def _find_arithmetic_conflict(
+    claim_text: str,
+    resolved_ids: list[str],
+    corpus_index: dict[str, EvidenceChunk],
+) -> tuple[str, str] | None:
+    """M3: возвращает (document_value, found_value) при числовом конфликте claim↔источник.
+
+    Конфликт = по одной и той же единице claim называет значение, которого НЕТ ни у
+    одного значения источника (с допуском 5% на округление). None, если расхождений нет
+    или единицы не пересекаются. Используется только на metadata-first пути (точное
+    совпадение law+article), где источник — это процитированная статья.
+    """
+    claim_numbers = _extract_numbers_with_units(claim_text)
+    if not claim_numbers:
+        return None
+    source_texts = " ".join(
+        corpus_index[sid].content
+        for sid in resolved_ids
+        if sid in corpus_index and corpus_index[sid].content
+    )
+    if not source_texts:
+        return None
+    source_numbers = _extract_numbers_with_units(source_texts)
+    for unit, claim_values in claim_numbers.items():
+        if unit not in source_numbers:
+            continue
+        claim_sym = _normalize_numbers(claim_values)
+        source_sym = _normalize_numbers(source_numbers[unit])
+        if not source_sym:
+            continue
+        for cv in claim_sym:
+            if cv in source_sym:
+                continue
+            if any(abs(cv - sv) / max(abs(sv), 0.001) < 0.05 for sv in source_sym):
+                continue
+            doc_val = f"{cv:g} {unit}"
+            found_val = ", ".join(f"{sv:g} {unit}" for sv in sorted(source_sym))
+            return doc_val, found_val
+    return None
 
 
 def _extract_numbers_with_units(text: str) -> dict[str, set[str]]:

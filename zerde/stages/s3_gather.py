@@ -413,13 +413,25 @@ def _build_web_chunk(result: dict, query: WebQuery, provider: str) -> EvidenceCh
         return None
     chunk_id = hashlib.sha256(content.encode()).hexdigest()
     title = result.get("title", "")
+
+    # C1 fix: ранг web-источника выводится многофакторным скорером (домен + контент),
+    # а НЕ хардкодом LAW_RK. Иначе сниппет zakon.kz/блога получал ранг «Закон РК» (4) —
+    # ложно высокий авторитет, который завышал reliability (Q_auth/a_coef) и подписывал
+    # его «Закон РК» в нормативной базе. Скорер даёт CODE/LAW_RK только при сильных
+    # сигналах; иначе откатывается к tier-маппингу (TIER_2→EXPERT_ANALYTICS и т.д.).
+    inferred_rank, rank_confidence, rank_reason = infer_legal_rank_from_web_content(
+        tier=tier, title=title, content=content, url=url
+    )
     return EvidenceChunk(
         chunk_id=chunk_id,
         source_url=url,
         source_title=title or url,
         content=content,
-        legal_rank=LegalRank.LAW_RK,
+        legal_rank=inferred_rank,
         web_tier=tier,
+        inferred_rank=inferred_rank,
+        inferred_rank_confidence=rank_confidence,
+        inference_reason=rank_reason,
         search_provider=provider,
         language=getattr(query, "language", None),
     )

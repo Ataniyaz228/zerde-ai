@@ -254,6 +254,14 @@ class ClaimVerdict(BaseModel):
         default=False,
         description="True если вердикт вынесен из reference_data без LLM",
     )
+    verifier_demoted: bool = Field(
+        default=False,
+        description=(
+            "True если S5.5 verifier понизил CONTRADICTED→UNVERIFIED. Блокирует "
+            "ре-апгрейд этого вердикта обратно в CONFIRMED в S6 по одной лексической "
+            "близости BM25 (C2: verifier уже решил, что чистого вердикта нет)."
+        ),
+    )
 
 
 class ClaimExtractionResult(BaseModel):

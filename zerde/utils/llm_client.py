@@ -32,6 +32,27 @@ def get_llm_semaphore() -> asyncio.Semaphore:
     return _LLM_SEMAPHORE
 
 
+def build_prompt_key(
+    messages: list[dict],
+    temperature: float = 0.0,
+    max_tokens: int = 4096,
+) -> str:
+    """Канонический ключ промпта для LLM-кэша.
+
+    H3 fix: единственный источник формата ключа. Раньше cached_llm_call строил
+    ключ из {messages, temperature, max_tokens}, а ручная инвалидация кэша в
+    s2_planner/s2_5 считала ключ ТОЛЬКО из messages → удаляла несуществующий
+    ключ, и retry-по-пустому-ответу молча возвращал тот же закэшированный план.
+    Вызывающие manual-invalidation ОБЯЗАНЫ строить ключ через эту же функцию с
+    теми же temperature/max_tokens, что были переданы в cached_llm_call.
+    """
+    return json.dumps(
+        {"messages": messages, "temperature": temperature, "max_tokens": max_tokens},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
 
 def _repair_truncated_json(raw: str) -> dict | None:
     """
@@ -160,11 +181,9 @@ async def cached_llm_call(
     # Ключ = model + messages + параметры генерации, влияющие на ответ.
     # БЕЗ temperature/max_tokens смена этих настроек вернула бы устаревший
     # закэшированный ответ (cache.py:_make_key добавляет ещё версию промпта).
-    prompt_key = json.dumps(
-        {"messages": messages, "temperature": temperature, "max_tokens": max_tokens},
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    # Единый билдер (build_prompt_key) — чтобы ручная инвалидация в стейджах
+    # строила ИДЕНТИЧНЫЙ ключ (см. H3).
+    prompt_key = build_prompt_key(messages, temperature=temperature, max_tokens=max_tokens)
 
     # Проверяем кэш
     cached = await cache.get(model, prompt_key)

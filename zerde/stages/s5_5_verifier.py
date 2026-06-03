@@ -142,6 +142,7 @@ async def verify_contradictions(
                 f"и found='{v.found_value}' — одна фраза с точностью до склонения. Понижаю до UNVERIFIED."
             )
             v.status = VerdictStatus.UNVERIFIED
+            v.verifier_demoted = True  # C2: запретить S6 ре-апгрейд в CONFIRMED
             v.contradiction_detail = (
                 f"[Verifier: Понижено с CONTRADICTED] Различие document↔норма "
                 f"('{v.document_value}' / '{v.found_value}') — грамматическое (падеж/порядок слов), "
@@ -163,6 +164,7 @@ async def verify_contradictions(
                 f"Чанки на уровне статьи не дают абзацной точности → UNVERIFIED."
             )
             v.status = VerdictStatus.UNVERIFIED
+            v.verifier_demoted = True  # C2: запретить S6 ре-апгрейд в CONFIRMED
             v.contradiction_detail = (
                 "[Verifier: Понижено с CONTRADICTED] Опровержение основано на отсутствии "
                 "изменяемой фразы в показанном фрагменте статьи, а не на конфликтующем "
@@ -184,6 +186,7 @@ async def verify_contradictions(
                 f"который РЕАЛЬНО есть в норме (дозаменная форма) — это не противоречие. → UNVERIFIED."
             )
             v.status = VerdictStatus.UNVERIFIED
+            v.verifier_demoted = True  # C2: запретить S6 ре-апгрейд в CONFIRMED
             v.contradiction_detail = (
                 "[Verifier: Понижено с CONTRADICTED] Поправка заменяет/исключает текст, "
                 "который присутствует в действующей норме — наличие заменяемой формы в законе "
@@ -201,6 +204,7 @@ async def verify_contradictions(
                 f"but no valid source chunks found in plan! Demoting to UNVERIFIED."
             )
             v.status = VerdictStatus.UNVERIFIED
+            v.verifier_demoted = True  # C2: запретить S6 ре-апгрейд в CONFIRMED
             v.contradiction_detail = (
                 f"[Verifier: Понижено с CONTRADICTED] LLM заявила о противоречии, "
                 f"но не смогла указать валидные источники из базы НПА."
@@ -250,6 +254,7 @@ async def verify_contradictions(
                 f"by actual text in sources {valid_sources}! Demoting to UNVERIFIED to avoid hallucination."
             )
             v.status = VerdictStatus.UNVERIFIED
+            v.verifier_demoted = True  # C2: запретить S6 ре-апгрейд в CONFIRMED
             v.contradiction_detail = (
                 f"[Verifier: Понижено с CONTRADICTED] Опровергающие факты ({v.found_value}) "
                 f"отсутствуют в указанных источниках ({', '.join(valid_sources)})."

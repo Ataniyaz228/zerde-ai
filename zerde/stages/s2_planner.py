@@ -80,10 +80,14 @@ async def build_query_plan(doc_state: DocumentState) -> QueryPlan:
             f"[S2] Attempt {attempt}/{MAX_RETRIES}: planner returned 0 queries. "
             f"Response keys: {list(raw_json.keys()) if raw_json else 'empty'}"
         )
-        # Инвалидируем кэш чтобы при retry получить новый ответ
+        # Инвалидируем кэш чтобы при retry получить новый ответ.
+        # H3: ключ строим тем же build_prompt_key с ТЕМИ ЖЕ параметрами, что
+        # ушли в cached_llm_call (temperature=0.0 по умолчанию + max_tokens
+        # планировщика), иначе удаляли бы не тот ключ и retry был бесполезен.
         from zerde.utils.cache import LLMCache
+        from zerde.utils.llm_client import build_prompt_key
         llm_cache = LLMCache(settings.cache_db_path)
-        prompt_key = json.dumps([{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}], ensure_ascii=False, sort_keys=True)
+        prompt_key = build_prompt_key(messages, temperature=0.0, max_tokens=settings.llm_max_tokens_planner)
         cache_key = LLMCache._make_key(settings.llm_model_planner, prompt_key)
         await llm_cache._delete(cache_key)
         logger.info(f"[S2] Cache invalidated for retry {attempt + 1}")

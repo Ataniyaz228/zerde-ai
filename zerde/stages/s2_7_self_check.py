@@ -144,10 +144,24 @@ def _detect_deadline_collisions(text: str) -> list[DocumentClaim]:
             art_num = m.group(1)
             article_blocks[art_num].append(part)
 
+    # M2: если разбиение по заголовкам статей НЕ сработало (в тексте нет чистых
+    # «\nСтатья N.» — напр. сплошной OCR/один абзац), весь документ схлопывается в
+    # один блок, и сроки из РАЗНЫХ статей дают ложную коллизию → ложный CRITICAL
+    # CONTRADICTED, который обходит все слои демоушена. Поэтому блок, превышающий
+    # правдоподобный размер одной статьи, считаем неразбитым и коллизии в нём не ищем
+    # (CITE-OR-ABSTAIN: лучше пропустить, чем выдумать противоречие).
+    _MAX_ARTICLE_BLOCK_CHARS = 8000
+
     # В каждой статье ищем сроки
     counter = 0
     for art_num, blocks in article_blocks.items():
         block = "\n".join(blocks)
+        if len(block) > _MAX_ARTICLE_BLOCK_CHARS:
+            logger.info(
+                f"[S2.7] Статья {art_num}: блок {len(block)} симв. > {_MAX_ARTICLE_BLOCK_CHARS} "
+                f"— вероятно, текст не разбит на статьи; пропускаю проверку коллизий сроков."
+            )
+            continue
         # Группируем сроки по единицам
         deadlines_by_unit: dict[str, list[int]] = defaultdict(list)
 

@@ -680,10 +680,13 @@ async def _llm_extract_chunk(
             logger.warning(
                 f"[S2.5/LLM] Attempt {attempt}/{MAX_RETRIES}: empty claims, retrying (temp={temperature})..."
             )
-            # Инвалидируем кэш чтобы получить новый ответ
+            # Инвалидируем кэш чтобы получить новый ответ.
+            # H3: тот же build_prompt_key с ТЕКУЩИМИ temperature/max_tokens, что
+            # ушли в cached_llm_call (иначе удалялся бы не тот ключ).
             from zerde.utils.cache import LLMCache
+            from zerde.utils.llm_client import build_prompt_key
             llm_cache = LLMCache(settings.cache_db_path)
-            prompt_key = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+            prompt_key = build_prompt_key(messages, temperature=temperature, max_tokens=3000)
             cache_key = LLMCache._make_key(settings.llm_model_extractor, prompt_key)
             await llm_cache._delete(cache_key)
         except Exception as e:

@@ -11,15 +11,15 @@ const fadeUp = (delay = 0) => ({
   transition: { duration: 0.55, delay, ease: "easeOut" as const },
 });
 
-const STAGES = [
-  { label: "Извлечение тезисов", pct: 100 },
-  { label: "Поиск НПА", pct: 78 },
-  { label: "Верификация", pct: 54 },
-  { label: "Формирование отчёта", pct: 30 },
-];
-
 export default function Home() {
   const { t } = useTranslation();
+
+  const STAGES = [
+    { label: t("step_extract_short"), pct: 100 },
+    { label: t("step_search_short"), pct: 78 },
+    { label: t("step_verify_short"), pct: 54 },
+    { label: t("step_report_short"), pct: 30 },
+  ];
 
   const FEATURES = [
     { icon: Scale, title: t("feat_accuracy"), desc: t("feat_accuracy_desc") },
@@ -93,8 +93,7 @@ export default function Home() {
               ))}
 
               <div className={s.cardFooter}>
-                <span className={s.cardFooterLabel}>reliability_score</span>
-                <span className={s.cardScore}>87%</span>
+                <span className={s.cardFooterDesc}>{t("card_footer_desc")}</span>
               </div>
             </div>
           </motion.div>

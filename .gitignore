@@ -17,6 +17,7 @@ build/
 *.db
 *.db-shm
 *.db-wal
+*.db.bak-*
 *.log
 last_*_raw_response.json
 scratch/
@@ -41,3 +42,5 @@ git_diff_snapshot.txt
 git_history_snapshot.txt
 latest_responses.json
 last_llm_call.json
+repomix-output.xml
+CLAUDE.md

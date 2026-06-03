@@ -109,6 +109,19 @@ async def run_auditor(
         final_analysis.cons.extend(a.cons)
         final_analysis.verdicts.extend(a.verdicts)
 
+    # Дедуп пробелов регулирования по описанию: разные батчи (по 5 claim) могут
+    # независимо вернуть одну и ту же находку.
+    if final_analysis.negative_space:
+        seen_desc: set[str] = set()
+        uniq_ns = []
+        for ns in final_analysis.negative_space:
+            key = ns.description.strip().lower()[:120]
+            if key in seen_desc:
+                continue
+            seen_desc.add(key)
+            uniq_ns.append(ns)
+        final_analysis.negative_space = uniq_ns
+
     _validate_claim_coverage(final_analysis, claims)
     return final_analysis
 
@@ -193,13 +206,36 @@ def _parse_auditor_response(
             confidence=confidence,
         ))
 
+    # additional_findings из ответа аудитора → negative_space. Раньше эти находки
+    # (пробелы/коллизии регулирования) запрашивались в схеме промпта, но молча
+    # отбрасывались парсером — секция «Пробелы регулирования» и n_gaps всегда были
+    # пустыми. gap_type вне допустимого множества (напр. "error") → regulatory_hole.
+    negative_space: list[NegativeSpaceItem] = []
+    _VALID_GAP = {"regulatory_hole", "intentional_silence", "delegation_gap"}
+    for idx, finding in enumerate(raw.get("additional_findings", []) or []):
+        if not isinstance(finding, dict):
+            continue
+        desc = str(finding.get("description", "")).strip()
+        if not desc:
+            continue
+        gtype = str(finding.get("gap_type", "regulatory_hole")).strip().lower()
+        if gtype not in _VALID_GAP:
+            gtype = "regulatory_hole"
+        negative_space.append(NegativeSpaceItem(
+            item_id=f"gap_{analysis_id[:8]}_{idx:02d}",
+            description=desc,
+            gap_type=gtype,  # type: ignore[arg-type]
+            affected_domain=str(finding.get("affected_domain", "")).strip() or "не указано",
+            source_ids=[],
+        ))
+
     return AnalysisJSON(
         analysis_id=analysis_id,
         source_doc_id=plan.source_doc_id,
         plan_id=plan.plan_id,
         facts=facts,
         conclusions=[],
-        negative_space=[],
+        negative_space=negative_space,
         normative=[],
         cons=raw.get("cons", []),
         llm_model_used=model,

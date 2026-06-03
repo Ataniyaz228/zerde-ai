@@ -380,24 +380,40 @@ def audit_analysis(
         try:
             claim = claim_map.get(fact.claim_id) if (fact.claim_id and fact.claim_id in claim_map) else None
 
-            # --- METADATA-FIRST SEARCH (v9.4 Step 1 bypass) ---
+            # --- METADATA-FIRST SEARCH (v9.4 Step 1) ---
+            # Совпадение (law_id, article) — это привязка к ПЕРВОИСТОЧНИКУ, НЕ
+            # доказательство, что текст статьи подтверждает СУТЬ claim. Раньше тут
+            # жёстко ставилось bm25=1.0 + HIGH, и sync-блок ниже апгрейдил
+            # UNVERIFIED→CONFIRMED только по факту совпадения номера статьи — для
+            # поправочных биллей (claim ссылается на существующую статью) это
+            # массовый false-confirm. Теперь метадата даёт привязку источника, но
+            # СТАТУС считаем по реальному BM25 claim↔чанк: наличие статьи в корпусе
+            # ≠ подтверждение содержания (CITE-OR-ABSTAIN).
             if claim:
                 exact_candidates = _exact_metadata_search(claim, corpus_index)
                 if exact_candidates:
                     fact.source_ids = exact_candidates
-                    fact.bm25_score = 1.0
-                    
-                    # Run arithmetic check
+                    meta_query = (claim.claim_text + " " + claim.quote).strip() or fact.claim
+                    meta_score = bm25.score(meta_query, exact_candidates)
+                    fact.bm25_score = meta_score
+
+                    # Арифметика: числовое расхождение с источником — сигнал ошибки,
+                    # давим в LOW независимо от лексического совпадения.
                     arithmetic_ok = _arithmetic_check(fact, exact_candidates, corpus_index)
                     if not arithmetic_ok:
                         fact.validation_status = ValidationStatus.LOW
                     else:
-                        fact.validation_status = ValidationStatus.HIGH
-                        
-                    scores.append(fact.bm25_score)
+                        fact.validation_status = _score_to_status(
+                            meta_score,
+                            settings.validation_threshold,
+                            settings.bm25_medium_threshold,
+                        )
+
+                    scores.append(meta_score)
                     logger.info(
-                        f"[S6/Metadata-First] Fact '{fact.fact_id}' (claim '{claim.claim_id}') verified exactly via metadata match: "
-                        f"ids={exact_candidates} arithmetic_ok={arithmetic_ok}"
+                        f"[S6/Metadata-First] Fact '{fact.fact_id}' (claim '{claim.claim_id}') metadata match "
+                        f"ids={exact_candidates} bm25={meta_score:.3f} arithmetic_ok={arithmetic_ok} "
+                        f"→ {fact.validation_status.value}"
                     )
                     continue
 

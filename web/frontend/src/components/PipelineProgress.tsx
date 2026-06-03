@@ -1,6 +1,7 @@
 "use client";
 import { Check, X, FileSearch, Globe, ShieldCheck, FileText, Loader } from "lucide-react";
 import s from "./PipelineProgress.module.css";
+import { useTranslation } from "@/lib/i18n";
 
 export interface PipelineStep {
   id: string;
@@ -21,6 +22,7 @@ const ICONS: Record<string, React.ElementType> = {
 };
 
 export default function PipelineProgress({ steps }: Props) {
+  const { t } = useTranslation();
   const done = steps.filter((s) => s.status === "done").length;
   const total = steps.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
@@ -28,7 +30,7 @@ export default function PipelineProgress({ steps }: Props) {
   return (
     <div className={s.wrap}>
       <div className={s.header}>
-        <span className={s.title}>Прогресс анализа</span>
+        <span className={s.title}>{t("progress_header")}</span>
         <span className={s.stepNum}>{done}/{total}</span>
       </div>
 

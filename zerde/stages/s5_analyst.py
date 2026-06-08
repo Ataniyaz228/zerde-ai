@@ -297,7 +297,7 @@ def _retrieve_for_claims(
     if not chunks:
         return []
 
-    from zerde.stages.s6_auditor import (
+    from zerde.stages._claim_refs import (
         _are_law_ids_synonymous,
         _extract_article_from_claim,
         _extract_referenced_law_ids,

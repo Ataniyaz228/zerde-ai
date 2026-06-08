@@ -218,25 +218,33 @@ class CacheManager:
         Returns:
             Количество реально сохранённых (не дубликатов).
         """
-        stored = 0
+        if not chunks:
+            return 0
+        now = datetime.now(UTC).isoformat()
+        rows = [
+            (
+                chunk.chunk_id,
+                chunk.source_url,
+                chunk.chunk_id,
+                chunk.model_dump_json(),
+                now,
+            )
+            for chunk in chunks
+        ]
         async with get_db_lock():
             with self._conn() as conn:
-                for chunk in chunks:
-                    result = conn.execute(
-                        """
-                        INSERT OR IGNORE INTO evidence_cache
-                            (chunk_id, source_url, content_hash, chunk_json, cached_at)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (
-                            chunk.chunk_id,
-                            chunk.source_url,
-                            chunk.chunk_id,
-                            chunk.model_dump_json(),
-                            datetime.now(UTC).isoformat(),
-                        ),
-                    )
-                    stored += result.rowcount
+                # F-B4: один executemany вместо N execute. INSERT OR IGNORE пропускает
+                # дубликаты, поэтому реально вставленные = дельта total_changes.
+                before = conn.total_changes
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO evidence_cache
+                        (chunk_id, source_url, content_hash, chunk_json, cached_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+                stored = conn.total_changes - before
         if stored > 0:
             logger.info(f"[Cache] Batch stored {stored} new chunks.")
             self._sync_new_chunks(chunks)

@@ -16,7 +16,13 @@ import logging
 import re
 import weakref
 
-from openai import AsyncOpenAI
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AsyncOpenAI,
+    InternalServerError,
+    RateLimitError,
+)
 
 from zerde.config import Settings, get_settings
 
@@ -35,6 +41,10 @@ def get_llm_semaphore() -> asyncio.Semaphore:
         sem = asyncio.Semaphore(5)
         _LLM_SEMAPHORE_DICT[loop] = sem
     return sem
+
+
+# F-D4: доп. попытки на транзиентные ошибки сети/429/5xx (json-fallback — отдельно).
+_LLM_MAX_RETRIES = 2
 
 
 def build_prompt_key(
@@ -198,36 +208,46 @@ async def cached_llm_call(
     # Делаем реальный LLM-вызов под семафором
     semaphore = get_llm_semaphore()
     async with semaphore:
-        # Пробуем с json_object, при ошибке — без него (fallback)
         content = None
-        for use_json_mode in (True, False):
+        for attempt in range(_LLM_MAX_RETRIES + 1):
             try:
-                kwargs: dict = dict(
-                    model=model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    messages=messages,
-                )
-                if use_json_mode:
-                    kwargs["response_format"] = {"type": "json_object"}
-
-                response = await client.chat.completions.create(**kwargs)
-                # Защита от 200-ответа без choices (transient upstream 429 через
-                # OpenRouter отдаёт пустой choices): не падаем с
-                # 'NoneType'/'IndexError', а пробуем следующий режим → "{}".
-                choices = getattr(response, "choices", None)
-                if not choices:
-                    logger.warning("[LLMCall] response has no choices (transient upstream error?), retrying...")
-                    continue
-                content = choices[0].message.content or "{}"
-                break  # Успех — выходим
-            except Exception as e:
-                err_str = str(e)
-                if "json" in err_str.lower() or "400" in err_str:
+                # Пробуем с json_object, при ошибке формата — без него (fallback)
+                for use_json_mode in (True, False):
+                    kwargs: dict = dict(
+                        model=model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        messages=messages,
+                    )
                     if use_json_mode:
-                        logger.info("[LLMCall] json_object not supported, retrying without it...")
-                        continue  # Попробуем без json_mode
-                raise  # Другая ошибка — пробрасываем
+                        kwargs["response_format"] = {"type": "json_object"}
+                    try:
+                        response = await client.chat.completions.create(**kwargs)
+                    except Exception as e:
+                        err_str = str(e)
+                        if ("json" in err_str.lower() or "400" in err_str) and use_json_mode:
+                            logger.info("[LLMCall] json_object not supported, retrying without it...")
+                            continue  # Попробуем без json_mode
+                        raise  # формат-агностичная (вкл. транзиентную) — наверх
+                    # Защита от 200-ответа без choices (OpenRouter при transient 429
+                    # отдаёт пустой choices): не падаем, пробуем следующий режим → "{}".
+                    choices = getattr(response, "choices", None)
+                    if not choices:
+                        logger.warning("[LLMCall] response has no choices (transient upstream error?), retrying...")
+                        continue
+                    content = choices[0].message.content or "{}"
+                    break  # Успех — выходим из json-loop
+                break  # Выходим из retry-loop (успех либо исчерпан json-fallback)
+            except (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError) as e:
+                # F-D4: транзиентные ошибки сети/429/5xx — backoff и повтор.
+                if attempt >= _LLM_MAX_RETRIES:
+                    raise
+                delay = 2 ** attempt
+                logger.warning(
+                    f"[LLMCall] transient error (attempt {attempt + 1}/{_LLM_MAX_RETRIES + 1}): "
+                    f"{e}; retry in {delay}s"
+                )
+                await asyncio.sleep(delay)
 
     if content is None:
         content = "{}"

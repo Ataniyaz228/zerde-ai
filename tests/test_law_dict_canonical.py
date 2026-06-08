@@ -12,8 +12,8 @@ law_id-форму, и (кроме явно ещё-не-инджестирова�
 
 import re
 
+from zerde.stages._claim_refs import _COMMON_LAW_NAME_MAP
 from zerde.stages.s2_5_claim_extractor import _TITLE_HINT_MAP
-from zerde.stages.s6_auditor import _COMMON_LAW_NAME_MAP
 from zerde.utils.law_registry import _STATIC_FALLBACK, get_registry
 
 # Реальные законы РК, которых пока нет в корпусе (law_metadata). Допустимы как
@@ -33,7 +33,7 @@ def _iter_curated_values():
             yield src, key, val
     for key, vals in _COMMON_LAW_NAME_MAP.items():
         for val in vals:
-            yield "s6._COMMON_LAW_NAME_MAP", key, val
+            yield "_claim_refs._COMMON_LAW_NAME_MAP", key, val
 
 
 def test_curated_law_maps_have_no_stale_or_junk_values():

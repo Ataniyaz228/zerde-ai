@@ -188,29 +188,15 @@ class AuditResult(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-def audit_analysis(
+VIRTUAL_SOURCES = {"UNLINKED", "reference_data"}
+
+
+def _preprocess_verdict_sources(
     analysis: AnalysisJSON,
-    chunks: list[EvidenceChunk],
-    claims: ClaimExtractionResult | None = None,
-) -> AnalysisJSON:
-    """
-    Этап 6: Детерминированный аудит. Строго без Retry.
-    Ошибка при любой проверке → UNVERIFIED.
-    """
-    settings = get_settings()
-
-    # Map claim_ids to DocumentClaim objects for metadata filtering
-    claim_map = {}
-    if claims and claims.claims:
-        claim_map = {c.claim_id: c for c in claims.claims}
-    corpus_index = {c.chunk_id: c for c in chunks if not c.is_duplicate}
-
-    # Виртуальные source_ids (не указывают на конкретный chunk).
-    VIRTUAL_SOURCES = {"UNLINKED", "reference_data"}
-
-    # source_ids уже переведены в полные chunk_id в S5 (_remap_source_ids:
-    # короткие метки S1.. → chunk_id), поэтому здесь достаточно точного совпадения
-    # по corpus_index — обрезанных hex-ID и prefix-recovery больше нет.
+    corpus_index: dict[str, EvidenceChunk],
+) -> None:
+    # F-A1: разрешение verdict.source_ids в chunk_id, фильтр недостоверных
+    # веб-источников и даунгрейд CONFIRMED-без-реального-источника.
     for v in analysis.verdicts:
         resolved_ids = []
         for sid in v.source_ids:
@@ -274,11 +260,15 @@ def audit_analysis(
                         fact.claim = f"[{v.claim_id}]: '{v.document_value}'"
                         fact.validation_status = ValidationStatus.UNVERIFIED
 
-    logger.info(f"[S6] Audit start. facts={len(analysis.facts)} corpus={len(corpus_index)}")
 
-    # Строим BM25 индекс
-    bm25 = _build_bm25_index(corpus_index)
-
+def _audit_facts_loop(
+    analysis: AnalysisJSON,
+    corpus_index: dict[str, EvidenceChunk],
+    bm25: ZerdeBM25,
+    claim_map: dict[str, DocumentClaim],
+) -> list[float]:
+    # F-A1: per-fact валидация (metadata-first → BM25 fallback → _audit_fact).
+    settings = get_settings()
     scores: list[float] = []
     # Ранний доступ к вердиктам по claim_id — нужен metadata-first пути (M3),
     # который выставляет CONTRADICTED при числовом конфликте до основного sync-блока.
@@ -405,7 +395,14 @@ def audit_analysis(
             # Строго без Retry
             logger.warning(f"[S6] Fact '{fact.fact_id}' audit exception: {e}")
             fact.validation_status = ValidationStatus.UNVERIFIED
+    return scores
 
+
+def _sync_verdicts(
+    analysis: AnalysisJSON,
+    claim_map: dict[str, DocumentClaim],
+) -> None:
+    # F-A1: CONTRADICTED-override + синхронизация verdict↔fact статусов.
     # V7.0: Override validation_status для CONTRADICTED verdicts
     # Если вердикт CONTRADICTED — статус всегда LOW (красный), независимо от BM25.
     # UNVERIFIED вердикты НЕ override'ятся в LOW — они остаются UNVERIFIED.
@@ -465,9 +462,14 @@ def audit_analysis(
                     v.confidence = "HIGH" if fact.validation_status == ValidationStatus.HIGH else "MEDIUM"
                     v.source_ids = fact.source_ids
 
-    # Audit выводов
-    _audit_conclusions(analysis, corpus_index)
 
+def _compute_reliability(
+    analysis: AnalysisJSON,
+    corpus_index: dict[str, EvidenceChunk],
+    scores: list[float],
+) -> bool:
+    # F-A1: V9.4 reliability + stats. True = ранний выход (insufficient-data
+    # путь уже выставил stats/conflicts и должен завершить audit_analysis).
     # V9.4: Calibrated Legal Confidence Metric & Statistics Aggregator
     if analysis.verdicts:
         # Считаем только аналитические вердикты (structural не участвуют)
@@ -543,7 +545,7 @@ def audit_analysis(
                 )
                 analysis.conflicts = _build_conflicts_from_verdicts(analysis.verdicts)
                 logger.info(f"[S6] Done (insufficient data path). UNVERIFIED={n_total}")
-                return analysis
+                return True
 
         if n_total > 0:
             # 1. Verification Coverage Score (V_ratio) weighted by severity
@@ -698,6 +700,37 @@ def audit_analysis(
         )
     elif scores:
         analysis.overall_reliability = float(np.mean(scores))
+    return False
+
+
+def audit_analysis(
+    analysis: AnalysisJSON,
+    chunks: list[EvidenceChunk],
+    claims: ClaimExtractionResult | None = None,
+) -> AnalysisJSON:
+    """
+    Этап 6: Детерминированный аудит. Строго без Retry.
+    Ошибка при любой проверке → UNVERIFIED. (F-A1: тело разбито на хелперы.)
+    """
+    claim_map: dict[str, DocumentClaim] = {}
+    if claims and claims.claims:
+        claim_map = {c.claim_id: c for c in claims.claims}
+    corpus_index = {c.chunk_id: c for c in chunks if not c.is_duplicate}
+
+    _preprocess_verdict_sources(analysis, corpus_index)
+
+    logger.info(f"[S6] Audit start. facts={len(analysis.facts)} corpus={len(corpus_index)}")
+
+    bm25 = _build_bm25_index(corpus_index)
+    scores = _audit_facts_loop(analysis, corpus_index, bm25, claim_map)
+    _sync_verdicts(analysis, claim_map)
+
+    # Audit выводов
+    _audit_conclusions(analysis, corpus_index)
+
+    # True = ранний выход (insufficient-data путь внутри _compute_reliability).
+    if _compute_reliability(analysis, corpus_index, scores):
+        return analysis
 
     # Статистика
     status_counts = {s: 0 for s in ValidationStatus}

@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import re
+import weakref
 
 from openai import AsyncOpenAI
 
@@ -22,15 +23,18 @@ from zerde.config import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 
-_LLM_SEMAPHORE_DICT: dict[int, asyncio.Semaphore] = {}
+# F-B1: см. cache.get_db_lock — ключ-объект loop + WeakKeyDictionary против утечки и
+# алиасинга id(). На каждый event loop — свой семафор (лимит параллельных LLM-вызовов).
+_LLM_SEMAPHORE_DICT: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = weakref.WeakKeyDictionary()
 
 
 def get_llm_semaphore() -> asyncio.Semaphore:
     loop = asyncio.get_running_loop()
-    loop_id = id(loop)
-    if loop_id not in _LLM_SEMAPHORE_DICT:
-        _LLM_SEMAPHORE_DICT[loop_id] = asyncio.Semaphore(5)
-    return _LLM_SEMAPHORE_DICT[loop_id]
+    sem = _LLM_SEMAPHORE_DICT.get(loop)
+    if sem is None:
+        sem = asyncio.Semaphore(5)
+        _LLM_SEMAPHORE_DICT[loop] = sem
+    return sem
 
 
 def build_prompt_key(

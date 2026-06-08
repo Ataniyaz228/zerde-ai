@@ -367,8 +367,8 @@ def audit_analysis(
                         domain = (parsed.hostname or "").removeprefix("www.")
                         if chunk.web_tier in (WebTier.TIER_1, WebTier.TIER_2):
                             is_official = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[S6/SourceFilter] URL parse failed for '{chunk.source_url}': {e}")
 
                     if not is_official:
                         logger.info(f"[S6/SourceFilter] Filtering out non-authoritative/non-KZ source '{full_id[:12]}': {chunk.source_url}")
@@ -445,7 +445,6 @@ def audit_analysis(
                     num_conflict = _find_arithmetic_conflict(
                         claim_full_text, exact_candidates, corpus_index
                     )
-                    arithmetic_ok = num_conflict is None
                     if num_conflict is not None:
                         # Число claim'а расходится с цитируемой статьёй → давим в LOW.
                         # Для НЕ поправочных claim'ов это реальная ошибка → CONTRADICTED
@@ -480,7 +479,7 @@ def audit_analysis(
                     scores.append(meta_score)
                     logger.info(
                         f"[S6/Metadata-First] Fact '{fact.fact_id}' (claim '{claim.claim_id}') metadata match "
-                        f"ids={exact_candidates} bm25={meta_score:.3f} arithmetic_ok={arithmetic_ok} "
+                        f"ids={exact_candidates} bm25={meta_score:.3f} arithmetic_ok={num_conflict is None} "
                         f"→ {fact.validation_status.value}"
                     )
                     continue
@@ -697,19 +696,9 @@ def audit_analysis(
                         # Fallback for virtual reference-data verified claims
                         a_coef = 0.5
                     else:
-                        best_rank = 11
-                        for sid in real_sources:
-                            if sid in corpus_index:
-                                best_rank = min(best_rank, int(corpus_index[sid].legal_rank))
-
-                        if best_rank <= 3:
-                            a_coef = 1.0
-                        elif best_rank <= 6:
-                            a_coef = 0.8
-                        elif best_rank <= 9:
-                            a_coef = 0.5
-                        else:
-                            a_coef = 0.2
+                        a_coef = _rank_to_authority_coef(
+                            _best_source_rank(real_sources, corpus_index)
+                        )
                     w_confirmed += severity_weights.get(v.severity, 1.0) * a_coef
 
             v_ratio = w_confirmed / w_total if w_total > 0 else 0.0
@@ -725,20 +714,9 @@ def audit_analysis(
                         auth_scores.append(0.5)
                         continue
 
-                    # Find min (strongest) rank of its sources
-                    best_rank = 11
-                    for sid in real_sources:
-                        if sid in corpus_index:
-                            best_rank = min(best_rank, int(corpus_index[sid].legal_rank))
-
-                    if best_rank <= 3:
-                        auth_scores.append(1.0)
-                    elif best_rank <= 6:
-                        auth_scores.append(0.8)
-                    elif best_rank <= 9:
-                        auth_scores.append(0.5)
-                    else:
-                        auth_scores.append(0.2)
+                    auth_scores.append(
+                        _rank_to_authority_coef(_best_source_rank(real_sources, corpus_index))
+                    )
             q_auth = float(np.mean(auth_scores)) if auth_scores else 0.0
 
             # 3. Retrieval Quality Score (Q_retrieval)
@@ -1447,8 +1425,8 @@ def _normalize_numbers(num_strings: set[str]) -> set[float]:
             from sympy import sympify
             val = float(sympify(cleaned))
             result.add(val)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[S6/ArithParse] sympify failed for '{cleaned}': {e}")
     return result
 
 

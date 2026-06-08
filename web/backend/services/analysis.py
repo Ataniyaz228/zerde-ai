@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -36,7 +37,6 @@ analysis_status: dict[str, str] = {}
 # потоке BackgroundTask через asyncio.run и трогает общий SQLite-кэш (несколько
 # CacheManager-соединений, синглтоны BGE/reranker). Параллельные прогоны давали
 # гонки записи. Lock держится на всё время анализа: второй аплоад ждёт в очереди.
-import threading
 _ANALYSIS_LOCK = threading.Lock()
 
 STAGE_MAP = {

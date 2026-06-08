@@ -143,8 +143,8 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
                 for c in chunks:
                     c.adilet_fallback_used = AdiletFallbackStrategy.LOCAL_CACHE
                 return chunks
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[S3/Adilet] search_local failed for {resolved_law_ids}: {e}")
         logger.warning(f"[S3/Adilet] All strategies failed for {resolved_law_ids}. Returning empty.")
         return []
 
@@ -169,8 +169,8 @@ async def _try_adilet_css_selectors(query: AdiletQuery, cache: CacheManager, res
                     chunks.extend(page_chunks)
                     if page_chunks:
                         break
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[S3/Adilet] fetch failed for {url}: {e}")
     return chunks
 
 async def _search_adilet_for_query(query: AdiletQuery, base: str) -> list[str]:
@@ -188,7 +188,8 @@ async def _search_adilet_for_query(query: AdiletQuery, base: str) -> list[str]:
                 if "/docs/" in href:
                     links.append(urljoin(base, href))
             return links[:5]
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[S3/Adilet] search-for-query failed: {e}")
         return []
 
 # Заголовок статьи в реальной разметке Adilet: <p><b>Статья N. Название</b></p>
@@ -319,7 +320,8 @@ async def _fetch_web_query(query: WebQuery, cache: CacheManager) -> list[Evidenc
             try:
                 chunks = await cache.search_local(query.query_text)
                 return chunks
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[S3/Web] search_local fallback failed: {e}")
                 return []
         chunks = []
         for result in results:

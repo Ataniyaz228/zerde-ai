@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import threading
+import weakref
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -18,14 +19,18 @@ from zerde.models import EvidenceChunk, LegalRank
 
 logger = logging.getLogger(__name__)
 
-_db_lock_dict: dict[int, asyncio.Lock] = {}
+# F-B1: ключ — сам объект loop (не id!). WeakKeyDictionary авто-удаляет запись при GC
+# закрытого loop'а, а identity-ключ исключает алиасинг по переиспользованному id().
+# asyncio-примитивы биндятся к loop'у, поэтому на каждый loop — отдельный Lock.
+_db_lock_dict: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
 
 def get_db_lock() -> asyncio.Lock:
     loop = asyncio.get_running_loop()
-    loop_id = id(loop)
-    if loop_id not in _db_lock_dict:
-        _db_lock_dict[loop_id] = asyncio.Lock()
-    return _db_lock_dict[loop_id]
+    lock = _db_lock_dict.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _db_lock_dict[loop] = lock
+    return lock
 
 _STEM_CACHE = {}
 
@@ -121,6 +126,7 @@ class CacheManager:
             self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._shared_conn.execute("PRAGMA journal_mode=WAL")
             self._shared_conn.execute("PRAGMA foreign_keys=ON")  # L5: ON DELETE CASCADE для embeddings
+            self._shared_conn.execute("PRAGMA busy_timeout=5000")  # F-B5: ждать снятия write-lock до 5с, не падать сразу
             self._shared_conn.row_factory = sqlite3.Row
         with self._shared_conn:
             self._shared_conn.executescript(_CREATE_TABLE_SQL)
@@ -133,6 +139,7 @@ class CacheManager:
             self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._shared_conn.execute("PRAGMA journal_mode=WAL")
             self._shared_conn.execute("PRAGMA foreign_keys=ON")  # L5: ON DELETE CASCADE для embeddings
+            self._shared_conn.execute("PRAGMA busy_timeout=5000")  # F-B5: ждать снятия write-lock до 5с, не падать сразу
             self._shared_conn.row_factory = sqlite3.Row
         try:
             yield self._shared_conn
@@ -514,8 +521,8 @@ class CacheManager:
                         if tokens:
                             self._bm25_keys.append(row["chunk_id"])
                             tokenized_corpus.append(tokens)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[Cache/BM25] skip chunk during index build: {e}")
 
             if tokenized_corpus:
                 from rank_bm25 import BM25Okapi
@@ -804,8 +811,8 @@ class CacheManager:
                     # e.g. "2026-03-11" -> parse year
                     year = int(chunk_obj.source_version.split("-")[0])
                     version_boost = max(0.0, (year - 2020) * 0.01)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[Cache/search_local] version parse failed for '{chunk_obj.source_version}': {e}")
 
             adjusted_score = score * lang_factor + version_boost
             adjusted_wlc.append((chunk_obj, adjusted_score))
@@ -866,6 +873,7 @@ class LLMCache:
             self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._shared_conn.execute("PRAGMA journal_mode=WAL")
             self._shared_conn.execute("PRAGMA foreign_keys=ON")  # L5: ON DELETE CASCADE для embeddings
+            self._shared_conn.execute("PRAGMA busy_timeout=5000")  # F-B5: ждать снятия write-lock до 5с, не падать сразу
             self._shared_conn.row_factory = sqlite3.Row
         with self._shared_conn:
             self._shared_conn.executescript(_CREATE_TABLE_SQL)
@@ -876,6 +884,7 @@ class LLMCache:
             self._shared_conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._shared_conn.execute("PRAGMA journal_mode=WAL")
             self._shared_conn.execute("PRAGMA foreign_keys=ON")  # L5: ON DELETE CASCADE для embeddings
+            self._shared_conn.execute("PRAGMA busy_timeout=5000")  # F-B5: ждать снятия write-lock до 5с, не падать сразу
             self._shared_conn.row_factory = sqlite3.Row
         try:
             yield self._shared_conn

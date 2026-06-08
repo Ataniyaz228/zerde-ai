@@ -268,6 +268,26 @@ def _is_amendment_claim(claim: DocumentClaim | None) -> bool:
     return bool(_AMENDMENT_VERB_RE.search(text))
 
 
+def _best_source_rank(real_sources: list[str], corpus_index: dict[str, EvidenceChunk]) -> int:
+    """Сильнейший (минимальный) legal_rank среди источников; 11, если ни один не в корпусе."""
+    best = 11
+    for sid in real_sources:
+        if sid in corpus_index:
+            best = min(best, int(corpus_index[sid].legal_rank))
+    return best
+
+
+def _rank_to_authority_coef(best_rank: int) -> float:
+    """Ранг источника → коэффициент авторитета [0.2..1.0]. Единый для V_ratio и Q_auth (L6)."""
+    if best_rank <= 3:
+        return 1.0
+    if best_rank <= 6:
+        return 0.8
+    if best_rank <= 9:
+        return 0.5
+    return 0.2
+
+
 def _exact_metadata_search(
     claim: DocumentClaim,
     corpus_index: dict[str, EvidenceChunk],
@@ -425,6 +445,7 @@ def audit_analysis(
                     num_conflict = _find_arithmetic_conflict(
                         claim_full_text, exact_candidates, corpus_index
                     )
+                    arithmetic_ok = num_conflict is None
                     if num_conflict is not None:
                         # Число claim'а расходится с цитируемой статьёй → давим в LOW.
                         # Для НЕ поправочных claim'ов это реальная ошибка → CONTRADICTED
@@ -550,12 +571,12 @@ def audit_analysis(
                     # MEDIUM validation → порог 0.6
                     # None/0 → блокируем
                     if v.status == VerdictStatus.UNVERIFIED:
-                        bm25 = fact.bm25_score or 0.0
+                        chunk_bm25_score = fact.bm25_score or 0.0
                         threshold = 0.4 if fact.validation_status == ValidationStatus.HIGH else 0.6
-                        if bm25 < threshold:
+                        if chunk_bm25_score < threshold:
                             logger.info(
                                 f"[S6/Sync] Blocking upgrade of verdict '{v.claim_id}' from UNVERIFIED to CONFIRMED "
-                                f"(bm25={bm25:.3f} < threshold={threshold})"
+                                f"(bm25={chunk_bm25_score:.3f} < threshold={threshold})"
                             )
                             continue
 

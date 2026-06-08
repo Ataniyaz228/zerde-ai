@@ -22,14 +22,15 @@ from zerde.config import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 
-_LLM_SEMAPHORE: asyncio.Semaphore | None = None
+_LLM_SEMAPHORE_DICT: dict[int, asyncio.Semaphore] = {}
 
 
 def get_llm_semaphore() -> asyncio.Semaphore:
-    global _LLM_SEMAPHORE
-    if _LLM_SEMAPHORE is None:
-        _LLM_SEMAPHORE = asyncio.Semaphore(5)
-    return _LLM_SEMAPHORE
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    if loop_id not in _LLM_SEMAPHORE_DICT:
+        _LLM_SEMAPHORE_DICT[loop_id] = asyncio.Semaphore(5)
+    return _LLM_SEMAPHORE_DICT[loop_id]
 
 
 def build_prompt_key(

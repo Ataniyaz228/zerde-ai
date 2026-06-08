@@ -18,7 +18,15 @@ from zerde.models import EvidenceChunk, LegalRank
 
 logger = logging.getLogger(__name__)
 
-_db_lock = asyncio.Lock()
+_db_lock_dict: dict[int, asyncio.Lock] = {}
+
+def get_db_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    if loop_id not in _db_lock_dict:
+        _db_lock_dict[loop_id] = asyncio.Lock()
+    return _db_lock_dict[loop_id]
+
 _STEM_CACHE = {}
 
 # Версия LLM-кэша. Bump при изменении промптов/контракта ответа, чтобы
@@ -155,17 +163,10 @@ class CacheManager:
         try:
             data = json.loads(row["chunk_json"])
             chunk = EvidenceChunk.model_validate(data)
-            old_rank = chunk.legal_rank
+            # H2: heal-ранг ТОЛЬКО в памяти, без UPDATE при чтении. Прежний write-on-read
+            # порождал гонки на shared sqlite-соединении при параллельных анализах.
+            # Постоянное исправление рангов делается оффлайн (scripts/fix_corpus.py).
             chunk = _heal_chunk_rank(chunk)
-            if chunk.legal_rank != old_rank:
-                try:
-                    with self._conn() as conn:
-                        conn.execute(
-                            "UPDATE evidence_cache SET chunk_json = ? WHERE chunk_id = ?",
-                            (chunk.model_dump_json(), chunk.chunk_id),
-                        )
-                except Exception as ex:
-                    logger.warning(f"[Cache/get] Failed to update healed rank: {ex}")
             logger.debug(f"[Cache] HIT: {chunk_id[:12]}…")
             return chunk
         except Exception as e:
@@ -184,7 +185,7 @@ class CacheManager:
             chunk: EvidenceChunk для сохранения.
         """
         chunk_json = chunk.model_dump_json()
-        async with _db_lock:
+        async with get_db_lock():
             with self._conn() as conn:
                 conn.execute(
                     """
@@ -211,7 +212,7 @@ class CacheManager:
             Количество реально сохранённых (не дубликатов).
         """
         stored = 0
-        async with _db_lock:
+        async with get_db_lock():
             with self._conn() as conn:
                 for chunk in chunks:
                     result = conn.execute(
@@ -902,7 +903,7 @@ class LLMCache:
         if expires_at:
             expires_dt = datetime.fromisoformat(expires_at)
             if datetime.now(UTC) > expires_dt:
-                async with _db_lock:
+                async with get_db_lock():
                     with self._conn() as conn:
                         conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (cache_key,))
                 return None
@@ -921,7 +922,7 @@ class LLMCache:
         if ttl_seconds is not None:
             expires_at = (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat()
 
-        async with _db_lock:
+        async with get_db_lock():
             with self._conn() as conn:
                 conn.execute(
                     """
@@ -934,12 +935,12 @@ class LLMCache:
 
     async def invalidate_expired(self) -> None:
         now_str = datetime.now(UTC).isoformat()
-        async with _db_lock:
+        async with get_db_lock():
             with self._conn() as conn:
                 conn.execute("DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?", (now_str,))
 
     async def _delete(self, cache_key: str) -> None:
-        async with _db_lock:
+        async with get_db_lock():
             with self._conn() as conn:
                 conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (cache_key,))
 

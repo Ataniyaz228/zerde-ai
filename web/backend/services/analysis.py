@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 
 analysis_status: dict[str, str] = {}
 
+# H2: сериализуем анализы — один за раз. Каждый анализ исполняется в отдельном
+# потоке BackgroundTask через asyncio.run и трогает общий SQLite-кэш (несколько
+# CacheManager-соединений, синглтоны BGE/reranker). Параллельные прогоны давали
+# гонки записи. Lock держится на всё время анализа: второй аплоад ждёт в очереди.
+import threading
+_ANALYSIS_LOCK = threading.Lock()
+
 STAGE_MAP = {
     "S1":  "extract",
     "S2":  "extract",
@@ -63,9 +70,20 @@ def get_analysis_status(analysis_id: str) -> dict:
 
 
 def start_analysis(analysis_id: str, file_path: str, main_loop: asyncio.AbstractEventLoop) -> None:
-    """Entry point called from FastAPI BackgroundTask."""
-    analysis_status[analysis_id] = "running"
-    asyncio.run(_run_analysis_async(analysis_id, file_path, main_loop))
+    """Entry point called from FastAPI BackgroundTask.
+
+    H2: глобальный lock сериализует прогоны — пока идёт один анализ, остальные ждут
+    (статус 'queued'), чтобы не было гонок на общем SQLite-кэше.
+    """
+    if not _ANALYSIS_LOCK.acquire(blocking=False):
+        analysis_status[analysis_id] = "queued"
+        logger.info(f"[{analysis_id}] В очереди — ждём завершения текущего анализа.")
+        _ANALYSIS_LOCK.acquire()
+    try:
+        analysis_status[analysis_id] = "running"
+        asyncio.run(_run_analysis_async(analysis_id, file_path, main_loop))
+    finally:
+        _ANALYSIS_LOCK.release()
 
 
 async def _run_analysis_async(analysis_id: str, file_path: str, main_loop: asyncio.AbstractEventLoop) -> None:

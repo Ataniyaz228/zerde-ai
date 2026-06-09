@@ -1,8 +1,8 @@
 import asyncio
+import concurrent.futures
 import logging
 import os
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -33,11 +33,14 @@ logger = logging.getLogger(__name__)
 
 analysis_status: dict[str, str] = {}
 
-# H2: сериализуем анализы — один за раз. Каждый анализ исполняется в отдельном
-# потоке BackgroundTask через asyncio.run и трогает общий SQLite-кэш (несколько
-# CacheManager-соединений, синглтоны BGE/reranker). Параллельные прогоны давали
-# гонки записи. Lock держится на всё время анализа: второй аплоад ждёт в очереди.
-_ANALYSIS_LOCK = threading.Lock()
+# F-D2: анализы сериализуются single-worker executor'ом (max_workers=1), а не
+# блокирующим Lock в потоке FastAPI-пула. Прежде queued-аплоад висел на
+# Lock.acquire(), удерживая поток пула; теперь ожидание — в очереди executor'а,
+# потоки пула освобождаются сразу. Один-за-раз по-прежнему нужен: общий SQLite-
+# кэш (несколько CacheManager-соединений) + синглтоны BGE/reranker.
+_ANALYSIS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="zerde-analysis"
+)
 
 STAGE_MAP = {
     "S1":  "extract",
@@ -72,18 +75,23 @@ def get_analysis_status(analysis_id: str) -> dict:
 def start_analysis(analysis_id: str, file_path: str, main_loop: asyncio.AbstractEventLoop) -> None:
     """Entry point called from FastAPI BackgroundTask.
 
-    H2: глобальный lock сериализует прогоны — пока идёт один анализ, остальные ждут
-    (статус 'queued'), чтобы не было гонок на общем SQLite-кэше.
+    F-D2: только ставит задачу в single-worker executor и сразу возвращается —
+    поток FastAPI-пула не удерживается на время ожидания/прогона. Анализы идут
+    строго по одному (executor max_workers=1); ждущие — в очереди executor'а
+    (статус 'queued'), а не висят на блокирующем Lock.acquire().
     """
-    if not _ANALYSIS_LOCK.acquire(blocking=False):
-        analysis_status[analysis_id] = "queued"
-        logger.info(f"[{analysis_id}] В очереди — ждём завершения текущего анализа.")
-        _ANALYSIS_LOCK.acquire()
+    analysis_status[analysis_id] = "queued"
+    _ANALYSIS_EXECUTOR.submit(_run_analysis_blocking, analysis_id, file_path, main_loop)
+
+
+def _run_analysis_blocking(analysis_id: str, file_path: str, main_loop: asyncio.AbstractEventLoop) -> None:
+    """Исполняется на единственном worker-потоке анализатора (сериализация)."""
+    analysis_status[analysis_id] = "running"
     try:
-        analysis_status[analysis_id] = "running"
         asyncio.run(_run_analysis_async(analysis_id, file_path, main_loop))
-    finally:
-        _ANALYSIS_LOCK.release()
+    except Exception:
+        logger.exception(f"[{analysis_id}] analysis worker crashed")
+        analysis_status[analysis_id] = "error"
 
 
 async def _run_analysis_async(analysis_id: str, file_path: str, main_loop: asyncio.AbstractEventLoop) -> None:

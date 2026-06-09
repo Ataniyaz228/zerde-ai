@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from zerde.config import get_settings
@@ -82,6 +83,7 @@ class ZerdePipelineResult(dict):
 async def run_pipeline(
     file_path: str | Path,
     output_path: str | Path | None = None,
+    progress_cb: Callable[[str], Awaitable[None]] | None = None,
 ) -> ZerdePipelineResult:
     """
     Запускает полный пайплайн от файла до Markdown-отчёта.
@@ -103,6 +105,14 @@ async def run_pipeline(
     logger.info("Pipeline Start")
     logger.info(f"Input: {file_path}")
     logger.info("=" * 60)
+
+    async def _emit(stage: str) -> None:
+        # F-A3: явный прогресс-бекон на границе стадии (вместо парсинга логов в backend).
+        if progress_cb is not None:
+            try:
+                await progress_cb(stage)
+            except Exception as e:
+                logger.warning(f"[Pipeline] progress_cb({stage}) failed: {e}")
 
     # ─── ЭТАП 1: Document Ingestion ───────────────────────────────────────
     t1 = time.perf_counter()
@@ -131,6 +141,7 @@ async def run_pipeline(
     # ─── ЭТАП 3: Data Gathering ───────────────────────────────────────────
     t3 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 3: Evidence Gathering")
+    await _emit("S3")
     raw_chunks = await gather_evidence(query_plan)
     logger.info(f"[Pipeline] ✓ Stage 3 done ({time.perf_counter() - t3:.2f}s) — {len(raw_chunks)} chunks")
 
@@ -306,6 +317,7 @@ async def run_pipeline(
     # ─── ЭТАП 5 + 5.2: LLM Auditor & Contradiction Verifier ────────────────────────────
     t5 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 5 + 5.2: LLM Auditor & Contradiction Verifier")
+    await _emit("S5")
 
     if not claims.claims:
         import uuid as _uuid
@@ -373,6 +385,7 @@ async def run_pipeline(
     # ─── ЭТАП 7: Render ──────────────────────────────────────────────────
     t7 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 7: Report Rendering")
+    await _emit("S7")
     report_md = await render_report(audited_analysis, active_chunks, output_path, policy_analysis)
     report_path = str(output_path) if output_path else "output/zerde_report_*.md"
     logger.info(f"[Pipeline] ✓ Stage 7 done ({time.perf_counter() - t7:.2f}s)")

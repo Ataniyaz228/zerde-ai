@@ -136,55 +136,24 @@ async def _run_analysis_async(analysis_id: str, file_path: str, main_loop: async
         # Stage 1+2: extract
         await stage_start("extract", "Загрузка и извлечение тезисов")
 
-        # Run the actual pipeline — it's async, wrap progress around it.
-        # We run it in full and send intermediate signals at natural breakpoints
-        # by hooking into asyncio checkpoints.
-        #
-        # The pipeline calls stages sequentially; we inject progress beacons
-        # by wrapping run_pipeline and listening to log records.
+        # F-A3: прогресс — явный колбэк из пайплайна (run_pipeline зовёт progress_cb
+        # на границах стадий S3/S5/S7), вместо хрупкого парсинга текста лог-сообщений.
+        stage_transitions = {
+            "S3": ("extract", "search", "Поиск в базе НПА Казахстана"),
+            "S5": ("search", "verify", "Верификация и анализ коллизий"),
+            "S7": ("verify", "report", "Формирование отчёта"),
+        }
 
-        class _ProgressHandler(logging.Handler):
-            """Emits WS messages when pipeline logs stage completions."""
-            def __init__(self):
-                super().__init__()
-                self._sent: set[str] = set()
+        async def _progress(stage: str) -> None:
+            t = stage_transitions.get(stage)
+            if t:
+                done, start, msg = t
+                await stage_done(done)
+                await stage_start(start, msg)
 
-            def emit(self, record: logging.LogRecord) -> None:
-                msg = record.getMessage()
-
-                def _transition(done_stage: str, start_stage: str, start_msg: str):
-                    logger.info(f"[{analysis_id}] Pipeline progress: completed {done_stage}, starting {start_stage}")
-                    asyncio.run_coroutine_threadsafe(
-                        manager.send_personal_message({"type": "stage_done", "stage": done_stage}, analysis_id),
-                        main_loop
-                    )
-                    asyncio.run_coroutine_threadsafe(
-                        manager.send_personal_message({"type": "stage_start", "stage": start_stage, "message": start_msg}, analysis_id),
-                        main_loop
-                    )
-
-                if "Stage 3" in msg and "extract" not in self._sent:
-                    # S1+S2 done → trigger search start
-                    self._sent.add("extract")
-                    _transition("extract", "search", "Поиск в базе НПА Казахстана")
-                elif "Stage 5" in msg and "search" not in self._sent:
-                    self._sent.add("search")
-                    _transition("search", "verify", "Верификация и анализ коллизий")
-                elif "Stage 7" in msg and "verify" not in self._sent:
-                    self._sent.add("verify")
-                    _transition("verify", "report", "Формирование отчёта")
-
-        handler = _ProgressHandler()
-        handler.setLevel(logging.INFO)
-        zerde_logger = logging.getLogger("zerde")
-        zerde_logger.addHandler(handler)
-
-        try:
-            logger.info(f"[{analysis_id}] Pipeline execution started for {file_path}")
-            result = await run_pipeline(file_path, output_path)
-            logger.info(f"[{analysis_id}] Pipeline execution completed. Calculating scores...")
-        finally:
-            zerde_logger.removeHandler(handler)
+        logger.info(f"[{analysis_id}] Pipeline execution started for {file_path}")
+        result = await run_pipeline(file_path, output_path, progress_cb=_progress)
+        logger.info(f"[{analysis_id}] Pipeline execution completed. Calculating scores...")
 
         await stage_done("report")
 

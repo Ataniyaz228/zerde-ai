@@ -135,9 +135,11 @@ async def test_dynamic_ingestion_sync(temp_db_path):
     assert "hash_dynamic_01" in cache._embeddings_keys
     assert cache._embeddings_matrix.shape == (1, 1024)
     assert "hash_dynamic_01" in cache._bm25_keys
-    assert cache._bm25_index is not None
+    # F-B2: BM25-индекс пересобирается лениво (перед поиском), а не на каждый put.
+    # После put он помечен dirty; фактическая пересборка и проверка — в search ниже.
+    assert cache._bm25_dirty is True
 
-    # Verify retrieval
+    # Verify retrieval (search_local пересобирает индекс из-за dirty и находит чанк)
     results = await cache.search_local("соглашение сторон по договору")
     assert len(results) == 1
     assert results[0].chunk_id == "hash_dynamic_01"

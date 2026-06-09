@@ -211,6 +211,26 @@ class CacheManager:
         logger.debug(f"[Cache] STORED: {chunk.chunk_id[:12]}…")
         self._sync_new_chunks([chunk])
 
+    async def _get_many(self, chunk_ids: list[str]) -> dict[str, EvidenceChunk]:
+        """F-B3: батч-чтение чанков одним IN-запросом (вместо N×get). Heal как в get()."""
+        if not chunk_ids:
+            return {}
+        out: dict[str, EvidenceChunk] = {}
+        placeholders = ",".join("?" * len(chunk_ids))
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT chunk_id, chunk_json FROM evidence_cache WHERE chunk_id IN ({placeholders})",
+                tuple(chunk_ids),
+            ).fetchall()
+        for row in rows:
+            try:
+                chunk = EvidenceChunk.model_validate(json.loads(row["chunk_json"]))
+                out[row["chunk_id"]] = _heal_chunk_rank(chunk)
+            except Exception as e:
+                self.deserialization_failures += 1
+                logger.error(f"[Cache] _get_many deserialize failed for {row['chunk_id'][:12]}…: {e}")
+        return out
+
     async def put_many(self, chunks: list[EvidenceChunk]) -> int:
         """
         Батчевое сохранение чанков.
@@ -380,9 +400,8 @@ class CacheManager:
                         self._bm25_keys.append(c.chunk_id)
                         self._bm25_tokens.append(tokens)
 
-            if self._bm25_tokens:
-                from rank_bm25 import BM25Okapi
-                self._bm25_index = BM25Okapi(self._bm25_tokens)
+            # F-B2: пересборка BM25 отложена (ленивая, перед поиском) — не на каждый sync.
+            self._bm25_dirty = True
         except Exception as e:
             logger.error(f"[Cache/Vector] Batch embedding generation failed: {e}")
             raise
@@ -596,9 +615,8 @@ class CacheManager:
                     self._bm25_keys.append(c.chunk_id)
                     self._bm25_tokens.append(tokens)
 
-            if self._bm25_tokens:
-                from rank_bm25 import BM25Okapi
-                self._bm25_index = BM25Okapi(self._bm25_tokens)
+            # F-B2: пересборка BM25 отложена (ленивая, перед поиском) — не на каждый sync.
+            self._bm25_dirty = True
 
             logger.info(f"[Cache/Vector] Dynamic sync complete. New active keys count: {len(self._embeddings_keys)}")
         except Exception as e:
@@ -638,6 +656,14 @@ class CacheManager:
                 logger.error(f"[Cache/Reranker] Cross-Encoder initialization failed: {e}")
                 self._reranker = None
                 self._reranker_loaded = False
+
+    def _rebuild_bm25_if_dirty(self) -> None:
+        """F-B2: ленивая пересборка BM25-индекса — один раз перед поиском вместо
+        пересборки на каждый sync. Содержимое идентично (строится из _bm25_tokens)."""
+        if getattr(self, "_bm25_dirty", False) and self._bm25_tokens:
+            from rank_bm25 import BM25Okapi
+            self._bm25_index = BM25Okapi(self._bm25_tokens)
+            self._bm25_dirty = False
 
     async def search_local(
         self,
@@ -710,6 +736,7 @@ class CacheManager:
 
         # Ensure BM25 index is lazy loaded
         self._lazy_init_embeddings()
+        self._rebuild_bm25_if_dirty()  # F-B2: ленивая пересборка, если были новые чанки
 
         if self._bm25_index and query_tokens:
             try:
@@ -801,8 +828,11 @@ class CacheManager:
 
         # Load chunks and adjust WLC scores with language matching and version freshness
         adjusted_wlc = []
-        for cid, score in sorted(wlc_scores.items(), key=lambda item: item[1], reverse=True)[:50]:
-            chunk_obj = await self.get(cid)
+        # F-B3: один IN-запрос вместо N×get() (был N+1 на каждый поиск).
+        top_scored = sorted(wlc_scores.items(), key=lambda item: item[1], reverse=True)[:50]
+        chunks_by_id = await self._get_many([cid for cid, _ in top_scored])
+        for cid, score in top_scored:
+            chunk_obj = chunks_by_id.get(cid)
             if not chunk_obj:
                 continue
 

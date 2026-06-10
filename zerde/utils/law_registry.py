@@ -274,15 +274,26 @@ class LawRegistry:
                 logger.info(f"[LawRegistry] Substring resolved '{raw}' → '{law_id}'")
                 return law_id
 
-        # 7. Fuzzy по заголовкам
+        # 7. Fuzzy по заголовкам — с семантическим guard'ом. CLAUDE.md помечает этот
+        #    шаг как источник мис-резолвов: голый char-cutoff не разделяет верный и
+        #    чужой заголовок (легит-матч ~0.61, ближайший ложный ~0.56 — щель 0.05),
+        #    крутить порог бессмысленно. Поэтому добавлены ДВА семантических фильтра
+        #    поверх прежнего cutoff: (а) минимальная длина запроса (короткие фрагменты
+        #    слишком неоднозначны), (б) обязательное пересечение хотя бы по одному
+        #    СОДЕРЖАТЕЛЬНОМУ слову (≥4 симв.) — символьно-похожий, но семантически
+        #    чужой заголовок (разные словоформы) теперь отбрасывается → UNVERIFIED,
+        #    а не угадывание чужого закона (false-grounding).
         all_titles = [t for t, _ in self._title_index]
-        if all_titles:
+        if all_titles and len(norm_raw) >= 10:
             close = difflib.get_close_matches(norm_raw, all_titles, n=1, cutoff=0.6)
             if close:
-                for norm_title, law_id in self._title_index:
-                    if norm_title == close[0]:
-                        logger.info(f"[LawRegistry] Fuzzy resolved '{raw}' → '{law_id}' (title match)")
-                        return law_id
+                raw_words = {w for w in norm_raw.split() if len(w) >= 4}
+                cand_words = {w for w in close[0].split() if len(w) >= 4}
+                if raw_words & cand_words:
+                    for norm_title, law_id in self._title_index:
+                        if norm_title == close[0]:
+                            logger.info(f"[LawRegistry] Fuzzy resolved '{raw}' → '{law_id}' (title match)")
+                            return law_id
 
         logger.debug(f"[LawRegistry] Could not resolve '{raw}', returning as-is.")
         return raw

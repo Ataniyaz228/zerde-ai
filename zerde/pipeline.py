@@ -216,6 +216,7 @@ async def run_pipeline(
                     query_text=aq.query_text,
                     law_ids=[registry.resolve(lid) for lid in (aq.law_ids or [])],
                     limit=15,
+                    law_only=True,
                 )
                 for aq in query_plan.adilet_queries
             ]

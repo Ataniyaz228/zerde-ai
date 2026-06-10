@@ -5,8 +5,8 @@ Stage 5: The Auditor (Claim-based Verification)
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+from typing import TYPE_CHECKING
 
 from zerde.config import get_settings
 from zerde.models import (
@@ -22,6 +22,9 @@ from zerde.models import (
 )
 from zerde.prompts.auditor import build_auditor_prompt
 from zerde.utils.llm_client import cached_llm_call, make_llm_client
+
+if TYPE_CHECKING:
+    from zerde.utils.cache import CacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +43,14 @@ async def run_auditor(
 
     batch_size = 5
     claim_list = claims.claims
-    all_analysis_jsons = []
+    batches = [claim_list[i:i + batch_size] for i in range(0, len(claim_list), batch_size)]
 
-    for i in range(0, len(claim_list), batch_size):
-        batch_claims_list = claim_list[i:i+batch_size]
+    # BM25-индекс по `active` не зависит от батча — строим один раз и
+    # переиспользуем в _retrieve_for_claims, вместо перетокенизации всего корпуса
+    # на каждой итерации.
+    retrieval_index = _build_retrieval_index(active)
+
+    async def _run_batch(batch_claims_list: list) -> AnalysisJSON:
         batch_claims = ClaimExtractionResult(
             doc_id=claims.doc_id,
             claims=batch_claims_list,
@@ -54,7 +61,7 @@ async def run_auditor(
         # тексту claim'а) + forced (adilet/conflict). Раньше во все батчи слался
         # один и тот же doc-level top-30 — чанк-первоисточник для claim'а №38 мог
         # вообще не попасть в контекст.
-        batch_chunks = _retrieve_for_claims(active, batch_claims_list, conflict_ids)
+        batch_chunks = _retrieve_for_claims(active, batch_claims_list, conflict_ids, retrieval_index=retrieval_index)
 
         prompt, id_map = build_auditor_prompt(
             chunks=batch_chunks,
@@ -84,7 +91,11 @@ async def run_auditor(
         analysis = _parse_auditor_response(raw_json, plan, batch_claims, settings.llm_model_analyst)
         # Короткие ID источников (S1..) из ответа → полные chunk_id (по карте батча).
         _remap_source_ids(analysis, id_map)
-        all_analysis_jsons.append(analysis)
+        return analysis
+
+    # Батчи независимы (свой prompt/id_map/claims) → шлём параллельно. Глобальный
+    # семафор в llm_client (5) ограничивает фактическую конкурентность LLM-вызовов.
+    all_analysis_jsons = list(await asyncio.gather(*(_run_batch(b) for b in batches)))
 
     if not all_analysis_jsons:
         return AnalysisJSON(
@@ -280,12 +291,39 @@ def _remap_source_ids(analysis: AnalysisJSON, id_map: dict[str, str]) -> None:
         f.source_ids = _remap(f.source_ids)
 
 
+class _RetrievalIndex:
+    """BM25-индекс по корпусу батча, переиспользуемый между всеми батчами S5."""
+
+    def __init__(self, chunks: list[EvidenceChunk], cache: CacheManager) -> None:
+        self.cache = cache
+        corpus_tokens = [
+            cache._tokenize_for_bm25((c.content or "") + " " + (c.source_title or ""))
+            for c in chunks
+        ]
+        self.bm25 = None
+        if any(corpus_tokens):
+            try:
+                from rank_bm25 import BM25Okapi
+                self.bm25 = BM25Okapi(corpus_tokens)
+            except Exception:
+                self.bm25 = None
+
+
+def _build_retrieval_index(chunks: list[EvidenceChunk]) -> _RetrievalIndex | None:
+    if not chunks:
+        return None
+    from zerde.utils.cache import CacheManager
+    cache = CacheManager(get_settings().cache_db_path)
+    return _RetrievalIndex(chunks, cache)
+
+
 def _retrieve_for_claims(
     chunks: list[EvidenceChunk],
     claims: list,
     conflict_ids: list[str],
     per_claim_k: int = 8,
     max_total: int = 50,
+    retrieval_index: _RetrievalIndex | None = None,
 ) -> list[EvidenceChunk]:
     """Per-claim retrieval для одного батча аудитора.
 
@@ -293,8 +331,9 @@ def _retrieve_for_claims(
     claim'а (law_id+article — это и есть первоисточник, НИКОГДА не отбрасываем)
     + добивка по BM25 (по тексту каждого claim'а) до max_total.
 
-    BM25-индекс строится один раз по всем чанкам, затем скорится под текст
-    каждого claim'а отдельно (get_scores).
+    BM25-индекс строится один раз (см. `_build_retrieval_index`, переиспользуется
+    между батчами), затем скорится под текст каждого claim'а (get_scores). Если
+    `retrieval_index` не передан, строится на месте (прямые вызовы/тесты).
     """
     if not chunks:
         return []
@@ -304,10 +343,9 @@ def _retrieve_for_claims(
         _extract_article_from_claim,
         _extract_referenced_law_ids,
     )
-    from zerde.utils.cache import CacheManager
 
-    cache = CacheManager(get_settings().cache_db_path)
-    by_id = {c.chunk_id: c for c in chunks}
+    if retrieval_index is None:
+        retrieval_index = _build_retrieval_index(chunks)
 
     selected: dict[str, EvidenceChunk] = {}
 
@@ -326,20 +364,10 @@ def _retrieve_for_claims(
             if c.article == article and any(_are_law_ids_synonymous(c.law_id, r) for r in ref_ids):
                 selected[c.chunk_id] = c
 
-    # 3. BM25-добивка по тексту каждого claim'а (индекс строим один раз).
-    bm25 = None
-    corpus_tokens = [
-        cache._tokenize_for_bm25((c.content or "") + " " + (c.source_title or ""))
-        for c in chunks
-    ]
-    if any(corpus_tokens):
-        try:
-            from rank_bm25 import BM25Okapi
-            bm25 = BM25Okapi(corpus_tokens)
-        except Exception:
-            bm25 = None
-
-    if bm25 is not None:
+    # 3. BM25-добивка по тексту каждого claim'а.
+    bm25 = retrieval_index.bm25 if retrieval_index else None
+    cache = retrieval_index.cache if retrieval_index else None
+    if bm25 is not None and cache is not None:
         for claim in claims:
             if len(selected) >= max_total:
                 break

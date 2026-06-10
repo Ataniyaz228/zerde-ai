@@ -30,6 +30,7 @@ from zerde.models import (
 from zerde.reference_data import (
     KOAP_MAX_FINES,
     LAW_REGISTRY,
+    MRP_BY_YEAR,
     check_law_id,
     get_koap_article,
     get_mrp,
@@ -456,7 +457,7 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
                     continue
                 seen_texts.add(claim_text)
 
-                deterministic = _check_entity(tag, entity_clean, text)
+                deterministic = _check_entity(tag, entity_clean, text, context=line)
 
                 status, msg = None, None
                 if deterministic:
@@ -495,7 +496,7 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
                     if claim_text in seen_texts:
                         continue
                     seen_texts.add(claim_text)
-                    deterministic = _check_entity("fine_mrp", entity_str, text)
+                    deterministic = _check_entity("fine_mrp", entity_str, text, context=line)
                     status, msg = (deterministic if deterministic else (None, None))
                     cid = f"claim_{counter:04d}"
                     counter += 1
@@ -515,17 +516,21 @@ def _regex_extract(text: str) -> list[DocumentClaim]:
     return claims
 
 
-def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus, str] | None:
+def _check_entity(tag: str, entity: str, full_text: str, context: str = "") -> tuple[VerdictStatus, str] | None:
     """Детерминированная проверка entity по reference_data. Возвращает вердикт или None."""
     entity_normalized = entity.strip().upper().replace(" ", "").replace("\u0406", "I").replace("\u0456", "i")
 
     if tag == "law_id":
         law_id_clean = re.sub(r"ЗРК|зрк", "", entity_normalized).strip("-").strip()
         entry = check_law_id(law_id_clean)
-        if entry is not None:
-            if not entry["valid"]:
-                return (VerdictStatus.CONTRADICTED, f"'{law_id_clean}' — {entry['title']}")
-            return (VerdictStatus.CONFIRMED, f"{law_id_clean} = «{entry['title']}» от {entry['date']}")
+        if entry is not None and not entry["valid"]:
+            # Фабрикованный/несуществующий id (87-IV и т.п.) → детерминированный
+            # CONTRADICTED. Ловит галлюцинированные законы, корпус не нужен.
+            return (VerdictStatus.CONTRADICTED, f"'{law_id_clean}' — {entry['title']}")
+        # Существующий id НЕ подтверждаем детерминированно из ручного LAW_REGISTRY:
+        # CITE-OR-ABSTAIN — подтверждение опирается на корпус (adilet), а не на
+        # хардкод-словарь со старыми названиями. Напр. 94-V нет в корпусе → честный
+        # UNVERIFIED от S5/S6, а не ложно-уверенный CONFIRMED.
         return None
 
     if tag == "koap_article":
@@ -543,10 +548,9 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
     if tag == "pprkz_num":
         pprkz_key = f"ППРК-{entity_normalized}"
         entry = LAW_REGISTRY.get(pprkz_key)
-        if entry is not None:
-            if not entry["valid"]:
-                return (VerdictStatus.CONTRADICTED, f"{pprkz_key} — {entry['title']}")
-            return (VerdictStatus.CONFIRMED, f"{pprkz_key} = «{entry['title']}»")
+        if entry is not None and not entry["valid"]:
+            return (VerdictStatus.CONTRADICTED, f"{pprkz_key} — {entry['title']}")
+        # Существующее ППРК не подтверждаем детерминированно (см. law_id выше).
         return None
 
     if tag == "mrp_value":
@@ -558,10 +562,15 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
         years_in_text = _YEAR_RE.findall(full_text)
         year = int(years_in_text[-1]) if years_in_text else 2025
         real_mrp = get_mrp(year)
-        if real_mrp and val != real_mrp:
-            return (VerdictStatus.CONTRADICTED, f"документ указывает МРП={val} тг, реальный МРП {year}={real_mrp} тг")
         if real_mrp and val == real_mrp:
             return (VerdictStatus.CONFIRMED, f"МРП {year} = {val} тг — верно")
+        # Эвристика года (последний год в документе) может промахнуться мимо года
+        # claim'а. Совпадение со значением МРП ЛЮБОГО известного года → не
+        # противоречие, а неоднозначность года.
+        if val in MRP_BY_YEAR.values():
+            return None
+        if real_mrp:
+            return (VerdictStatus.CONTRADICTED, f"документ указывает МРП={val} тг, реальный МРП {year}={real_mrp} тг")
         return None
 
     if tag == "fine_mrp":
@@ -571,9 +580,13 @@ def _check_entity(tag: str, entity: str, full_text: str) -> tuple[VerdictStatus,
         except ValueError:
             return None
         absolute_max = KOAP_MAX_FINES["absolute_max"]
-        if val > absolute_max:
+        # Потолок 2000 МРП верен ТОЛЬКО для ст.79 КоАП (нарушения о ПД). Применяем,
+        # только если локальный контекст явно указывает на эту статью/тему — иначе
+        # у налоговых/таможенных/антимонопольных норм штрафы законно выше.
+        ctx = context or full_text
+        if val > absolute_max and re.search(r"ст\.?\s*79\b|перс\w*\s+данны", ctx, re.I):
             return (VerdictStatus.CONTRADICTED,
-                    f"Штраф {val} МРП превышает абсолютный максимум КоАП ({absolute_max} МРП). Требует проверки.")
+                    f"Штраф {val} МРП превышает абсолютный максимум по ст.79 КоАП ({absolute_max} МРП). Требует проверки.")
         return None
 
     return None
@@ -692,7 +705,12 @@ async def _llm_extract_chunk(
                 return []
 
     result: list[DocumentClaim] = []
-    for i, raw in enumerate(raw_claims):
+    # cid нумеруем по числу ПРИНЯТЫХ claim'ов (accepted), а не по индексу сырого
+    # ответа: вызывающий (_llm_extract) сдвигает start_idx следующего окна на
+    # количество принятых, поэтому нумерация по raw-индексу при отбраковке части
+    # ответа давала пересечение диапазонов окон → коллизия claim_id в S6/S7.
+    accepted = 0
+    for raw in raw_claims:
         if isinstance(raw, str) and len(raw) > 10:
             raw = {"claim_text": raw, "claim_type": "factual", "severity": "medium"}
         if not isinstance(raw, dict):
@@ -701,7 +719,7 @@ async def _llm_extract_chunk(
             # Всегда используем детерминированный cid и игнорируем raw["claim_id"]:
             # модель иногда отдаёт свою нумерацию ("claim_007"), которая сталкивается
             # с нашей зеро-паддинговой ("claim_0007") и ломает сопоставление в S6/S7.
-            cid = f"claim_{start_idx + i:04d}"
+            cid = f"claim_{start_idx + accepted:04d}"
             claim = DocumentClaim(
                 claim_id=cid,
                 claim_text=raw.get("claim_text", ""),
@@ -713,6 +731,7 @@ async def _llm_extract_chunk(
             )
             if claim.claim_text:
                 result.append(claim)
+                accepted += 1
         except (ValueError, KeyError) as e:
             logger.debug(f"[S2.5/LLM] Skip malformed claim: {e}")
 

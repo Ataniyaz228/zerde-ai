@@ -23,7 +23,7 @@ from openai import AsyncOpenAI
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from zerde.config import get_settings
-from zerde.models import ConflictType, EvidenceChunk, LegalRank, WebTier
+from zerde.models import AdiletFallbackStrategy, ConflictType, EvidenceChunk, LegalRank, WebTier
 from zerde.utils.llm_client import make_embedding_client
 
 logger = logging.getLogger(__name__)
@@ -100,9 +100,14 @@ def _is_spam(chunk: EvidenceChunk) -> bool:
     Adilet-чанки всегда проходят.
     Tier-1 URL (доверенные источники) пропускаются при наличии юр. сигналов.
     """
-    # Adilet-источники — всегда доверяем
+    # Adilet-источники — всегда доверяем. Для LOCAL_CACHE (search_local-фоллбек)
+    # дополнительно требуем law_id is not None — гарантия, что это НПА-чанк
+    # корпуса, а не web-сниппет, случайно помеченный adilet_fallback_used (см.
+    # search_local(law_only=...)). CSS_SELECTOR/PDF_OCR — прямой фетч с adilet,
+    # доверяем безусловно.
     if chunk.adilet_fallback_used is not None:
-        return False
+        if chunk.adilet_fallback_used != AdiletFallbackStrategy.LOCAL_CACHE or chunk.law_id is not None:
+            return False
 
     url = chunk.source_url.lower()
     content = chunk.content

@@ -628,29 +628,37 @@ class CacheManager:
         law_ids: list[str] | None = None,
         articles: list[str] | None = None,
         limit: int = 10,
+        law_only: bool = False,
     ) -> list[EvidenceChunk]:
         """
-        Parallel Hybrid Search (SQL Strategy 0 + BM25 + BGE-M3 Semantic) 
+        Parallel Hybrid Search (SQL Strategy 0 + BM25 + BGE-M3 Semantic)
         fused via Weighted Linear Combination (WLC) and reranked using BAAI/bge-reranker-v2-m3.
+
+        `law_only=True` excludes web-sourced chunks (chunk.law_id is None) from the
+        result. Use this when the caller treats the result as an adilet/\u041d\u041f\u0410 source
+        (e.g. AdiletFallbackStrategy.LOCAL_CACHE) \u2014 without it, a web snippet that
+        scores well can get relabeled as a local-cache \u041d\u041f\u0410 hit and gain corpus-level
+        trust it never earned.
         """
         import json
         import re
         import numpy as np
 
-        # 1. Normalize law_ids. Adilet code \u0431\u0435\u0440\u0451\u043c \u0438\u0437 \u0420\u0415\u0415\u0421\u0422\u0420\u0410 (\u0430\u0432\u0442\u043e\u0440\u0438\u0442\u0435\u0442\u043d\u043e,
-        #    law_metadata); _LAW_ID_KNOWN \u2014 legacy-fallback \u0434\u043b\u044f \u043d\u0435\u0438\u043d\u0433\u0435\u0441\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0445.
+        # \u0412\u0430\u0440\u0438\u0430\u043d\u0442\u044b law_id \u0431\u0435\u0440\u0451\u043c \u0438\u0437 registry.id_variants() (canonical + adilet-\u043a\u043e\u0434
+        # \u0441/\u0431\u0435\u0437 \u00ab_\u00bb, \u0432 \u0442.\u0447. \u0441\u0443\u0444\u0444\u0438\u043a\u0441\u043d\u044b\u0435 \u0444\u043e\u0440\u043c\u044b \u00ab-UK\u00bb/\u00ab-NEW\u00bb), \u0437\u0430\u0442\u0435\u043c \u043c\u0430\u0442\u0447\u0438\u043c \u0422\u041e\u0427\u041d\u041e.
+        # \u041f\u0440\u0435\u0436\u043d\u0438\u0439 LIKE '%94-V%' \u0434\u0430\u0432\u0430\u043b \u043a\u0440\u043e\u0441\u0441-\u0437\u0430\u0433\u0440\u044f\u0437\u043d\u0435\u043d\u0438\u0435: '11-VI' \u043c\u0430\u0442\u0447\u0438\u043b '11-VIII',
+        # '94-I' \u2014 '94-IV' (\u043f\u043e\u0434\u0441\u0442\u0440\u043e\u043a\u0430), \u043f\u043e\u0434\u043c\u0435\u0448\u0438\u0432\u0430\u044f \u0447\u0430\u043d\u043a\u0438 \u0447\u0443\u0436\u0438\u0445 \u0437\u0430\u043a\u043e\u043d\u043e\u0432.
         normalized_law_ids = []
         if law_ids:
             from zerde.utils.law_registry import get_registry
             registry = get_registry()
+            _seen_lid = set()
             for lid in law_ids:
-                lid_norm = lid.strip().replace("\u0406", "I").replace("\u0456", "i").upper()
-                normalized_law_ids.append(lid_norm)
-                known_code = registry.get_adilet_code(lid)
-                if known_code:
-                    normalized_law_ids.append(known_code.upper())
-                if known_code and known_code.endswith("_"):
-                    normalized_law_ids.append(known_code[:-1].upper())
+                for variant in registry.id_variants(lid):
+                    vu = variant.strip().replace("\u0406", "I").replace("\u0456", "i").upper()
+                    if vu and vu not in _seen_lid:
+                        _seen_lid.add(vu)
+                        normalized_law_ids.append(vu)
 
         # Normalize articles
         normalized_articles = []
@@ -666,15 +674,16 @@ class CacheManager:
         sql_candidates = []
         with self._conn() as conn:
             if normalized_law_ids:
+                # Точное (case-insensitive) сравнение по варианту, не LIKE-подстрока.
                 if normalized_articles:
-                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                    law_conds = " OR ".join(["UPPER(json_extract(chunk_json, '$.law_id')) = ?" for _ in normalized_law_ids])
                     art_conds = " OR ".join(["json_extract(chunk_json, '$.article') = ?" for _ in normalized_articles])
                     sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) AND ({art_conds}) LIMIT ?"
-                    params = [f"%{lid}%" for lid in normalized_law_ids] + list(normalized_articles) + [limit * 3]
+                    params = list(normalized_law_ids) + list(normalized_articles) + [limit * 3]
                 else:
-                    law_conds = " OR ".join(["json_extract(chunk_json, '$.law_id') LIKE ?" for _ in normalized_law_ids])
+                    law_conds = " OR ".join(["UPPER(json_extract(chunk_json, '$.law_id')) = ?" for _ in normalized_law_ids])
                     sql = f"SELECT chunk_json FROM evidence_cache WHERE ({law_conds}) LIMIT ?"
-                    params = [f"%{lid}%" for lid in normalized_law_ids] + [limit * 3]
+                    params = list(normalized_law_ids) + [limit * 3]
                 try:
                     rows = conn.execute(sql, tuple(params)).fetchall()
                     for r in rows:
@@ -788,7 +797,9 @@ class CacheManager:
             chunk_obj = await self.get(cid)
             if not chunk_obj:
                 continue
-            
+            if law_only and chunk_obj.law_id is None:
+                continue
+
             # Language match boost
             lang_factor = 1.0
             if detected_lang and chunk_obj.language:
@@ -961,31 +972,48 @@ class LLMCache:
 # ---------------------------------------------------------------------------
 
 
+# Канонический id КоАП — единственного кодекса, чьё короткое название на adilet
+# («Об административных правонарушениях») НЕ содержит слова «кодекс». Берём его из
+# registry-алиаса «коап» (единый источник), а не хардкодим «235-V» здесь. Кэшируем
+# модульно: _heal_chunk_rank зовётся на КАЖДЫЙ читаемый чанк (десятки на поиск).
+_KOAP_CANON: str | None = None
+
+
 def _heal_chunk_rank(chunk: EvidenceChunk) -> EvidenceChunk:
     """
-    Динамически исцеляет устаревшие (outdated) legal_rank при чтении из кэша.
-    Например, КоАП РК (закон 235-V) должен быть CODE (ранг 2), но в кэше старых версий
-    он мог быть сохранен как MINISTERIAL_ORDER или LAW_RK (ранг 7).
+    Динамически исцеляет устаревший (outdated) legal_rank при чтении из кэша:
+    кодекс/Конституция, сохранённые в старых версиях как LAW_RK, поднимаются до
+    CODE / CONSTITUTIONAL_LAW.
+
+    Тип определяется по ЗАГОЛОВКУ закона из registry (title_ru + title_kz) —
+    «кодекс»→CODE, «конституц»→CONSTITUTIONAL_LAW, — а не по захардкоженному списку
+    law_id (тот дрейфовал: терял 226-V-UK/231-V/214-VII, держал утративший силу
+    212-IV). Единственное исключение — КоАП, чей короткий заголовок на adilet не
+    содержит «кодекс»; его берём через registry-алиас «коап».
     """
     if not chunk.law_id:
         return chunk
 
-    lid = chunk.law_id.strip().upper()
-    current_rank = chunk.legal_rank
+    global _KOAP_CANON
+    from zerde.utils.law_registry import get_registry
+    registry = get_registry()
+    if _KOAP_CANON is None:
+        _KOAP_CANON = registry.resolve("коап")
 
-    # Кодексы РК
-    if lid in ("235-V", "226-V", "350-VI", "212-IV", "1000-XIII", "409-I", "442-II", "414-I", "414-I-NEW",
-               "171-VIII", "178-VIII", "360-VI-NEW", "125-VI-NEW", "375-V-NEW", "400-VI-NEW"):
-        if current_rank != LegalRank.CODE:
-            logger.info(f"[Cache/Healing] Healed chunk {chunk.chunk_id[:12]}… rank: {current_rank} -> CODE")
-            chunk.legal_rank = LegalRank.CODE
-            chunk.inferred_rank = LegalRank.CODE
+    canon = registry.resolve(chunk.law_id)
+    title = (
+        (registry.get_title(canon, "ru") or "") + " " + (registry.get_title(canon, "kz") or "")
+    ).lower()
 
-    # Конституция
-    elif lid in ("K950001000_", "K2600000000_"):
-        if current_rank != LegalRank.CONSTITUTIONAL_LAW:
-            logger.info(f"[Cache/Healing] Healed chunk {chunk.chunk_id[:12]}… rank: {current_rank} -> CONSTITUTIONAL_LAW")
-            chunk.legal_rank = LegalRank.CONSTITUTIONAL_LAW
-            chunk.inferred_rank = LegalRank.CONSTITUTIONAL_LAW
+    target: LegalRank | None = None
+    if "конституц" in title:
+        target = LegalRank.CONSTITUTIONAL_LAW
+    elif "кодекс" in title or canon == _KOAP_CANON:
+        target = LegalRank.CODE
+
+    if target is not None and chunk.legal_rank != target:
+        logger.info(f"[Cache/Healing] Healed chunk {chunk.chunk_id[:12]}… rank: {chunk.legal_rank} -> {target.name}")
+        chunk.legal_rank = target
+        chunk.inferred_rank = target
 
     return chunk

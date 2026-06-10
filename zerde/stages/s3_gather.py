@@ -136,7 +136,7 @@ async def _fetch_adilet_with_fallback(query: AdiletQuery, cache: CacheManager) -
                 logger.warning(f"[S3/Adilet] {strategy_fn.__name__} failed for {resolved_law_ids}: {e}")
                 continue
         try:
-            chunks = await cache.search_local(query.query_text, law_ids=resolved_law_ids, articles=query.articles)
+            chunks = await cache.search_local(query.query_text, law_ids=resolved_law_ids, articles=query.articles, law_only=True)
             if chunks:
                 logger.info(f"[S3/Adilet] search_local found {len(chunks)} chunks for query: '{query.query_text[:80]}'")
                 for c in chunks:

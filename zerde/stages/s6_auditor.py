@@ -597,6 +597,16 @@ def audit_analysis(
                 logger.info(f"[S6] Done (insufficient data path). UNVERIFIED={n_total}")
                 return analysis
 
+        # Безопасные дефолты: эти метрики определяются только в ветке n_total>0,
+        # но используются ниже безусловно (pros_list, итоговый logger). При
+        # n_total==0 (все вердикты структурные) без них был бы NameError, рушащий
+        # весь аудит. Сейчас путь почти недостижим, но это мина при любом
+        # изменении набора структурных claim'ов.
+        v_ratio = 0.0
+        q_auth = 0.0
+        q_retrieval = 0.5
+        p_conflict = 0.0
+
         if n_total > 0:
             # 1. Verification Coverage Score (V_ratio) weighted by severity
             severity_weights = {
@@ -936,20 +946,24 @@ def _corpus_wide_bm25_search(
     # --- LAYER 2: Code Family Fallback (if specific law was not found/loaded) ---
     # (If referenced_law_ids is defined but not loaded in the corpus, we try parent Codes)
     if referenced_law_ids:
-        parent_codes = []
+        # Коды семейства берём из _COMMON_LAW_NAME_MAP (единый источник, CI-guard),
+        # а не дублируем инлайн-списком (тот дрейфовал: «309-II» — устаревший id ГК
+        # особенной части, в кэше лежит 409-I → exact-match его НЕ находил).
         text_lower = (claim.claim_text + " " + claim.quote).lower() if claim else fact.claim.lower()
-        if "гражданск" in text_lower or " гк" in text_lower:
-            parent_codes.extend(["1000-XIII", "309-II"])
-        if "земельн" in text_lower or " зк" in text_lower:
-            parent_codes.append("442-II")
-        if "коап" in text_lower:
-            parent_codes.append("235-V")
-            
+        parent_codes: list[str] = []
+        # Только длинные/защищённые доменные ключи: короткие («гк»,«зк») как
+        # подстроки дают ложные срабатывания.
+        for key in ("гражданск", "земельн", "коап"):
+            if key in text_lower:
+                parent_codes.extend(_COMMON_LAW_NAME_MAP.get(key, []))
+
         parent_codes = list(set(parent_codes))
         if parent_codes:
+            # Синоним-aware матч (как в Layer 1): law_id чанка может быть каноном
+            # (409-I), а код семейства — его псевдонимом (309-II), и наоборот.
             candidate_indices = [
                 i for i, cid in enumerate(bm25._ids)
-                if corpus_index[cid].law_id in parent_codes
+                if any(_are_law_ids_synonymous(corpus_index[cid].law_id, pc) for pc in parent_codes)
             ]
             if candidate_indices:
                 best_idx = max(candidate_indices, key=lambda i: raw_scores[i])
@@ -1101,50 +1115,6 @@ def _score_to_status(
 # ---------------------------------------------------------------------------
 
 
-def _levenshtein_distance(s1: str, s2: str) -> int:
-    if len(s1) < len(s2):
-        return _levenshtein_distance(s2, s1)
-    if len(s2) == 0:
-        return len(s1)
-
-    previous_row = range(len(s2) + 1)
-    for i, c1 in enumerate(s1):
-        current_row = [i + 1]
-        for j, c2 in enumerate(s2):
-            insertions = previous_row[j + 1] + 1
-            deletions = current_row[j] + 1
-            substitutions = previous_row[j] + (c1 != c2)
-            current_row.append(min(insertions, deletions, substitutions))
-        previous_row = current_row
-
-    return previous_row[-1]
-
-
-def _find_closest_source_id(
-    sid: str,
-    corpus_index: dict[str, EvidenceChunk],
-    max_distance: int = 3,
-) -> str | None:
-    best_cid = None
-    best_dist = max_distance + 1
-
-    target_len = len(sid)
-    if target_len < 4:
-        return None
-
-    for cid in corpus_index:
-        pfx = cid[:target_len]
-        dist = _levenshtein_distance(sid, pfx)
-        if dist < best_dist:
-            best_dist = dist
-            best_cid = cid
-
-    if best_dist <= max_distance:
-        logger.info(f"[S6/Fuzzy] Resolved hallucinated ID '{sid}' to '{best_cid[:target_len]}' (dist={best_dist})")
-        return best_cid
-    return None
-
-
 def _resolve_source_ids(
     source_ids: list[str],
     corpus_index: dict[str, EvidenceChunk],
@@ -1152,24 +1122,21 @@ def _resolve_source_ids(
     """
     Нормализует source_ids фактов/выводов.
 
-    source_ids уже переведены в полные chunk_id в S5 (_remap_source_ids), так что
-    обычно это точное совпадение по corpus_index либо виртуальный источник.
-    Fuzzy-fallback оставлен как страховка для не-ремапленных путей (выводы).
+    source_ids уже переведены в полные chunk_id в S5 (_remap_source_ids, который
+    также ОТБРАСЫВАЕТ галлюцинированные метки), так что здесь это либо точное
+    совпадение по corpus_index, либо виртуальный источник. Неизвестные id
+    оставляем как есть — они не пройдут проверку существования/топологии ниже и
+    дадут UNVERIFIED. Прежний Левенштейн-fuzzy (prefix-recovery) УДАЛЁН: для
+    коротких id с дистанцией ≤3 он матчил почти любой chunk_id → источник
+    ложного grounding'а (CITE-OR-ABSTAIN). Восстанавливать его нельзя.
     """
     virtual = {"UNLINKED", "reference_data"}
     resolved = []
     for sid in source_ids:
         if sid in virtual or sid.startswith("reference_"):
             resolved.append(sid)
-        elif sid in corpus_index:
-            resolved.append(sid)  # Уже полный ID
         else:
-            # Fuzzy matching fallback
-            fuzzy_cid = _find_closest_source_id(sid, corpus_index)
-            if fuzzy_cid:
-                resolved.append(fuzzy_cid)
-            else:
-                resolved.append(sid)  # Оставляем как есть (для логирования)
+            resolved.append(sid)  # точный full chunk_id или неизвестный — без fuzzy
     return resolved
 
 

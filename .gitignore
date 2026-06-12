@@ -20,6 +20,7 @@ build/
 *.db-shm
 *.db-wal
 *.db.bak-*
+!tests/fixtures/law_metadata.db
 *.log
 last_*_raw_response.json
 scratch/

@@ -45,10 +45,15 @@ async def main(file_path: str) -> None:
         sys.exit(1)
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Sync console-script entrypoint (pyproject [project.scripts] zerde = main:cli)."""
     if len(sys.argv) < 2:
-        print("Использование: python main.py <путь_к_документу>")
-        print("Пример:        python main.py docs/contract.pdf")
+        print("Использование: zerde <путь_к_документу>")
+        print("Пример:        zerde docs/contract.pdf")
         sys.exit(1)
 
     asyncio.run(main(sys.argv[1]))
+
+
+if __name__ == "__main__":
+    cli()

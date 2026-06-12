@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+    env_file: .env
+    ports: ["8000:8000"]
+    volumes:
+      - ./zerde_cache.db:/app/zerde_cache.db      # corpus DB — curated artifact, mount read-write
+      - ./output:/app/output                       # generated reports
+      - ./data/raw:/app/data/raw                   # raw input documents
+      - uploads:/app/uploads                       # uploaded files (named volume)
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./web/frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports: ["3000:3000"]
+    depends_on: [backend]
+    restart: unless-stopped
+
+volumes:
+  uploads:

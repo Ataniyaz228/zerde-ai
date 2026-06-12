@@ -78,13 +78,8 @@ class Settings(BaseSettings):
         default="gemini-3.5-flash",
         description="ID модели для Этапа 5.5 (Policy Analyst).",
     )
-    llm_model_renderer: str = Field(
-        default="gemini-3.5-flash",
-        description="ID модели для Этапа 7 (Renderer) и форматирования.",
-    )
     llm_max_tokens_planner: int = Field(default=8192, description="Увеличено с 4096: QueryPlan с 10+ запросами занимает 5-7K токенов")
     llm_max_tokens_analyst: int = Field(default=16384, description="DeepSeek R1 поддерживает до 32k")
-    llm_max_tokens_renderer: int = Field(default=8192)
 
     embedding_model: str = Field(
         default="text-embedding-3-small",

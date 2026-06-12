@@ -381,8 +381,14 @@ def _semantic_dedup_key(claim: DocumentClaim) -> str | None:
     и "61-бап ... келісімі талап етілмейді" → одинаковый ключ
     `art61|consent`.
     """
-    text = (claim.claim_text + " " + claim.quote).lower()
-    article = _extract_article_ref_for_key(text)
+    # Убираем «(строка: «...»)» аннотацию ДО извлечения article ref — иначе
+    # «строка 10»/«строка 15» парсятся как разные номера статей и claims
+    # с одинаковым law_id на разных строках получают разные ключи (no dedup).
+    claim_text = re.sub(r"\(строка:.*?\)", "", claim.claim_text, flags=re.S).lower()
+    text = (claim_text + " " + claim.quote).lower()
+    # article ref берём только из claim_text (структурная ссылка), а не из quote —
+    # цитата может содержать произвольные числа, не относящиеся к номеру статьи.
+    article = _extract_article_ref_for_key(claim_text)
     events = _extract_semantic_events(text)
     if not article and not events:
         return None

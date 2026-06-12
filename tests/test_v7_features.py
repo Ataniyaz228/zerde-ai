@@ -53,13 +53,25 @@ class TestStructuralFilter:
         assert _is_structural_claim(c) is False
 
     def test_structural_phrase(self):
+        # FACTUAL/NORMATIVE теперь всегда аналитические (v9.6, шаг 2.5), поэтому
+        # для проверки step-4 structural_phrases берём тип, доходящий до шага 4.
         c = DocumentClaim(
             claim_id="c4",
+            claim_text="Раздел 10 присутствует в структуре документа",
+            claim_type=ClaimType.TEMPORAL,   # не FACTUAL/NORMATIVE/LEGAL_*; нет модала/числовой нормы
+            severity=ClaimSeverity.LOW,
+        )
+        assert _is_structural_claim(c) is True
+
+    def test_factual_claim_is_analytical_v96(self):
+        # Регрессионный замок на v9.6: FACTUAL никогда не структурный — идёт в аудитор.
+        c = DocumentClaim(
+            claim_id="c4b",
             claim_text="Статья 10 присутствует в структуре документа",
             claim_type=ClaimType.FACTUAL,
             severity=ClaimSeverity.LOW,
         )
-        assert _is_structural_claim(c) is True
+        assert _is_structural_claim(c) is False
 
     def test_not_structural_modal_inside_low(self):
         # Граничный случай: LOW severity но есть модальный глагол

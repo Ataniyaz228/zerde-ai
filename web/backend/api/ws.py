@@ -1,8 +1,6 @@
-import asyncio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from typing import Dict
-
 import logging
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +8,7 @@ router = APIRouter()
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
+        self.active_connections: dict[str, WebSocket] = {}
 
     async def connect(self, websocket: WebSocket, analysis_id: str):
         await websocket.accept()

@@ -1,6 +1,6 @@
-import os
 import glob
 import json
+import os
 import re
 from datetime import datetime
 
@@ -16,7 +16,7 @@ def _read_score(filepath: str, content: str) -> int:
     """
     meta_path = filepath + ".meta.json"
     try:
-        with open(meta_path, "r", encoding="utf-8") as f:
+        with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
         pct = meta.get("reliability_pct")
         if pct is not None:
@@ -65,7 +65,7 @@ def list_reports() -> list[dict]:
     for filepath in glob.glob(os.path.join(OUTPUT_DIR, "*.md")):
         filename = os.path.basename(filepath)
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 content = f.read(3000)
         except OSError:
             content = ""
@@ -90,7 +90,7 @@ def get_report(report_id: str) -> dict | None:
     if not os.path.exists(filepath):
         return None
 
-    with open(filepath, "r", encoding="utf-8") as f:
+    with open(filepath, encoding="utf-8") as f:
         content = f.read()
 
     score = _read_score(filepath, content)

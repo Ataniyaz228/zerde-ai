@@ -1,5 +1,5 @@
-import pytest
-from zerde.stages.s2_5_claim_extractor import _regex_extract, ClaimType, ClaimSeverity
+from zerde.stages.s2_5_claim_extractor import ClaimSeverity, ClaimType, _regex_extract
+
 
 def test_extract_law_id():
     claims = _regex_extract("Закон РК от 21 мая 2013 года № 94-V")
@@ -61,8 +61,8 @@ def test_extract_year_context():
 
 
 def test_is_structural_claim_commencement():
-    from zerde.stages.s2_5_claim_extractor import _is_structural_claim, DocumentClaim, ClaimType, ClaimSeverity
-    
+    from zerde.stages.s2_5_claim_extractor import ClaimType, DocumentClaim, _is_structural_claim
+
     # 1. "вводится в действие по истечении шести месяцев со дня его опубликования"
     c1 = DocumentClaim(
         claim_id="c1",

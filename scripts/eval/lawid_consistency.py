@@ -28,8 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from zerde.config import get_settings
 from zerde.utils.cache import CacheManager
 from zerde.utils.law_registry import (
-    get_registry,
     _SHORT_TO_ADILET_CODE,
+    get_registry,
 )
 
 _ADILET_CODE_RE = re.compile(r"^[A-Z]\d{6,}_?$")
@@ -141,10 +141,10 @@ def print_report(rep: dict) -> None:
         print("\n  REGISTRY get_adilet_url MISMATCH (law_id: ground_truth -> got):")
         for lid, gt, got in rep["mismatches"]:
             print(f"    {lid}: {gt} -> {got}")
-    print(f"\nCOVERAGE GAP (refactor checklist):")
+    print("\nCOVERAGE GAP (refactor checklist):")
     print(f"  law_ids known to dicts but NOT in law_metadata : {len(rep['only_in_dicts'])}")
     print(f"  of those, registry CANNOT reproduce (blockers)  : {len(rep['migration_blockers'])}")
-    print(f"      → these must be ingested into law_metadata BEFORE deleting their dict")
+    print("      → these must be ingested into law_metadata BEFORE deleting their dict")
     if rep["migration_blockers"]:
         print("      blockers (law_id: dict_code -> registry_got):")
         for lid, dc, got in rep["migration_blockers"]:

@@ -44,15 +44,15 @@ import asyncio
 import json
 import re
 import sys
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 
 import httpx
 
 from zerde.config import get_settings
 from zerde.utils.law_registry import (
-    get_registry,
     _ADILET_CODE_TO_SHORT,
+    get_registry,
 )
 
 _TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
@@ -79,7 +79,7 @@ class Result:
     adilet_title: str = ""
     in_force: bool | None = None
     note: str = ""
-    checked_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    checked_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 def _collect_entries(only_db: bool, only_static: bool) -> list[Entry]:

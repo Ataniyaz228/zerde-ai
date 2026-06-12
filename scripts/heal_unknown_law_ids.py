@@ -2,22 +2,21 @@
 Heal UNKNOWN law_ids in the evidence cache by analyzing chunk content.
 Also finds and fixes misidentified law_ids.
 """
-import asyncio
 import json
 import re
 import sqlite3
 import sys
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from zerde.models import EvidenceChunk, LegalRank
+from zerde.models import LegalRank
+
 # law_registry не тянет ddgs (в отличие от s3_gather) → используем его как единый
 # источник law_id↔adilet_code вместо локальной копии словаря (в ней жил стейл
 # 87-IV→Z1300000094, тот самый десинк, что удалён из пайплайна).
 from zerde.utils.law_registry import get_registry
-
 
 # Extended content-based law_id detection
 _CONTENT_SIGNATURES = {
@@ -161,7 +160,7 @@ def heal_db():
 
     print(f"\n✅ Healed: {healed}")
     print(f"❌ Could not identify: {failed}")
-    print(f"\n--- Healed law_id distribution ---")
+    print("\n--- Healed law_id distribution ---")
     for lid, count in stats.most_common(30):
         print(f"  {lid}: {count}")
 

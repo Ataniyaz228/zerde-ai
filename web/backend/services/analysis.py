@@ -1,10 +1,9 @@
-import os
-import sys
 import asyncio
 import logging
+import os
+import sys
 import time
 from pathlib import Path
-from typing import Dict
 
 from api.ws import manager
 
@@ -31,7 +30,7 @@ if _ENV_FILE.exists():
 
 logger = logging.getLogger(__name__)
 
-analysis_status: Dict[str, str] = {}
+analysis_status: dict[str, str] = {}
 
 STAGE_MAP = {
     "S1":  "extract",
@@ -174,6 +173,7 @@ async def _run_analysis_async(analysis_id: str, file_path: str, main_loop: async
         # Структурная надёжность — берём из объекта анализа, НЕ выскребаем
         # regex'ом из Markdown. Пишем сайдкар <report>.meta.json для storage.
         import json as _json
+
         from zerde.stages.s7_render import build_reliability_summary
 
         summary = build_reliability_summary(result.analysis)

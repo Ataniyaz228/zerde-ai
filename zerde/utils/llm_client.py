@@ -10,11 +10,11 @@ LLM Client Factory + Cached Calls
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 
-import asyncio
 from openai import AsyncOpenAI
 
 from zerde.config import Settings, get_settings
@@ -41,13 +41,13 @@ def _repair_truncated_json(raw: str) -> dict | None:
     """
     if not raw:
         return None
-        
+
     # Убираем возможный markdown
     if "```json" in raw:
         raw = raw.split("```json", 1)[1]
     if "```" in raw:
         raw = raw.split("```", 1)[0]
-        
+
     raw = raw.strip()
     if not raw or not (raw.startswith("{") or raw.startswith("[")):
         return None

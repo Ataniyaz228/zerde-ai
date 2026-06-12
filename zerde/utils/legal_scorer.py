@@ -135,7 +135,7 @@ def infer_legal_rank_from_web_content(
     parsed = urlparse(url)
     hostname = parsed.hostname or ""
     domain = hostname.removeprefix("www.")
-    
+
     # Check if exact or subdomain matching TIER_1
     is_tier_1 = _domain_matches(domain, _TIER_1_DOMAINS)
     if is_tier_1 or tier == WebTier.TIER_1:
@@ -144,10 +144,10 @@ def infer_legal_rank_from_web_content(
 
     # 2. Strict Code Patterns
     text_to_scan = f"{title} \n {content}"
-    
+
     # Check false positives first
     has_false_positive = bool(_FALSE_POSITIVE_RE.search(text_to_scan))
-    
+
     has_strict_code = bool(_STRICT_CODE_RE.search(text_to_scan) or _KZ_CODE_RE.search(text_to_scan))
     if has_strict_code and not has_false_positive:
         score += 4

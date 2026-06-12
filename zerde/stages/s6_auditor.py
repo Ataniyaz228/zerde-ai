@@ -22,16 +22,16 @@ from rank_bm25 import BM25Okapi
 from zerde.config import get_settings
 from zerde.models import (
     AnalysisJSON,
+    ClaimExtractionResult,
     ClaimSeverity,
     ClaimVerdict,
     ConflictRecord,
     ConflictType,
+    DocumentClaim,
     EvidenceChunk,
     Fact,
     ValidationStatus,
     VerdictStatus,
-    DocumentClaim,
-    ClaimExtractionResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -200,7 +200,7 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
         ent_clean = re.sub(r"ЗРК|зрк", "", ent_clean).strip("-").strip()
         if re.match(r"^\d+-[-‐–A-Z]+$", ent_clean) or registry.get_adilet_code(ent_clean):
             law_ids.append(ent_clean)
-            
+
     # 2. Search text and entities for common aliases
     text_lower = (claim.claim_text + " " + claim.quote).lower()
     for alias, resolved in _COMMON_LAW_NAME_MAP.items():
@@ -213,10 +213,10 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
             pattern = rf"\b{re.escape(clean_alias)}\b"
         else:
             pattern = re.escape(clean_alias)
-            
+
         if re.search(pattern, text_lower, re.I | re.U):
             law_ids.extend(resolved)
-            
+
     # 3. Regex match standard law formats in text (e.g. № 413-IV or 1000-XIII)
     matches = re.findall(r"\b\d+[-‐–][IVXivx\u0406\u0456]{1,5}\b", text_lower)
     for m in matches:
@@ -232,22 +232,22 @@ def _extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
 def _extract_article_from_claim(claim: DocumentClaim) -> str | None:
     """Извлекает номер статьи из утверждения с использованием regex."""
     text = (claim.claim_text + " " + claim.quote).lower()
-    
+
     # 1. Русский вариант: слово статья/ст в разных падежах, затем число
     match_ru = re.search(r"\b(?:стать[яиюе]|ст\.?)\s*(\d+[\-\d]*)", text, re.IGNORECASE)
     if match_ru:
         return match_ru.group(1).strip()
-        
+
     # 2. Казахский вариант: число, затем дефис и бап/бабы/бапта/баптың
     match_kk = re.search(r"\b(\d+[\-\d]*)-(?:бап|бабы|бабының|бапта|баптың|бабына)", text, re.IGNORECASE)
     if match_kk:
         return match_kk.group(1).strip()
-        
+
     # 3. Fallback на просто бап/бабы, если число идет после
     match_kk_fallback = re.search(r"\b(?:бап|бабы|бабының|бапта|баптың|бабына)\s*(\d+[\-\d]*)", text, re.IGNORECASE)
     if match_kk_fallback:
         return match_kk_fallback.group(1).strip()
-        
+
     return None
 
 
@@ -261,15 +261,15 @@ def _exact_metadata_search(
     """
     referenced_law_ids = _extract_referenced_law_ids(claim)
     article_num = _extract_article_from_claim(claim)
-    
+
     if not referenced_law_ids or not article_num:
         return []
-        
+
     candidates = []
     for cid, chunk in corpus_index.items():
         if any(_are_law_ids_synonymous(chunk.law_id, ref_id) for ref_id in referenced_law_ids) and chunk.article == article_num:
             candidates.append(cid)
-            
+
     return candidates
 
 
@@ -320,8 +320,9 @@ def audit_analysis(
                 chunk = corpus_index[full_id]
                 if not chunk.law_id:
                     # Web source check
-                    from zerde.models import WebTier
                     from urllib.parse import urlparse
+
+                    from zerde.models import WebTier
                     is_official = False
                     url = (chunk.source_url or "").lower()
                     try:
@@ -331,7 +332,7 @@ def audit_analysis(
                             is_official = True
                     except Exception:
                         pass
-                    
+
                     if not is_official:
                         logger.info(f"[S6/SourceFilter] Filtering out non-authoritative/non-KZ source '{full_id[:12]}': {chunk.source_url}")
                         continue
@@ -616,7 +617,7 @@ def audit_analysis(
                 ClaimSeverity.LOW: 0.5,
             }
             w_total = sum(severity_weights.get(v.severity, 1.0) for v in analytical_verdicts)
-            
+
             w_confirmed = 0.0
             for v in analytical_verdicts:
                 if v.status == VerdictStatus.CONFIRMED:
@@ -629,7 +630,7 @@ def audit_analysis(
                         for sid in real_sources:
                             if sid in corpus_index:
                                 best_rank = min(best_rank, int(corpus_index[sid].legal_rank))
-                        
+
                         if best_rank <= 3:
                             a_coef = 1.0
                         elif best_rank <= 6:
@@ -652,13 +653,13 @@ def audit_analysis(
                         # Fallback for virtual reference-data verified claims
                         auth_scores.append(0.5)
                         continue
-                    
+
                     # Find min (strongest) rank of its sources
                     best_rank = 11
                     for sid in real_sources:
                         if sid in corpus_index:
                             best_rank = min(best_rank, int(corpus_index[sid].legal_rank))
-                    
+
                     if best_rank <= 3:
                         auth_scores.append(1.0)
                     elif best_rank <= 6:
@@ -695,7 +696,7 @@ def audit_analysis(
             # R = (0.50 * V_ratio + 0.30 * Q_auth + 0.20 * Q_retrieval) * (1.0 - P_conflict)
             base_score = 0.50 * v_ratio + 0.30 * q_auth + 0.20 * q_retrieval
             reliability = base_score * (1.0 - p_conflict)
-            
+
             # Если есть реально подтвержденные факты, ограничиваем надежность снизу 5%
             # (чтобы избежать 0% при наличии подтвержденного и противоречивого контента одновременно)
             if n_real_confirmed > 0:
@@ -710,7 +711,7 @@ def audit_analysis(
 
         # Compile and attach AnalysisStats (v9.4 Immutable Stage)
         from zerde.models import AnalysisStats
-        
+
         # FIX 3 + FIX 5: Conditional pros — don't claim "Confirmed 0" as a positive.
         # FIX 5: Don't generate false positive "no contradictions" when corpus is empty.
         # corpus_index может быть пустым (0 локальных чанков) — в этом случае
@@ -736,7 +737,7 @@ def audit_analysis(
                 pros_list.append("Документ не содержит фактических ошибок в проверяемой части (недостаточно источников для полной верификации).")
             else:
                 pros_list.append(f"Проанализировано {n_total} утверждений законопроекта.")
-        
+
         # Наполняем cons список в AnalysisJSON для рендеринга
         analysis.cons = []
         if n_contradicted > 0:
@@ -751,7 +752,7 @@ def audit_analysis(
         confirmed_list = [v for v in analytical_verdicts if v.status == VerdictStatus.CONFIRMED]
         contradictions_list = [v for v in analytical_verdicts if v.status == VerdictStatus.CONTRADICTED]
         unverified_list = [v for v in analytical_verdicts if v.status == VerdictStatus.UNVERIFIED]
-        
+
         rec_str = (
             f"Юридический аудит завершен. Из {n_total} выдвинутых утверждений: "
             f"{len(confirmed_list)} подтверждено действующим законодательством Республики Казахстан, "
@@ -837,7 +838,7 @@ class ZerdeBM25:
                 raw_scores = self._bm25.get_scores(tokens)
                 if len(raw_scores) > 0:
                     self_scores.append(float(np.max(raw_scores)))
-        
+
         # Берем медиану self-scores для стабильной шкалы, с минимумом 1.0
         self._max_score = float(np.median(self_scores)) if self_scores else 1.0
         if self._max_score < 0.001:
@@ -933,7 +934,7 @@ def _corpus_wide_bm25_search(
             best_cid = bm25._ids[best_idx]
             normalized = min(1.0, best_raw / bm25._max_score)
             normalized = max(0.0, normalized)
-            
+
             if normalized >= settings.bm25_medium_threshold:
                 fact.source_ids = [best_cid]
                 logger.info(f"[S6/Fallback/Layer1] Verified claim '{fact.claim_id}' inside law {referenced_law_ids} (or web): score={normalized:.3f}")
@@ -971,7 +972,7 @@ def _corpus_wide_bm25_search(
                 best_cid = bm25._ids[best_idx]
                 normalized = min(1.0, best_raw / bm25._max_score)
                 normalized = max(0.0, normalized)
-                
+
                 if normalized >= settings.bm25_medium_threshold:
                     fact.source_ids = [best_cid]
                     logger.info(f"[S6/Fallback/Layer2] Verified claim '{fact.claim_id}' inside parent family {parent_codes}: score={normalized:.3f}")
@@ -1173,7 +1174,7 @@ def _check_topology(
         if sid in corpus_index:
             chunk = corpus_index[sid]
             chunk_law = (chunk.law_id or "").upper()
-            
+
             # Если claim про КоАП, а чанк из Гражданского кодекса -> отсекаем (C1 Fix)
             if is_koap_claim and any(_are_law_ids_synonymous(chunk_law, gk_id) for gk_id in ["1000-XIII", "309-II", "K940001000"]):
                 logger.warning(f"[S6/Cross-Domain] Rejected Civil Code chunk '{sid[:12]}' for KoAP claim '{fact.fact_id}'")

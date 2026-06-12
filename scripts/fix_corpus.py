@@ -111,7 +111,7 @@ def main() -> int:
     if not args.no_titles:
         print("\n3. title refresh from adilet:")
         try:
-            from scripts.verify_corpus_articles import _load_corpus_articles, _build
+            from scripts.verify_corpus_articles import _build, _load_corpus_articles
             by_law = _load_corpus_articles(db)
             reports = asyncio.run(_build(by_law, None))
             fixable = [r for r in reports if r.adilet_title and r.canonical_id]

@@ -450,7 +450,7 @@ class AnalysisJSON(BaseModel):
                 data["custom_pros"] = val if isinstance(val, list) else [str(val)]
             elif "pros" in data:
                 data.pop("pros")
-            
+
             # Migrate 'recommendation' -> 'custom_recommendation'
             if "recommendation" in data and "custom_recommendation" not in data:
                 data["custom_recommendation"] = data.pop("recommendation")
@@ -543,7 +543,7 @@ class AnalysisJSON(BaseModel):
             contradictions = [v for v in verdicts if v.status == VerdictStatus.CONTRADICTED]
             confirmed_list = [v for v in verdicts if v.status == VerdictStatus.CONFIRMED]
             unverified_list = [v for v in verdicts if v.status == VerdictStatus.UNVERIFIED]
-            
+
             rec = (
                 f"Юридический аудит завершен. Из {len(verdicts)} выдвинутых утверждений: "
                 f"{len(confirmed_list)} подтверждено действующим законодательством Республики Казахстан, "

@@ -36,10 +36,8 @@
 | `LLM_MODEL_EXTRACTOR` | `gemini-3.5-flash` | S2.5 — Claim Extractor |
 | `LLM_MODEL_ANALYST` | `gemini-3.5-flash` | S5 — Auditor |
 | `LLM_MODEL_POLICY_ANALYST` | `gemini-3.5-flash` | S5.5 — Policy Analyst |
-| `LLM_MODEL_RENDERER` | `gemini-3.5-flash` | S7 — Report Renderer |
 | `LLM_MAX_TOKENS_PLANNER` | `8192` | Макс. токенов для Planner |
 | `LLM_MAX_TOKENS_ANALYST` | `16384` | Макс. токенов для Auditor |
-| `LLM_MAX_TOKENS_RENDERER` | `8192` | Макс. токенов для Renderer |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding (если ключ задан) |
 
 ### Поиск

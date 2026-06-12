@@ -19,7 +19,7 @@ import os
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Make `zerde.*` and sibling eval modules importable when run directly.
@@ -30,13 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # OCR off — label-free eval must stay fast; we skip PDFs anyway.
 os.environ.setdefault("ZERDE_PDF_OCR_ENABLED", "0")
 
+from grounding import build_article_index, check_grounding  # noqa: E402
+from mutate import mutate_article, mutate_law  # noqa: E402
+
 from zerde.config import get_settings  # noqa: E402
 from zerde.stages.s1_ingest import ingest_document  # noqa: E402
 from zerde.stages.s2_5_claim_extractor import _detect_target_laws, _regex_extract  # noqa: E402
 from zerde.utils.cache import CacheManager  # noqa: E402
-
-from grounding import build_article_index, check_grounding  # noqa: E402
-from mutate import mutate_article, mutate_law  # noqa: E402
 
 
 def _claims_with_article(claims) -> list:

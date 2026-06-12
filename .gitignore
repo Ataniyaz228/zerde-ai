@@ -8,7 +8,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 output/
-docs/
+# docs/ держит и корпус законов (папки — не коммитим), и документацию (*.md — коммитим)
+docs/*
+!docs/*.md
 *.egg-info/
 dist/
 build/

@@ -145,15 +145,15 @@ async def run_pipeline(
         law_id_to_articles: dict[str, set[str] | None] = {}
         for aq in query_plan.adilet_queries:
             aq_lids = [registry.resolve(lid) for lid in (aq.law_ids or []) if lid]
-            
+
             for lid in aq_lids:
                 if not lid:
                     continue
-                
+
                 # Если уже стоит None (взять всё), не ограничиваем статьями
                 if law_id_to_articles.get(lid) is None:
                     continue
-                
+
                 if not aq.articles:
                     law_id_to_articles[lid] = None
                 else:
@@ -167,7 +167,6 @@ async def run_pipeline(
 
             # ── Шаг A: Прямой SQL по метаданным (гарантированное попадание) ──
             import json as _json
-            import sqlite3 as _sqlite3
             injected = 0
             with _cache_for_rag._conn() as conn:
                 for lid, arts in law_id_to_articles.items():
@@ -240,10 +239,11 @@ async def run_pipeline(
     # упоминаемые ТОЛЬКО в S2.5 claim extractor. Здесь догружаем chunks по
     # парам (target_law_id × article из claim).
     try:
-        from zerde.config import get_settings as _gs2
-        from zerde.utils.cache import CacheManager as _CM2
-        from zerde.stages.s6_auditor import _extract_article_from_claim
         import json as _json2
+
+        from zerde.config import get_settings as _gs2
+        from zerde.stages.s6_auditor import _extract_article_from_claim
+        from zerde.utils.cache import CacheManager as _CM2
         registry = get_registry()
         _cache_for_claims = _CM2(_gs2().cache_db_path)
         existing_chunk_ids = {c.chunk_id for c in raw_chunks}
@@ -298,7 +298,7 @@ async def run_pipeline(
     # ─── ЭТАП 4: Fusion & Validation ─────────────────────────────────────
     t4 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 4: Fusion & Conflict Detection")
-    
+
     # Language filtering removed as it was dropping cross-lingual web results
     fused_chunks = await fuse_and_validate(raw_chunks)
     active_chunks = [c for c in fused_chunks if not c.is_duplicate]

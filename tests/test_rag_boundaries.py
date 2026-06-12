@@ -1,23 +1,23 @@
-import pytest
 from zerde.models import (
-    EvidenceChunk,
-    LegalRank,
-    DocumentClaim,
-    ClaimType,
-    ClaimSeverity,
     AnalysisJSON,
-    Fact,
-    ClaimVerdict,
-    VerdictStatus,
-    ValidationStatus,
     ClaimExtractionResult,
+    ClaimSeverity,
+    ClaimType,
+    ClaimVerdict,
+    DocumentClaim,
+    EvidenceChunk,
+    Fact,
+    LegalRank,
+    ValidationStatus,
+    VerdictStatus,
 )
 from zerde.stages.s6_auditor import (
-    _extract_referenced_law_ids,
-    _corpus_wide_bm25_search,
-    audit_analysis,
     ZerdeBM25,
+    _corpus_wide_bm25_search,
+    _extract_referenced_law_ids,
+    audit_analysis,
 )
+
 
 def test_extract_referenced_law_ids_synonyms():
     # 1. Проверяем, что aliases Закона об исполнительном производстве распознаются и маппятся на 261-IV
@@ -84,7 +84,7 @@ def test_corpus_wide_bm25_search_blocks_wrong_law():
 def test_sync_verdict_guard():
     # Симулируем ситуацию, когда оригинальный вердикт LLM был UNVERIFIED,
     # но BM25-fallback в Stage 6 выдал какой-то семантический шум (score > 0.40)
-    
+
     koap_commentary_chunk = EvidenceChunk(
         chunk_id="koap_commentary_001",
         source_url="https://prg.kz/document/?doc_id=33722527",
@@ -130,7 +130,7 @@ def test_sync_verdict_guard():
         claim_type=ClaimType.LEGAL_REF,
         severity=ClaimSeverity.HIGH
     )
-    
+
     claims = ClaimExtractionResult(
         doc_id="test_doc",
         claims=[claim]

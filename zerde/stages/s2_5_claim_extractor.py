@@ -49,7 +49,7 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
     # Номера законов: "Закон № 94-V", "№ 87-IV ЗРК", "Законы / ҚРЗ"
     (re.compile(r"(?:Закон\w*|Кодекс\w*|ЗРК|Заңы*|ҚРЗ)\s+[^№]*?№\s*(\d{2,4}[-‐–]\w{1,5}(?:\s*(?:ЗРК|ҚРЗ))?)", re.I | re.U), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
     (re.compile(r"№\s*(\d{2,4}[-‐–][IVXivx\u0406\u0456]{1,5}(?:\s*(?:ЗРК|ҚРЗ))?)\b", re.I), ClaimType.LEGAL_ID, ClaimSeverity.CRITICAL, "law_id"),
-    
+
     # Ссылки на статьи КоАП (RU + KK)
     (re.compile(r"стать[яиею]\s*(\d+(?:[-.]?\d+)?)\s*КоАП", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
     (re.compile(r"ӘҚБтК\w*\s*(?:-\s*)?(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "koap_article"),
@@ -63,22 +63,22 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
     # Ссылки на статьи любого Кодекса (RU + KK)
     (re.compile(r"(?:в\s+)?стать[яиеюй]\w?\s+(\d+(?:[-.]?\d+)?)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
     (re.compile(r"(\d+(?:[-.\d]+)?)\s*(?:-|–)?\s*(?:бап|бабы|бабында|бапта|баптың|бабының)\b(?!\s*(?:КоАП|ӘҚБтК|УК|ҚК))", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.HIGH, "article_ref"),
-    
+
     # Ссылки на ППРК: Постановление Правительства №142, ППРК №909
     (re.compile(r"(?:ППРК|Постановлени[яею]\s+Правительства)[^№]*№?\s*(\d+)", re.I | re.U), ClaimType.LEGAL_REF, ClaimSeverity.CRITICAL, "pprkz_num"),
-    
+
     # Штрафы в МРП / АЕК (RU + KK)
     (re.compile(r"(\d[\d\s]*)\s*(?:\([^)]*\)\s*)?(?:МРП|АЕК)", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.CRITICAL, "fine_mrp"),
     (re.compile(r"айлық\s+есептік\s+көрсеткіш\w*\s*(?:дегеніміз\s*)?(\d[\d\s]*)\s*(?:\([^)]*\)\s*)?(?:еселенген|еселі|мөлшер)", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.CRITICAL, "fine_mrp"),
     # Размер МРП / АЕК в тенге (RU + KK)
     (re.compile(r"(?:МРП|АЕК)[^.]*?(\d[\d\s]+)\s*тенге", re.I | re.U), ClaimType.FINANCIAL, ClaimSeverity.HIGH, "mrp_value"),
-    
+
     # Сроки уведомлений в часах: "не позднее 24 часов", "в течение 72 часов"
     (re.compile(r"(?:в\s*течени[ие]|не\s*позднее)\s*(\d+)\s*(?:\([^)]*\)\s*)?час", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "hours_deadline"),
     # Сроки в рабочих днях (RU + KK)
     (re.compile(r"в\s*течени[ие]\s*(\d+)\s*рабочих\s*дн", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "workdays_deadline"),
     (re.compile(r"(\d+)\s*жұмыс\s*күні\s*ішінде", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "workdays_deadline"),
-    
+
     # Даты вступления в силу: с 1 января 2025 года, с 1 июля 2026
     (re.compile(r"с\s+(\d{1,2}\s+\w+\s+\d{4})\s*года", re.I | re.U), ClaimType.TEMPORAL, ClaimSeverity.HIGH, "effective_date"),
     # Вводится в действие / қолданысқа енгізіледі (RU + KK)

@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from pathlib import Path
 
 from zerde.config import get_settings
 from zerde.pipeline import run_pipeline

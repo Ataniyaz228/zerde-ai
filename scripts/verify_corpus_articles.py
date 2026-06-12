@@ -44,14 +44,14 @@ import json
 import sqlite3
 import sys
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 
 import httpx
 
 from zerde.config import get_settings
-from zerde.utils.law_registry import get_registry
 from zerde.stages.s3_gather import _extract_adilet_articles
+from zerde.utils.law_registry import get_registry
 
 
 @dataclass
@@ -66,7 +66,7 @@ class LawReport:
     status: str                       # ok | risk | unfetchable | no_code | raw_code_law_id
     adilet_title: str = ""
     note: str = ""
-    checked_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    checked_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 _RAW_CODE = __import__("re").compile(r"^[A-Z]\d{5,}_?$")
@@ -160,7 +160,7 @@ def _fix_titles(db_path: str, reports: list[LawReport]) -> int:
         if r.adilet_title and r.canonical_id:
             cur = conn.execute(
                 "UPDATE law_metadata SET title_ru = ?, updated_at = ? WHERE law_id = ?",
-                (r.adilet_title, datetime.now(timezone.utc).isoformat(), r.canonical_id),
+                (r.adilet_title, datetime.now(UTC).isoformat(), r.canonical_id),
             )
             fixed += cur.rowcount
     conn.commit()

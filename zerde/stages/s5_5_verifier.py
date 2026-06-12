@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+
 from zerde.models import AnalysisJSON, ClaimVerdict, EvidenceChunk, VerdictStatus
 
 logger = logging.getLogger(__name__)
@@ -115,18 +116,18 @@ async def verify_contradictions(
        Если ни в одном из чанков из `source_ids` не найдено подтверждения противоречия -> UNVERIFIED.
     """
     logger.info(f"[S5.2/Verifier] Validating {len(analysis.verdicts)} verdicts...")
-    
+
     chunk_map = {c.chunk_id: c for c in chunks}
     verified_verdicts: list[ClaimVerdict] = []
-    
+
     contradicted_count = 0
     demoted_count = 0
-    
+
     for v in analysis.verdicts:
         if v.status != VerdictStatus.CONTRADICTED:
             verified_verdicts.append(v)
             continue
-            
+
         # Пропускаем детерминированные (из реестра)
         if v.is_deterministic or "reference_data" in v.source_ids:
             verified_verdicts.append(v)
@@ -202,37 +203,37 @@ async def verify_contradictions(
             )
             v.status = VerdictStatus.UNVERIFIED
             v.contradiction_detail = (
-                f"[Verifier: Понижено с CONTRADICTED] LLM заявила о противоречии, "
-                f"но не смогла указать валидные источники из базы НПА."
+                "[Verifier: Понижено с CONTRADICTED] LLM заявила о противоречии, "
+                "но не смогла указать валидные источники из базы НПА."
             )
             verified_verdicts.append(v)
             demoted_count += 1
             continue
-            
+
         # Правило 3: Проверка наличия опровергающих ключевых слов/чисел в чанках
         # Извлекаем все числа и ключевые слова из найденного значения и деталей
         detail_text = (v.contradiction_detail or "").lower() + " " + (v.found_value or "").lower()
-        
+
         # Извлекаем числа (чтобы проверить расхождения в штрафах, сроках, номерах законов)
         numbers_to_find = re.findall(r"\b\d+\b", detail_text)
-        
+
         # Проверяем связанные чанки
         corroborated = False
         for sid in valid_sources:
             chunk = chunk_map[sid]
             chunk_content_lower = (chunk.content or "").lower()
-            
+
             # Если в чанке есть точное дословное совпадение деталей противоречия
             if v.contradiction_detail and v.contradiction_detail.lower() in chunk_content_lower:
                 corroborated = True
                 break
-                
+
             # Или если это числовое расхождение (все ключевые числа есть в чанке)
             if numbers_to_find:
                 if all(num in chunk_content_lower for num in numbers_to_find):
                     corroborated = True
                     break
-                    
+
             # Или если это текстовый контент (хотя бы 2 ключевых слова из found_value есть в чанке)
             keywords = [w.strip() for w in re.split(r"[^\w]+", (v.found_value or "").lower()) if len(w.strip()) > 3]
             if keywords:
@@ -240,7 +241,7 @@ async def verify_contradictions(
                 if matched_keywords >= min(len(keywords), 2):
                     corroborated = True
                     break
-                    
+
         if corroborated:
             verified_verdicts.append(v)
             contradicted_count += 1
@@ -256,10 +257,10 @@ async def verify_contradictions(
             )
             verified_verdicts.append(v)
             demoted_count += 1
-            
+
     # Обновляем verdicts в объекте анализа
     analysis.verdicts = verified_verdicts
-    
+
     # Синхронизируем facts с обновлёнными вердиктами
     updated_facts = []
     for fact in analysis.facts:
@@ -277,9 +278,9 @@ async def verify_contradictions(
                 fact.confidence = 0.4
                 fact.source_ids = ["UNLINKED"]
         updated_facts.append(fact)
-        
+
     analysis.facts = updated_facts
-    
+
     logger.info(
         f"[S5.2/Verifier] Verification complete. Contradicted: {contradicted_count} | "
         f"Demoted to UNVERIFIED: {demoted_count}"

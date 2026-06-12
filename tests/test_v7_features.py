@@ -6,11 +6,11 @@ Tests for Zerde v7.0 features:
 - Validation status override
 """
 import pytest
+
 from zerde.models import (
     ClaimSeverity,
     ClaimType,
     ClaimVerdict,
-    ConflictRecord,
     ConflictType,
     DocumentClaim,
     Fact,
@@ -222,8 +222,8 @@ class TestClaimDedupEntityGrouping:
 
 class TestPipelineResultAttributes:
     def test_attribute_access_and_validation(self):
+        from zerde.models import DocumentFormat, DocumentState
         from zerde.pipeline import ZerdePipelineResult
-        from zerde.models import DocumentState, DocumentFormat
 
         res = ZerdePipelineResult()
         # Setting a valid annotated attribute
@@ -258,8 +258,9 @@ class TestCacheConcurrency:
         import asyncio
         import random
         from pathlib import Path
-        from zerde.utils.cache import CacheManager, LLMCache
+
         from zerde.models import EvidenceChunk, LegalRank, WebTier
+        from zerde.utils.cache import CacheManager, LLMCache
 
         # Setup test DB path
         db_path = "test_concurrency_cache.db"

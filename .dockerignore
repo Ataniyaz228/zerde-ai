@@ -1,0 +1,48 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+.turbo/
+
+# Data (mount at runtime, not baked into image)
+*.db
+*.db-shm
+*.db-wal
+*.db.bak-*
+output/
+data/
+
+# Logs / scratch
+*.log
+scratch/
+last_*.json
+latest_responses.json
+repomix-output.xml
+test.html
+test_llm.py
+test_parse.py
+test_parse2.py
+
+# Git / IDE
+.git/
+.github/
+.gitignore
+.claude/
+.antigravitycli/
+docs/
+CLAUDE.md
+
+# Docker (prevent recursive copy)
+docker-compose.yml
+.dockerignore

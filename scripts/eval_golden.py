@@ -3,12 +3,12 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
 
-from tests.evaluation_data import GOLDEN_TEST_CASES, ExpectedIssue, GoldenTestCase
+from tests.evaluation_data import GOLDEN_TEST_CASES
 from zerde.config import get_settings
-from zerde.pipeline import run_pipeline
 from zerde.models import VerdictStatus
+from zerde.pipeline import run_pipeline
+
 
 @dataclass
 class CaseResult:
@@ -32,13 +32,13 @@ async def run_evaluation():
     print("=" * 60)
     print("🔬 ZERDE AI — MULTI-DOCUMENT EVALUATION RUNNER")
     print("=" * 60)
-    
+
     results = []
     start_time_all = time.time()
-    
+
     for case in GOLDEN_TEST_CASES:
         print(f"\n► Running test case '{case.case_id}' on: {case.document_path}...")
-        
+
         if not os.path.exists(case.document_path):
             results.append(CaseResult(
                 case_id=case.case_id,
@@ -49,18 +49,18 @@ async def run_evaluation():
                 error_msg="Input file not found"
             ))
             continue
-            
+
         start_time = time.time()
         try:
             pipeline_res = await run_pipeline(case.document_path)
             latency = time.time() - start_time
             analysis = pipeline_res.analysis
             verdicts = analysis.verdicts
-            
+
             found_issues = []
             missed = []
             unverified = []
-            
+
             for expected in case.expected_issues:
                 matched = False
                 for verdict in verdicts:
@@ -76,14 +76,14 @@ async def run_evaluation():
                             break
                 if not matched:
                     missed.append(expected.issue_id)
-                    
+
             all_contradicted = [v for v in verdicts if v.status == VerdictStatus.CONTRADICTED]
             false_positives_count = max(0, len(all_contradicted) - len(found_issues))
-            
+
             recall = len(found_issues) / len(case.expected_issues) if case.expected_issues else 1.0
             precision = len(found_issues) / (len(found_issues) + false_positives_count) if (len(found_issues) + false_positives_count) > 0 else 1.0
             f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-            
+
             results.append(CaseResult(
                 case_id=case.case_id,
                 document_path=case.document_path,
@@ -109,7 +109,7 @@ async def run_evaluation():
                 latency_sec=0.0, cost_usd=0.0, success=False,
                 error_msg=str(e)
             ))
-            
+
     _write_report(results, time.time() - start_time_all)
     sys.exit(0)
 

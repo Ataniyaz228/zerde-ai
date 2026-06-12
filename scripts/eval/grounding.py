@@ -12,13 +12,13 @@ import json
 from collections import defaultdict
 
 from zerde.models import DocumentClaim, EvidenceChunk
-from zerde.utils.cache import CacheManager
-from zerde.utils.law_registry import get_registry
 from zerde.stages.s6_auditor import (
     _exact_metadata_search,
     _extract_article_from_claim,
     _extract_referenced_law_ids,
 )
+from zerde.utils.cache import CacheManager
+from zerde.utils.law_registry import get_registry
 
 # (law_id_as_stored, article) -> {chunk_id: EvidenceChunk}
 ArticleIndex = dict[tuple[str, str], dict[str, EvidenceChunk]]

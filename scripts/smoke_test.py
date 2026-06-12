@@ -31,7 +31,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from zerde.stages.s1_ingest import ingest_document
 from zerde.stages.s2_5_claim_extractor import _detect_target_laws, _regex_extract
 
-
 SUPPORTED_EXTS = {".docx", ".pdf", ".txt"}
 
 
@@ -104,7 +103,7 @@ async def main_async(corpus_dir: Path, out_csv: Path) -> int:
     n_with_target = sum(1 for r in rows if r["ok"] and r["target_law_ids"])
     n_with_claims = sum(1 for r in rows if r["ok"] and r["regex_claims"] > 0)
     print()
-    print(f"=== Summary ===")
+    print("=== Summary ===")
     print(f"  Ingested OK         : {n_ok}/{len(rows)}")
     print(f"  Detected target_law : {n_with_target}/{n_ok}")
     print(f"  Regex found claims  : {n_with_claims}/{n_ok}")

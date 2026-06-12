@@ -119,11 +119,12 @@ class TestS3LawIdNormalization:
         assert "https://adilet.zan.kz/rus/docs/Z1300000094" in urls
         assert urls[0] == "https://adilet.zan.kz/rus/docs/Z1300000094"  # первый
 
-    def test_known_law_87iv_maps_to_94v(self):
-        """Ошибочный ID 87-IV должен маппиться на тот же закон что и 94-V."""
+    def test_removed_87iv_mapping_no_longer_fabricates(self):
+        """87-IV больше НЕ маппится на 94-V (хардкод удалён); нет adilet-кода → нет URL."""
         from zerde.stages.s3_gather import _normalize_law_id_to_adilet_urls
-        urls = _normalize_law_id_to_adilet_urls("87-IV", "https://adilet.zan.kz")
-        assert urls[0] == "https://adilet.zan.kz/rus/docs/Z1300000094"
+        from zerde.utils.law_registry import get_registry
+        assert get_registry().resolve("87-IV") == "87-IV"   # резолвит в себя, не в 94-V
+        assert _normalize_law_id_to_adilet_urls("87-IV", "https://adilet.zan.kz") == []
 
     def test_known_koap_235v(self):
         from zerde.stages.s3_gather import _normalize_law_id_to_adilet_urls
@@ -135,13 +136,11 @@ class TestS3LawIdNormalization:
         urls = _normalize_law_id_to_adilet_urls("370-II", "https://adilet.zan.kz")
         assert urls[0] == "https://adilet.zan.kz/rus/docs/Z030000370_"
 
-    def test_unknown_id_generates_variants(self):
-        """Неизвестный ID должен генерировать Z-format варианты + as-is."""
+    def test_unknown_short_id_yields_no_fabricated_urls(self):
+        """Неизвестный short ID НЕ должен фабриковать adilet URL (false-grounding)."""
         from zerde.stages.s3_gather import _normalize_law_id_to_adilet_urls
         urls = _normalize_law_id_to_adilet_urls("999-VI", "https://adilet.zan.kz")
-        # Должен содержать as-is как последний fallback
-        assert "https://adilet.zan.kz/rus/docs/999-VI" in urls
-        assert len(urls) >= 2  # Есть варианты помимо as-is
+        assert urls == []  # registry не знает → не угадываем URL
 
     def test_already_adilet_format(self):
         """ID в формате Adilet должен проходить как есть."""

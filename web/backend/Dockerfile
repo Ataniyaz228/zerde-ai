@@ -26,13 +26,15 @@ COPY main.py ./
 
 # Installs everything in pyproject, INCLUDING torch + sentence-transformers
 # (~2-3 GB). These are core deps today; once Phase 4 carves out a `[semantic]`
-# extra, switch to `pip install --no-cache-dir -e .` (lean) and add it back only
-# when semantic search is wanted via `pip install -e ".[semantic]"`.
-RUN pip install --no-cache-dir -e .
+# extra, drop them here and pull back only via `pip install -e ".[semantic]"`.
+#
+# BuildKit cache mount: wheels (torch!) persist in a build cache across builds,
+# so editing pyproject re-runs the install but does NOT re-download torch.
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e .
 
 # ── Backend-specific deps ───────────────────────────────────────────────────
 COPY web/backend/requirements.txt /tmp/backend-requirements.txt
-RUN pip install --no-cache-dir -r /tmp/backend-requirements.txt && rm /tmp/backend-requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r /tmp/backend-requirements.txt && rm /tmp/backend-requirements.txt
 
 # ── Application code ────────────────────────────────────────────────────────
 COPY zerde/ zerde/

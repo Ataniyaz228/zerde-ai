@@ -7,16 +7,18 @@ on:
 permissions:
   contents: read
 
-# ZERDE_CACHE_DB: law-registry reads ONLY (37-row law_metadata fixture, ~24KB).
-# CACHE_DB_PATH: writable scratch — code that writes through settings.cache_db_path
-#   must not pollute the committed fixture.
+# ZERDE_CACHE_DB: law-registry reads (37-row law_metadata fixture). Points at a
+#   /tmp COPY, never the committed file: CacheManager.__init__ lets ZERDE_CACHE_DB
+#   OVERRIDE an explicit db_path, so constructing any CacheManager would otherwise
+#   create tables in / write to the committed fixture. The copy absorbs that.
+# CACHE_DB_PATH: writable scratch for settings.cache_db_path writers.
 # ZERDE_NO_BGE=1: conftest blocks real BGE-M3 loads, so any test that touches
 #   torch/semantics without the `heavy` marker fails loudly instead of trying to
 #   download ~2.3GB on CI (guards marker completeness).
 # -m "not heavy and not llm": skip BGE/torch + full-corpus tests (heavy) and any
 #   token-spending LLM tests (llm).
 env:
-  ZERDE_CACHE_DB: tests/fixtures/law_metadata.db
+  ZERDE_CACHE_DB: /tmp/law_metadata_ci.db
   CACHE_DB_PATH: /tmp/zerde_ci_scratch.db
   ZERDE_NO_BGE: "1"
 
@@ -35,6 +37,8 @@ jobs:
           pip install --index-url https://download.pytorch.org/whl/cpu torch
           pip install -e ".[dev]"
           pip install -r web/backend/requirements.txt
+      - name: Copy law_metadata fixture to a writable /tmp path (protect the committed file)
+        run: cp tests/fixtures/law_metadata.db /tmp/law_metadata_ci.db
       - name: Ruff (non-blocking)   # TODO: flip to blocking after repo-wide ruff cleanup
         continue-on-error: true
         run: ruff check .

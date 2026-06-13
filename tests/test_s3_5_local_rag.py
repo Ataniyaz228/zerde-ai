@@ -23,6 +23,15 @@ from zerde.stages.s3_5_local_rag import inject_claim_driven, inject_local_rag
 from zerde.utils.cache import CacheManager
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cache_db(monkeypatch):
+    """Истинная изоляция: ZERDE_CACHE_DB (если выставлен, напр. на CI) ПЕРЕОПРЕДЕЛЯЕТ
+    явный db_path в CacheManager.__init__ — без снятия env эти тесты писали бы в
+    общую/коммиченную фикстуру. Снимаем env, чтобы CacheManager(db_path=tmp) был
+    действительно изолированным."""
+    monkeypatch.delenv("ZERDE_CACHE_DB", raising=False)
+
+
 def _chunk(chunk_id: str, law_id: str, article: str | None, content: str = "текст статьи") -> EvidenceChunk:
     return EvidenceChunk(
         chunk_id=chunk_id,
@@ -33,6 +42,23 @@ def _chunk(chunk_id: str, law_id: str, article: str | None, content: str = "те
         law_id=law_id,
         article=article,
     )
+
+
+def _seed(manager: CacheManager, chunks: list[EvidenceChunk]) -> None:
+    """Вставляет чанки прямо в evidence_cache, БЕЗ embedding-синка (_sync_new_chunks
+    у put_many грузит BGE-M3/torch). Эти тесты — про чистый SQL get_chunks_by_metadata
+    и метаданные-инжект, семантика им не нужна → остаются offline (не `heavy`)."""
+    from datetime import UTC, datetime
+
+    with manager._conn() as conn:
+        for ch in chunks:
+            conn.execute(
+                """INSERT OR IGNORE INTO evidence_cache
+                   (chunk_id, source_url, content_hash, chunk_json, cached_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (ch.chunk_id, ch.source_url, ch.chunk_id, ch.model_dump_json(),
+                 datetime.now(UTC).isoformat()),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +75,7 @@ async def test_get_chunks_by_metadata_article_filter(tmp_path):
     c2 = _chunk("chunk_a2", "999-TEST", "16")
     c3 = _chunk("chunk_a3", "999-TEST", "15", content="вторая часть статьи 15")
 
-    await manager.put_many([c1, c2, c3])
+    _seed(manager,[c1, c2, c3])
 
     results = manager.get_chunks_by_metadata("999-TEST", article="15")
     result_ids = {c.chunk_id for c in results}
@@ -65,7 +91,7 @@ async def test_get_chunks_by_metadata_no_article_returns_all(tmp_path):
     c2 = _chunk("chunk_b2", "999-TEST", "16")
     c3 = _chunk("chunk_b3", "999-TEST", None)
 
-    await manager.put_many([c1, c2, c3])
+    _seed(manager,[c1, c2, c3])
 
     results = manager.get_chunks_by_metadata("999-TEST")
     result_ids = {c.chunk_id for c in results}
@@ -78,7 +104,7 @@ async def test_get_chunks_by_metadata_limit_caps_no_article(tmp_path):
     manager = CacheManager(db_path=str(db_file))
 
     chunks = [_chunk(f"chunk_c{i}", "999-TEST", str(i)) for i in range(5)]
-    await manager.put_many(chunks)
+    _seed(manager,chunks)
 
     results = manager.get_chunks_by_metadata("999-TEST", limit=2)
     assert len(results) == 2
@@ -89,7 +115,7 @@ async def test_get_chunks_by_metadata_unknown_law_returns_empty(tmp_path):
     db_file = tmp_path / "meta_d.db"
     manager = CacheManager(db_path=str(db_file))
 
-    await manager.put_many([_chunk("chunk_d1", "999-TEST", "15")])
+    _seed(manager,[_chunk("chunk_d1", "999-TEST", "15")])
 
     assert manager.get_chunks_by_metadata("000-UNKNOWN") == []
     assert manager.get_chunks_by_metadata("000-UNKNOWN", article="15") == []
@@ -101,7 +127,7 @@ async def test_get_chunks_by_metadata_broken_row_increments_failures(tmp_path):
     manager = CacheManager(db_path=str(db_file))
 
     good = _chunk("chunk_e1", "999-TEST", "15")
-    await manager.put_many([good])
+    _seed(manager,[good])
 
     # Insert a row with VALID JSON (so json_extract matches law_id/article for
     # the SQL WHERE clause) but missing required EvidenceChunk fields, so
@@ -141,7 +167,7 @@ async def test_inject_claim_driven_injects_and_dedupes(tmp_path):
     target = _chunk("chunk_target", "999-TEST", "15")
     other_article = _chunk("chunk_other", "999-TEST", "16")
 
-    await manager.put_many([target, other_article])
+    _seed(manager,[target, other_article])
 
     claim = DocumentClaim(
         claim_id="claim_0001",
@@ -229,7 +255,7 @@ async def test_inject_local_rag_step_a_b_currently_unreachable_noop(tmp_path, mo
     art15 = _chunk("chunk_lr_15", "999-TEST", "15")
     whole_law_chunk = _chunk("chunk_lr_whole", "888-TEST", "1")
 
-    await manager.put_many([art15, whole_law_chunk])
+    _seed(manager,[art15, whole_law_chunk])
 
     # Stub search_local so Step B (if it were reachable) would also be a
     # deterministic no-op — no BGE/torch involved either way.
@@ -295,7 +321,7 @@ async def test_inject_local_rag_dedupes_existing_chunks(tmp_path, monkeypatch):
     manager = CacheManager(db_path=str(db_file))
 
     art15 = _chunk("chunk_dup_15", "999-TEST", "15")
-    await manager.put_many([art15])
+    _seed(manager,[art15])
 
     async def _stub_search_local(*args, **kwargs):
         return []

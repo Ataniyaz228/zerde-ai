@@ -378,7 +378,7 @@ class CacheManager:
         """
         Pre-computes and stores vector embeddings for EvidenceChunks in batch.
         Uses SentenceTransformer BGE-M3 model on configured hardware (GPU/CPU).
-        
+
         Args:
             chunks: List of EvidenceChunk objects to embed.
         """

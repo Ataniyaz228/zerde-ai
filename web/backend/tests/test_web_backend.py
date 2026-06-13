@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -219,3 +220,64 @@ def test_jobs_persist_across_init_db(app_env):
         assert job["filename"] == "test.txt"
 
     asyncio.run(_run())
+
+
+def test_translate_progress_sequence():
+    """on_progress's translation: pipeline ProgressEvents -> frozen WS shapes.
+
+    extract -> search -> verify -> report, each transition closes the
+    previous stage (stage_done) and opens the next (stage_start). Pure
+    function, no event loop / pipeline / torch needed.
+    """
+    from services.analysis import translate_progress
+
+    prev_stage = "extract"
+    all_events: list[dict] = []
+
+    # First event from run_pipeline is always ("extract", ...) — same as the
+    # stage_start(extract) already emitted by _run_analysis before the
+    # pipeline starts, so this must be a no-op.
+    events, prev_stage = translate_progress(
+        SimpleNamespace(stage="extract", message="Загрузка и извлечение тезисов"), prev_stage
+    )
+    assert events == []
+    assert prev_stage == "extract"
+
+    for stage, message in [
+        ("search", "Поиск в базе НПА Казахстана"),
+        ("verify", "Верификация и анализ коллизий"),
+        ("report", "Формирование отчёта"),
+    ]:
+        events, prev_stage = translate_progress(SimpleNamespace(stage=stage, message=message), prev_stage)
+        all_events.extend(events)
+        assert prev_stage == stage
+
+    seen_types = [(e["type"], e["stage"]) for e in all_events]
+    assert seen_types == [
+        ("stage_done", "extract"),
+        ("stage_start", "search"),
+        ("stage_done", "search"),
+        ("stage_start", "verify"),
+        ("stage_done", "verify"),
+        ("stage_start", "report"),
+    ]
+    for e in all_events:
+        if e["type"] == "stage_start":
+            assert e["stage"] in {"extract", "search", "verify", "report"}
+            assert "message" in e
+        if e["type"] == "stage_done":
+            assert e["stage"] in {"extract", "search", "verify", "report"}
+
+
+def test_translate_progress_matches_real_progress_event():
+    """Sanity check translate_progress against the real ProgressEvent dataclass."""
+    from services.analysis import translate_progress
+
+    from zerde.pipeline import ProgressEvent
+
+    events, new_prev = translate_progress(ProgressEvent("search", "Поиск в базе НПА Казахстана"), "extract")
+    assert events == [
+        {"type": "stage_done", "stage": "extract"},
+        {"type": "stage_start", "stage": "search", "message": "Поиск в базе НПА Казахстана"},
+    ]
+    assert new_prev == "search"

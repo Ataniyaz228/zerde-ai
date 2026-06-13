@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { FileText, Plus, ChevronRight } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { API_URL } from "@/lib/api";
 import s from "./Reports.module.css";
 
 interface Report {
@@ -34,7 +35,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/reports")
+    fetch(`${API_URL}/api/reports`)
       .then((r) => r.json())
       .then((data) => { setReports(data); setLoading(false); })
       .catch(() => setLoading(false));

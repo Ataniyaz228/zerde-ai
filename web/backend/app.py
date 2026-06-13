@@ -2,14 +2,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import logging
-import sys
+import logging  # noqa: E402
+import sys  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
 
-import uvicorn
-from api.routes import router as api_router
-from api.ws import router as ws_router
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import uvicorn  # noqa: E402
+from api.routes import router as api_router  # noqa: E402
+from api.ws import router as ws_router  # noqa: E402
+from config import settings  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from services import jobs  # noqa: E402
 
 
 def setup_logging():
@@ -25,16 +28,24 @@ def setup_logging():
 
 setup_logging()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await jobs.init_db()
+    yield
+
+
 app = FastAPI(
     title="Zerde AI API",
     description="Backend API for Zerde AI Legal Analysis Pipeline",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS for local frontend development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -5,6 +5,7 @@ import FileUpload from "@/components/FileUpload";
 import PipelineProgress, { PipelineStep } from "@/components/PipelineProgress";
 import ReportViewer from "@/components/ReportViewer";
 import { useTranslation } from "@/lib/i18n";
+import { API_URL, WS_URL } from "@/lib/api";
 import s from "./Analyze.module.css";
 
 type Phase = "idle" | "uploading" | "progress" | "done" | "error";
@@ -60,7 +61,7 @@ export default function AnalyzePage() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch("http://localhost:8000/api/analyze", { method: "POST", body: form });
+      const res = await fetch(`${API_URL}/api/analyze`, { method: "POST", body: form });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`${res.status}: ${text}`);
@@ -87,7 +88,7 @@ export default function AnalyzePage() {
     const pendingMsgs: string[] = [];
     let ready = false;
 
-    const ws = new WebSocket(`ws://localhost:8000/ws/progress/${analysisId}`);
+    const ws = new WebSocket(`${WS_URL}/ws/progress/${analysisId}`);
 
     function processMsg(data: string) {
       try {

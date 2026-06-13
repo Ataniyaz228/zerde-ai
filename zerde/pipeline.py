@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from zerde.config import get_settings
@@ -40,7 +41,8 @@ from zerde.utils.cache import CacheManager
 logger = logging.getLogger(__name__)
 
 
-class ZerdePipelineResult(dict):
+@dataclass(slots=True)
+class ZerdePipelineResult:
     """
     Контейнер для результатов полного пайплайна.
     Доступ: result.doc_state, result.analysis, result.report_path, etc.
@@ -55,28 +57,6 @@ class ZerdePipelineResult(dict):
     report_md: str
     report_path: str
     elapsed_seconds: float
-
-    def __getattr__(self, name: str) -> any:
-        if name.startswith("_"):
-            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
-        import typing
-        hints = typing.get_type_hints(type(self))
-        if name not in hints:
-            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
-        try:
-            return self[name]
-        except KeyError:
-            raise AttributeError(f"'ZerdePipelineResult' object has no attribute '{name}'")
-
-    def __setattr__(self, name: str, value: any) -> None:
-        if name.startswith("_"):
-            super().__setattr__(name, value)
-            return
-        import typing
-        hints = typing.get_type_hints(type(self))
-        if name not in hints:
-            raise AttributeError(f"Cannot set invalid attribute '{name}' on 'ZerdePipelineResult'")
-        self[name] = value
 
 
 async def run_pipeline(

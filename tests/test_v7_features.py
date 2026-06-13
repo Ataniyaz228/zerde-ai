@@ -234,11 +234,15 @@ class TestClaimDedupEntityGrouping:
 
 class TestPipelineResultAttributes:
     def test_attribute_access_and_validation(self):
-        from zerde.models import DocumentFormat, DocumentState
+        from zerde.models import (
+            AnalysisJSON,
+            ClaimExtractionResult,
+            DocumentFormat,
+            DocumentState,
+            QueryPlan,
+        )
         from zerde.pipeline import ZerdePipelineResult
 
-        res = ZerdePipelineResult()
-        # Setting a valid annotated attribute
         doc_state = DocumentState(
             doc_id="d1",
             original_path="f.txt",
@@ -247,21 +251,39 @@ class TestPipelineResultAttributes:
             normalized_text="hello",
             char_count=5,
         )
-        res.doc_state = doc_state
-        assert res.doc_state == doc_state
-        assert res["doc_state"] == doc_state
+        query_plan = QueryPlan(plan_id="plan1", source_doc_id="d1")
+        claims = ClaimExtractionResult(doc_id="d1")
+        analysis = AnalysisJSON(analysis_id="a1", source_doc_id="d1", plan_id="plan1")
 
-        # Accessing an undeclared attribute raises AttributeError
+        res = ZerdePipelineResult(
+            doc_state=doc_state,
+            query_plan=query_plan,
+            claims=claims,
+            raw_chunks=[],
+            fused_chunks=[],
+            analysis=analysis,
+            report_md="# report",
+            report_path="output/report.md",
+            elapsed_seconds=1.23,
+        )
+
+        # Attribute reads for every declared field
+        assert res.doc_state == doc_state
+        assert res.query_plan == query_plan
+        assert res.claims == claims
+        assert res.raw_chunks == []
+        assert res.fused_chunks == []
+        assert res.analysis == analysis
+        assert res.report_md == "# report"
+        assert res.report_path == "output/report.md"
+        assert res.elapsed_seconds == 1.23
+
+        # slots=True blocks undeclared attributes on both set and get.
+        with pytest.raises(AttributeError):
+            res.bogus = 1
+
         with pytest.raises(AttributeError):
             _ = res.some_undeclared_attribute
-
-        # Setting an undeclared attribute raises AttributeError
-        with pytest.raises(AttributeError):
-            res.some_undeclared_attribute = "value"
-
-        # Accessing / setting private variables bypasses validation (so it falls back to dict/object logic)
-        res._internal = "test"
-        assert res._internal == "test"
 
 
 class TestCacheConcurrency:

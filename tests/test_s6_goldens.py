@@ -23,12 +23,10 @@ from zerde.models import (
     ClaimSeverity,
     ClaimType,
     ClaimVerdict,
-    ConflictType,
     DocumentClaim,
     EvidenceChunk,
     Fact,
     LegalRank,
-    ValidationStatus,
     VerdictStatus,
     WebTier,
 )

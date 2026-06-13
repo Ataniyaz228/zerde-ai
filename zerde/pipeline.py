@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,9 +60,27 @@ class ZerdePipelineResult:
     elapsed_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class ProgressEvent:
+    """Лёгкое уведомление о смене этапа пайплайна для вызывающей стороны (backend)."""
+
+    stage: str
+    message: str
+
+
+def _emit_progress(
+    progress: Callable[[ProgressEvent], None] | None,
+    ev: ProgressEvent,
+) -> None:
+    """Вызывает progress(ev), если callback передан."""
+    if progress is not None:
+        progress(ev)
+
+
 async def run_pipeline(
     file_path: str | Path,
     output_path: str | Path | None = None,
+    progress: Callable[[ProgressEvent], None] | None = None,
 ) -> ZerdePipelineResult:
     """
     Запускает полный пайплайн от файла до Markdown-отчёта.
@@ -72,6 +91,8 @@ async def run_pipeline(
     Args:
         file_path: Путь к входному документу (PDF/DOCX/TXT).
         output_path: Путь для сохранения отчёта (опционально).
+        progress: Опциональный callback, вызываемый синхронно при смене этапа
+            (extract → search → verify → report) — для прогресс-баров (WS).
 
     Returns:
         ZerdePipelineResult с результатами всех этапов.
@@ -83,6 +104,7 @@ async def run_pipeline(
     logger.info("Pipeline Start")
     logger.info(f"Input: {file_path}")
     logger.info("=" * 60)
+    _emit_progress(progress, ProgressEvent("extract", "Загрузка и извлечение тезисов"))
 
     # ─── ЭТАП 1: Document Ingestion ───────────────────────────────────────
     t1 = time.perf_counter()
@@ -111,6 +133,7 @@ async def run_pipeline(
     # ─── ЭТАП 3: Data Gathering ───────────────────────────────────────────
     t3 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 3: Evidence Gathering")
+    _emit_progress(progress, ProgressEvent("search", "Поиск в базе НПА Казахстана"))
     raw_chunks = await gather_evidence(query_plan)
     logger.info(f"[Pipeline] ✓ Stage 3 done ({time.perf_counter() - t3:.2f}s) — {len(raw_chunks)} chunks")
 
@@ -131,6 +154,7 @@ async def run_pipeline(
     # ─── ЭТАП 5 + 5.2: LLM Auditor & Contradiction Verifier ────────────────────────────
     t5 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 5 + 5.2: LLM Auditor & Contradiction Verifier")
+    _emit_progress(progress, ProgressEvent("verify", "Верификация и анализ коллизий"))
 
     if not claims.claims:
         import uuid as _uuid
@@ -198,6 +222,7 @@ async def run_pipeline(
     # ─── ЭТАП 7: Render ──────────────────────────────────────────────────
     t7 = time.perf_counter()
     logger.info("[Pipeline] ► Stage 7: Report Rendering")
+    _emit_progress(progress, ProgressEvent("report", "Формирование отчёта"))
     report_md = await render_report(audited_analysis, active_chunks, output_path, policy_analysis)
     report_path = str(output_path) if output_path else "output/zerde_report_*.md"
     logger.info(f"[Pipeline] ✓ Stage 7 done ({time.perf_counter() - t7:.2f}s)")

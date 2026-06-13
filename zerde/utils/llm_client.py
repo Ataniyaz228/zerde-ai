@@ -14,13 +14,31 @@ import asyncio
 import json
 import logging
 import re
+import time
 import weakref
+from collections import deque
+from dataclasses import dataclass
 
-from openai import AsyncOpenAI
+import httpx
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AsyncOpenAI,
+    InternalServerError,
+    RateLimitError,
+)
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
 
 from zerde.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
+
+# Транзиентные сетевые/upstream ошибки — безопасно повторить тот же запрос
+# (idempotent: ничего не записано/не оплачено при ошибке соединения/таймауте/429/5xx).
+# BadRequestError (400, напр. json_object не поддерживается моделью) сюда
+# НЕ входит — повтор того же запроса даст ту же ошибку; для него уже есть
+# отдельный fallback-без-json_mode ниже по коду.
+_TRANSIENT_LLM_ERRORS = (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
 
 
 # См. комментарий в zerde/utils/cache.py: per-loop регистрация, т.к. backend
@@ -37,6 +55,81 @@ def get_llm_semaphore() -> asyncio.Semaphore:
         semaphore = asyncio.Semaphore(5)
         _llm_semaphores[loop] = semaphore
     return semaphore
+
+
+@dataclass(slots=True)
+class LLMCallRecord:
+    """Один LLM-вызов (или сводка отказов S5-батчей) — для наблюдаемости.
+
+    Не влияет на возвращаемые данные пайплайна; чисто аддитивный манифест.
+    """
+
+    model: str
+    cached: bool
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    latency_s: float
+    attempts: int
+    batch_failures: int = 0
+
+
+# Манифест последних вызовов (ограниченный буфер — не растёт неограниченно
+# в долгоживущем backend-процессе). Не персистентный, не часть кэша.
+_MANIFEST: deque[LLMCallRecord] = deque(maxlen=512)
+
+
+def record_llm_call(rec: LLMCallRecord) -> None:
+    """Добавляет запись в манифест. Никогда не бросает наружу."""
+    try:
+        _MANIFEST.append(rec)
+    except Exception:
+        logger.debug("[LLMManifest] failed to record call", exc_info=True)
+
+
+def record_batch_failures(n: int) -> None:
+    """Отмечает в манифесте, сколько S5-батчей завершились ошибкой и были
+    backfill'нуты как UNVERIFIED (см. s5_analyst.run_auditor). No-op при n=0."""
+    if not n:
+        return
+    record_llm_call(LLMCallRecord(
+        model="<s5_batch>",
+        cached=False,
+        prompt_tokens=None,
+        completion_tokens=None,
+        total_tokens=None,
+        latency_s=0.0,
+        attempts=0,
+        batch_failures=n,
+    ))
+
+
+def get_manifest() -> list[LLMCallRecord]:
+    """Снимок манифеста (копия — безопасно итерировать пока пишутся новые записи)."""
+    return list(_MANIFEST)
+
+
+def reset_manifest() -> None:
+    """Очищает манифест. Используется тестами для изоляции между прогонами."""
+    _MANIFEST.clear()
+
+
+# Счётчики для наблюдаемости парсинга ответов LLM (Change 5). Чисто
+# аддитивные — не меняют возвращаемый dict, текст/уровень логов не трогаем.
+_repair_used_count = 0
+_parse_failed_count = 0
+
+
+def get_parse_stats() -> dict[str, int]:
+    """Снимок счётчиков repair/parse_failed для наблюдаемости."""
+    return {"repair_used": _repair_used_count, "parse_failed": _parse_failed_count}
+
+
+def reset_parse_stats() -> None:
+    """Сбрасывает счётчики repair/parse_failed. Для изоляции тестов."""
+    global _repair_used_count, _parse_failed_count
+    _repair_used_count = 0
+    _parse_failed_count = 0
 
 
 
@@ -101,12 +194,23 @@ def make_llm_client(settings: Settings | None = None) -> AsyncOpenAI:
     """
     Создаёт AsyncOpenAI клиент для LLM (Planner, Analyst).
     При OpenRouter — добавляет base_url и X-Title / HTTP-Referer заголовки.
+
+    timeout: connect=10s (быстрый фейл на мёртвом сокете), read=300s
+    (Stage 5 analyst — non-streaming, до llm_max_tokens_analyst=16384 токенов
+    рассуждений), write=30s, pool=10s — туже, чем дефолт SDK (600s).
+    Безопасно при read=300s, потому что транзиентные ошибки (включая
+    APITimeoutError) повторяются через tenacity в cached_llm_call.
+
+    max_retries=0: ретраи SDK отключены — иначе они умножатся на ретраи
+    tenacity (cached_llm_call) и дадут до 3×3=9 фактических вызовов вместо 3.
     """
     s = settings or get_settings()
     return AsyncOpenAI(
         api_key=s.openai_api_key,
         base_url=s.openai_base_url,
         default_headers=s.openrouter_headers,
+        timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
+        max_retries=0,
     )
 
 
@@ -155,6 +259,8 @@ async def cached_llm_call(
     Returns:
         Parsed JSON dict от LLM (из кэша или свежий).
     """
+    global _repair_used_count, _parse_failed_count
+
     # Импортируем здесь чтобы избежать циклических импортов
     from zerde.utils.cache import LLMCache
 
@@ -174,12 +280,25 @@ async def cached_llm_call(
     )
 
     # Проверяем кэш
+    cache_check_start = time.perf_counter()
     cached = await cache.get(model, prompt_key)
     if cached is not None:
+        record_llm_call(LLMCallRecord(
+            model=model,
+            cached=True,
+            prompt_tokens=None,
+            completion_tokens=None,
+            total_tokens=None,
+            latency_s=time.perf_counter() - cache_check_start,
+            attempts=1,
+        ))
         return cached
 
     # Делаем реальный LLM-вызов под семафором
     semaphore = get_llm_semaphore()
+    live_start = time.perf_counter()
+    attempts = 0
+    response = None
     async with semaphore:
         # Пробуем с json_object, при ошибке — без него (fallback)
         content = None
@@ -194,7 +313,24 @@ async def cached_llm_call(
                 if use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
 
-                response = await client.chat.completions.create(**kwargs)
+                # Транзиентные ошибки (таймаут/соединение/429/5xx) повторяем до
+                # 3 попыток с экспоненциальным backoff+jitter; BadRequestError
+                # (json_object не поддерживается) НЕ в _TRANSIENT_LLM_ERRORS →
+                # не ретраится здесь, падает в except ниже на fallback без json_mode.
+                # reraise=True — исходное исключение, не RetryError, чтобы
+                # except Exception ниже видел оригинальный тип/строку ошибки.
+                @retry(
+                    retry=retry_if_exception_type(_TRANSIENT_LLM_ERRORS),
+                    wait=wait_random_exponential(multiplier=1, max=20),
+                    stop=stop_after_attempt(3),
+                    reraise=True,
+                )
+                async def _create_with_retry() -> object:
+                    nonlocal attempts
+                    attempts += 1
+                    return await client.chat.completions.create(**kwargs)
+
+                response = await _create_with_retry()
                 # Защита от 200-ответа без choices (transient upstream 429 через
                 # OpenRouter отдаёт пустой choices): не падаем с
                 # 'NoneType'/'IndexError', а пробуем следующий режим → "{}".
@@ -215,6 +351,19 @@ async def cached_llm_call(
     if content is None:
         content = "{}"
 
+    # Манифест: usage из последнего успешного ответа (None если response без
+    # usage — некоторые OpenRouter-модели его не возвращают).
+    _usage = getattr(response, "usage", None)
+    record_llm_call(LLMCallRecord(
+        model=model,
+        cached=False,
+        prompt_tokens=getattr(_usage, "prompt_tokens", None),
+        completion_tokens=getattr(_usage, "completion_tokens", None),
+        total_tokens=getattr(_usage, "total_tokens", None),
+        latency_s=time.perf_counter() - live_start,
+        attempts=attempts,
+    ))
+
     # Если ответ не JSON — пробуем извлечь JSON из текста
     parse_failed = False
     try:
@@ -232,16 +381,20 @@ async def cached_llm_call(
                 parsed = _repair_truncated_json(content)
                 if parsed:
                     logger.info(f"[LLMCall] Repaired truncated JSON. Keys: {list(parsed.keys())}")
+                    _repair_used_count += 1
                 else:
                     parsed = {}
                     parse_failed = True
+                    _parse_failed_count += 1
         else:
             parsed = _repair_truncated_json(content)
             if parsed:
                 logger.info(f"[LLMCall] Repaired truncated JSON. Keys: {list(parsed.keys())}")
+                _repair_used_count += 1
             else:
                 parsed = {}
                 parse_failed = True
+                _parse_failed_count += 1
 
 
     if not isinstance(parsed, dict):

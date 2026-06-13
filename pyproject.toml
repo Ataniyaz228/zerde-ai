@@ -30,9 +30,6 @@ dependencies = [
     "sentence-transformers>=3.0.1", # Local Vector embeddings (BGE-M3)
     "torch>=2.2.0",            # PyTorch backend for sentence-transformers
 
-    # Math validation
-    "sympy>=1.12",             # Arithmetic verification
-
     # Language detection
     "langdetect>=1.0.9",       # Language detection (Этап 1)
 

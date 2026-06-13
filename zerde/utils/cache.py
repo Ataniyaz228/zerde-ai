@@ -38,9 +38,6 @@ def _get_db_lock() -> asyncio.Lock:
         _db_locks[loop] = lock
     return lock
 
-
-_STEM_CACHE = {}
-
 # Версия LLM-кэша. Bump при изменении промптов/контракта ответа, чтобы
 # инвалидировать устаревшие закэшированные ответы (входит в _make_key).
 PROMPT_CACHE_VERSION = 1
@@ -421,64 +418,12 @@ class CacheManager:
 
         return results
 
-    def _stem_word(self, w: str) -> str:
-        if w in _STEM_CACHE:
-            return _STEM_CACHE[w]
-
-        # Lazy load pymorphy3 analyzer
-        if self._morph is None:
-            try:
-                import pymorphy3
-                self._morph = pymorphy3.MorphAnalyzer()
-            except ImportError:
-                pass
-
-        res = w
-        # Check if contains Russian letters
-        if self._morph is not None and any(c in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" for c in w):
-            parsed = self._morph.parse(w)
-            if parsed:
-                res = str(parsed[0].normal_form)
-        else:
-            if len(w) <= 4:
-                res = w
-            else:
-                endings = [
-                    "ями", "ами", "ому", "ему", "ого", "его", "ыми", "ими", "ых", "их", "ею", "ою",
-                    "ом", "ем", "ой", "ей", "ию", "ую", "яя", "ая", "ое", "ее", "ые", "ие", "ия", "ый", "ий", "ам", "ям", "ов", "ев", "ях", "ах",
-                    "а", "я", "о", "е", "и", "ы", "у", "ю", "ь",
-                    # Казахские агглютинативные окончания
-                    "ға", "ге", "ғе", "да", "де", "на", "ні", "ның", "нің",
-                    "ды", "ді", "ты", "ті", "лар", "лер", "дар", "дер",
-                    "мен", "сен", "оны", "оні", "біз", "сіз",
-                    "ған", "ген", "ке", "қа", "ші", "шы",
-                ]
-                for end in endings:
-                    if w.endswith(end):
-                        if len(w) - len(end) >= 3:
-                            res = w[:-len(end)]
-                            break
-        _STEM_CACHE[w] = res
-        return res
-
     def _tokenize_for_bm25(self, text: str) -> list[str]:
-        import re
-        text_lower = text.lower()
-        # Удаляем пунктуацию (кроме дефиса в словах)
-        text_clean = re.sub(r"[^\w\s\-]", " ", text_lower)
-        words = [w.strip() for w in text_clean.split() if len(w.strip()) > 2]
-        LEGAL_STOP_WORDS = {
-            # Русские
-            "закон", "кодекс", "статья", "статье", "статьи", "республики", "казахстан",
-            "утратил", "силу", "вводится", "действие", "постановление", "правительства",
-            "республика", "закона", "кодекса", "об", "о", "и", "в", "на", "для", "рк",
-            # Казахские
-            "заң", "кодексі", "бап", "баптың", "туралы", "және", "қазақстан",
-            "республикасы", "заңы", "үкіметі", "заңда", "үшін", "жәнінде",
-            "болады", "емес", "және", "немесе", "қорған", "рәсімі",
-        }
-        filtered = [self._stem_word(w) for w in words if w not in LEGAL_STOP_WORDS]
-        return filtered if filtered else [self._stem_word(w) for w in words]
+        """Delegates to zerde.utils.textproc.tokenize_morph (Phase 1, Step 2:
+        stemming machinery moved out of CacheManager). Kept as a method
+        because internal callers (and S5) call self._tokenize_for_bm25(...)."""
+        from zerde.utils.textproc import tokenize_morph
+        return tokenize_morph(text)
 
     def _lazy_init_embeddings(self) -> None:
         """Lazy loads BGE-M3 model and pre-loads all embeddings/BM25 index in memory."""

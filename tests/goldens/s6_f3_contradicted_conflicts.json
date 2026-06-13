@@ -1,0 +1,112 @@
+{
+  "conflicts": [
+    {
+      "claim_id": "claim_0002",
+      "conflict_type": "HIERARCHY",
+      "document_value": "штраф 10 МРП",
+      "found_value": "штраф 20 МРП",
+      "record_id": "conflict_0000",
+      "severity": "critical"
+    },
+    {
+      "claim_id": "claim_0003",
+      "conflict_type": "TEMPORAL",
+      "document_value": "10 дней",
+      "found_value": "30 дней",
+      "record_id": "conflict_0001",
+      "severity": "high"
+    },
+    {
+      "claim_id": "claim_0004",
+      "conflict_type": "FACTUAL",
+      "document_value": "100",
+      "found_value": "200",
+      "record_id": "conflict_0002",
+      "severity": "medium"
+    }
+  ],
+  "facts": [
+    {
+      "bm25_score": 0.0,
+      "claim_id": "claim_0001",
+      "fact_id": "fact_claim_0001",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "validation_status": "UNVERIFIED"
+    },
+    {
+      "bm25_score": 0.0,
+      "claim_id": "claim_0002",
+      "fact_id": "fact_claim_0002",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "validation_status": "LOW"
+    },
+    {
+      "bm25_score": 0.0,
+      "claim_id": "claim_0003",
+      "fact_id": "fact_claim_0003",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "validation_status": "LOW"
+    },
+    {
+      "bm25_score": 0.0,
+      "claim_id": "claim_0004",
+      "fact_id": "fact_claim_0004",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "validation_status": "LOW"
+    }
+  ],
+  "overall_reliability": 0.084,
+  "stats": {
+    "n_confirmed": 0,
+    "n_contradicted": 3,
+    "n_critical_contradicted": 1,
+    "n_high_contradicted": 1,
+    "n_real_confirmed": 0,
+    "n_total": 4,
+    "n_unverified": 1,
+    "n_unverified_risks": 0,
+    "reliability": 0.084
+  },
+  "verdicts": [
+    {
+      "claim_id": "claim_0001",
+      "confidence": "LOW",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "status": "UNVERIFIED"
+    },
+    {
+      "claim_id": "claim_0002",
+      "confidence": "MEDIUM",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "status": "CONTRADICTED"
+    },
+    {
+      "claim_id": "claim_0003",
+      "confidence": "MEDIUM",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "status": "CONTRADICTED"
+    },
+    {
+      "claim_id": "claim_0004",
+      "confidence": "MEDIUM",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "status": "CONTRADICTED"
+    }
+  ]
+}

@@ -33,10 +33,10 @@ async def main(file_path: str) -> None:
 
     try:
         result = await run_pipeline(file_path)
-        print(f"\n✅ Отчёт сохранён: {result['report_path']}")
-        print(f"⏱️  Время выполнения: {result['elapsed_seconds']:.2f}с")
-        print(f"📊 Фактов: {len(result['analysis'].facts)}")
-        print(f"🔒 Надёжность: {result['analysis'].overall_reliability or 'N/A'}")
+        print(f"\n✅ Отчёт сохранён: {result.report_path}")
+        print(f"⏱️  Время выполнения: {result.elapsed_seconds:.2f}с")
+        print(f"📊 Фактов: {len(result.analysis.facts)}")
+        print(f"🔒 Надёжность: {result.analysis.overall_reliability or 'N/A'}")
     except FileNotFoundError as e:
         print(f"❌ Файл не найден: {e}")
         sys.exit(1)

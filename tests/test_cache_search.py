@@ -4,6 +4,9 @@ import pytest
 from zerde.models import EvidenceChunk, LegalRank
 from zerde.utils.cache import CacheManager
 
+# search_local грузит BGE-M3 (torch) — деселектится на CI (-m 'not heavy').
+pytestmark = pytest.mark.heavy
+
 
 @pytest.mark.asyncio
 async def test_cache_search_local(tmp_path):

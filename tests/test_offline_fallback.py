@@ -64,6 +64,7 @@ def cleanup_test_db():
             path.unlink()
 
 
+@pytest.mark.heavy
 @pytest.mark.asyncio
 async def test_search_local_no_leakage_from_old_run():
     """
@@ -88,6 +89,7 @@ async def test_search_local_no_leakage_from_old_run():
     assert "old_002" not in found_ids, "Leakage: ECP chunk appeared in Civil Code search"
 
 
+@pytest.mark.heavy
 @pytest.mark.asyncio
 async def test_search_local_positive_hit():
     """search_local должен вернуть релевантный чанк, если он там есть."""
@@ -105,6 +107,7 @@ async def test_search_local_positive_hit():
     assert "gk_001" in found_ids, "Relevant chunk not found in local search"
 
 
+@pytest.mark.heavy
 @pytest.mark.asyncio
 async def test_search_local_excludes_pure_numeric_terms():
     """

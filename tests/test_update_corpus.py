@@ -45,6 +45,7 @@ def test_parse_latest_adilet_version():
         latest_version = get_latest_adilet_version("K1400000235")
         assert latest_version == "2026-03-12"
 
+@pytest.mark.heavy
 @pytest.mark.asyncio
 async def test_clean_database_chunks_cascade(temp_db_path):
     # Initialize cache and insert a chunk

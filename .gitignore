@@ -20,6 +20,7 @@ build/
 *.db-shm
 *.db-wal
 *.db.bak-*
+!tests/fixtures/law_metadata.db
 *.log
 last_*_raw_response.json
 scratch/
@@ -46,3 +47,6 @@ latest_responses.json
 last_llm_call.json
 repomix-output.xml
 CLAUDE.md
+
+# Claude Code local dir (settings, agent worktrees, plans) — never commit
+.claude/

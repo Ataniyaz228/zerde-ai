@@ -116,7 +116,7 @@ def _update_env_threshold(env_file: Path, threshold: float) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="ЗЕРДЕ v6.2 — BM25 Calibration Script"
+        description="ЗЕРДЕ v9.6 — BM25 Calibration Script"
     )
     parser.add_argument(
         "--test-data",

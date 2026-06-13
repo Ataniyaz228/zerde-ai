@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import threading
+import weakref
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -18,7 +19,26 @@ from zerde.models import EvidenceChunk, LegalRank
 
 logger = logging.getLogger(__name__)
 
-_db_lock = asyncio.Lock()
+# Хирургический хотфикс кросс-loop краша: модульный asyncio.Lock() привязывается
+# к первому event loop, в котором был использован. Backend запускает каждый
+# анализ в отдельном asyncio.run(...) (новый loop), поэтому общий lock падает
+# с "got Future attached to a different loop". Держим lock per-loop через
+# WeakKeyDictionary (чтобы мёртвые loop'ы не утекали памятью). Правильный фикс —
+# единый event loop в backend, это отдельная фаза.
+_db_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _get_db_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _db_locks.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _db_locks[loop] = lock
+    return lock
+
+
 _STEM_CACHE = {}
 
 # Версия LLM-кэша. Bump при изменении промптов/контракта ответа, чтобы
@@ -182,7 +202,7 @@ class CacheManager:
             chunk: EvidenceChunk для сохранения.
         """
         chunk_json = chunk.model_dump_json()
-        async with _db_lock:
+        async with _get_db_lock():
             with self._conn() as conn:
                 conn.execute(
                     """
@@ -209,7 +229,7 @@ class CacheManager:
             Количество реально сохранённых (не дубликатов).
         """
         stored = 0
-        async with _db_lock:
+        async with _get_db_lock():
             with self._conn() as conn:
                 for chunk in chunks:
                     result = conn.execute(
@@ -909,7 +929,7 @@ class LLMCache:
         if expires_at:
             expires_dt = datetime.fromisoformat(expires_at)
             if datetime.now(UTC) > expires_dt:
-                async with _db_lock:
+                async with _get_db_lock():
                     with self._conn() as conn:
                         conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (cache_key,))
                 return None
@@ -928,7 +948,7 @@ class LLMCache:
         if ttl_seconds is not None:
             expires_at = (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat()
 
-        async with _db_lock:
+        async with _get_db_lock():
             with self._conn() as conn:
                 conn.execute(
                     """
@@ -941,12 +961,12 @@ class LLMCache:
 
     async def invalidate_expired(self) -> None:
         now_str = datetime.now(UTC).isoformat()
-        async with _db_lock:
+        async with _get_db_lock():
             with self._conn() as conn:
                 conn.execute("DELETE FROM llm_response_cache WHERE expires_at IS NOT NULL AND expires_at < ?", (now_str,))
 
     async def _delete(self, cache_key: str) -> None:
-        async with _db_lock:
+        async with _get_db_lock():
             with self._conn() as conn:
                 conn.execute("DELETE FROM llm_response_cache WHERE cache_key = ?", (cache_key,))
 

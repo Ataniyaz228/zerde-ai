@@ -1,0 +1,51 @@
+{
+  "conflicts": [],
+  "facts": [
+    {
+      "bm25_score": 0.0,
+      "claim_id": "claim_0001",
+      "fact_id": "fact_claim_0001",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "validation_status": "UNVERIFIED"
+    },
+    {
+      "bm25_score": 0.0,
+      "claim_id": "claim_0002",
+      "fact_id": "fact_claim_0002",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "validation_status": "UNVERIFIED"
+    }
+  ],
+  "overall_reliability": null,
+  "stats": {
+    "n_confirmed": 0,
+    "n_contradicted": 0,
+    "n_critical_contradicted": 0,
+    "n_high_contradicted": 0,
+    "n_real_confirmed": 0,
+    "n_total": 2,
+    "n_unverified": 2,
+    "n_unverified_risks": 1,
+    "reliability": null
+  },
+  "verdicts": [
+    {
+      "claim_id": "claim_0001",
+      "confidence": "MEDIUM",
+      "source_ids": [],
+      "status": "UNVERIFIED"
+    },
+    {
+      "claim_id": "claim_0002",
+      "confidence": "LOW",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "status": "UNVERIFIED"
+    }
+  ]
+}

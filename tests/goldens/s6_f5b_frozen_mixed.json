@@ -1,0 +1,32 @@
+{
+  "conflicts": [],
+  "facts": [],
+  "overall_reliability": 0.375,
+  "stats": {
+    "n_confirmed": 1,
+    "n_contradicted": 0,
+    "n_critical_contradicted": 0,
+    "n_high_contradicted": 0,
+    "n_real_confirmed": 0,
+    "n_total": 2,
+    "n_unverified": 1,
+    "n_unverified_risks": 0,
+    "reliability": 0.375
+  },
+  "verdicts": [
+    {
+      "claim_id": "claim_0001",
+      "confidence": "MEDIUM",
+      "source_ids": [
+        "UNLINKED"
+      ],
+      "status": "CONFIRMED"
+    },
+    {
+      "claim_id": "claim_0002",
+      "confidence": "MEDIUM",
+      "source_ids": [],
+      "status": "UNVERIFIED"
+    }
+  ]
+}

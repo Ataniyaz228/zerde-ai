@@ -17,6 +17,15 @@ import os
 import pytest
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--update-goldens",
+        action="store_true",
+        default=False,
+        help="Regenerate golden snapshot files (tests/goldens/*.json) instead of comparing.",
+    )
+
+
 @pytest.fixture(autouse=True)
 def _ci_block_bge(monkeypatch: pytest.MonkeyPatch) -> None:
     """При ZERDE_NO_BGE=1 запрещает реальную загрузку BGE-M3 (см. модульный docstring)."""

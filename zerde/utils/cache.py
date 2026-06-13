@@ -303,6 +303,62 @@ class CacheManager:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_chunks_by_metadata(
+        self, law_id: str, article: str | None = None, limit: int | None = None
+    ) -> list[EvidenceChunk]:
+        """
+        Прямой SQL-поиск чанков по метаданным (law_id [+ article]).
+
+        Используется S3.5/S3.6 (direct RAG injection) — гарантированное попадание
+        по точным json_extract-метаданным, без семантики/BM25.
+
+        Args:
+            law_id: Точное значение `$.law_id` (как хранится в chunk_json).
+            article: Если задано — дополнительный фильтр по `$.article`, без LIMIT
+                (одна статья — обычно несколько параграфов/чанков).
+            limit: Применяется только когда `article is None` (весь закон).
+
+        Returns:
+            Список успешно распарсенных EvidenceChunk (битые строки пропускаются,
+            но инкрементируют `deserialization_failures` и логируются — не
+            проглатываются молча). Не выставляет `adilet_fallback_used` —
+            это решает вызывающий код.
+        """
+        with self._conn() as conn:
+            if article is not None:
+                rows = conn.execute(
+                    """SELECT chunk_json FROM evidence_cache
+                       WHERE json_extract(chunk_json, '$.law_id') = ?
+                       AND json_extract(chunk_json, '$.article') = ?""",
+                    (law_id, article),
+                ).fetchall()
+            elif limit is not None:
+                rows = conn.execute(
+                    """SELECT chunk_json FROM evidence_cache
+                       WHERE json_extract(chunk_json, '$.law_id') = ?
+                       LIMIT ?""",
+                    (law_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT chunk_json FROM evidence_cache
+                       WHERE json_extract(chunk_json, '$.law_id') = ?""",
+                    (law_id,),
+                ).fetchall()
+
+        chunks: list[EvidenceChunk] = []
+        for r in rows:
+            try:
+                chunks.append(EvidenceChunk.model_validate(json.loads(r["chunk_json"])))
+            except Exception as e:
+                self.deserialization_failures += 1
+                logger.warning(
+                    f"[Cache/get_chunks_by_metadata] Failed to deserialize chunk for "
+                    f"law_id={law_id!r} article={article!r} "
+                    f"(total failures: {self.deserialization_failures}): {e}"
+                )
+        return chunks
+
     async def stats(self) -> dict:
         """Возвращает статистику по кэшу EvidenceChunk и их эмбеддингам."""
         with self._conn() as conn:

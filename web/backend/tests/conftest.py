@@ -1,4 +1,3 @@
-import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,11 +29,13 @@ def app_env(tmp_path, monkeypatch):
     import services.storage as storage
     monkeypatch.setattr(storage, "OUTPUT_DIR", str(output_dir))
 
-    async def fake_run_pipeline(file_path, output_path):
-        zerde_logger = logging.getLogger("zerde")
-        zerde_logger.info("Stage 3: gathering evidence")
-        zerde_logger.info("Stage 5: running auditor")
-        zerde_logger.info("Stage 7: rendering report")
+    async def fake_run_pipeline(file_path, output_path, progress=None):
+        from zerde.pipeline import ProgressEvent
+
+        if progress is not None:
+            progress(ProgressEvent("search", "Поиск в базе НПА Казахстана"))
+            progress(ProgressEvent("verify", "Верификация и анализ коллизий"))
+            progress(ProgressEvent("report", "Формирование отчёта"))
 
         Path(output_path).write_text("# Fake report\n", encoding="utf-8")
 

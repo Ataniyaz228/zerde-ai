@@ -1,13 +1,21 @@
 import asyncio
+import contextlib
 import logging
 import os
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from api.ws import manager
 from config import settings
 from services import jobs
+
+if TYPE_CHECKING:
+    # zerde.pipeline pulls in torch/sentence-transformers at module level, so
+    # it must stay a lazy import at runtime (see run_pipeline import below).
+    # This import is type-checking-only and never executes.
+    from zerde.pipeline import ProgressEvent
 
 # ── Ensure project root is on sys.path ──────────────────────────────────────
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -55,43 +63,21 @@ def enqueue_analysis(analysis_id: str, file_path: str) -> asyncio.Task:
     return asyncio.create_task(_run_analysis(analysis_id, file_path))
 
 
-class _ProgressHandler(logging.Handler):
-    """Emits WS messages when pipeline logs stage completions.
+def translate_progress(ev: "ProgressEvent", prev_stage: str) -> tuple[list[dict], str]:
+    """Translate a pipeline ProgressEvent into frozen WS event dicts.
 
-    Handler.emit may be called from any thread, so emits are marshalled onto
-    the owning event loop via call_soon_threadsafe.
+    Closes the previous stage (stage_done) and opens the new one
+    (stage_start) when the stage changes. Pure/offline — no I/O, no loop.
+
+    Returns (events_to_emit, new_prev_stage).
     """
-
-    def __init__(self, analysis_id: str, loop: asyncio.AbstractEventLoop):
-        super().__init__()
-        self._analysis_id = analysis_id
-        self._loop = loop
-        self._sent: set[str] = set()
-
-    def _schedule(self, event: dict) -> None:
-        self._loop.call_soon_threadsafe(
-            lambda: asyncio.ensure_future(_emit(self._analysis_id, event))
-        )
-
-    def _transition(self, done_stage: str, start_stage: str, start_msg: str) -> None:
-        logger.info(
-            f"[{self._analysis_id}] Pipeline progress: completed {done_stage}, starting {start_stage}"
-        )
-        self._schedule({"type": "stage_done", "stage": done_stage})
-        self._schedule({"type": "stage_start", "stage": start_stage, "message": start_msg})
-
-    def emit(self, record: logging.LogRecord) -> None:
-        msg = record.getMessage()
-
-        if "Stage 3" in msg and "extract" not in self._sent:
-            self._sent.add("extract")
-            self._transition("extract", "search", "Поиск в базе НПА Казахстана")
-        elif "Stage 5" in msg and "search" not in self._sent:
-            self._sent.add("search")
-            self._transition("search", "verify", "Верификация и анализ коллизий")
-        elif "Stage 7" in msg and "verify" not in self._sent:
-            self._sent.add("verify")
-            self._transition("verify", "report", "Формирование отчёта")
+    if ev.stage == prev_stage:
+        return [], prev_stage
+    events = [
+        {"type": "stage_done", "stage": prev_stage},
+        {"type": "stage_start", "stage": ev.stage, "message": ev.message},
+    ]
+    return events, ev.stage
 
 
 async def _run_analysis(analysis_id: str, file_path: str) -> None:
@@ -112,20 +98,45 @@ async def _run_analysis(analysis_id: str, file_path: str) -> None:
         safe_stem = Path(file_path).stem[:40]
         output_path = output_dir / f"zerde_report_{safe_stem}_{ts}.md"
 
-        loop = asyncio.get_running_loop()
-        handler = _ProgressHandler(analysis_id, loop)
-        handler.setLevel(logging.INFO)
-        zerde_logger = logging.getLogger("zerde")
-        zerde_logger.addHandler(handler)
+        prev_stage = "extract"
+        event_queue: asyncio.Queue[dict] = asyncio.Queue()
+
+        def on_progress(ev: "ProgressEvent") -> None:
+            nonlocal prev_stage
+            events, new_prev = translate_progress(ev, prev_stage)
+            for event in events:
+                event_queue.put_nowait(event)
+            if events:
+                sent_stages.add(prev_stage)
+                logger.info(
+                    f"[{analysis_id}] Pipeline progress: completed {prev_stage}, starting {new_prev}"
+                )
+            prev_stage = new_prev
+
+        async def _drain_progress() -> None:
+            """Sequentially emit queued progress events (no concurrent _emit calls)."""
+            while True:
+                event = await event_queue.get()
+                try:
+                    await _emit(analysis_id, event)
+                except Exception:
+                    logger.exception(f"[{analysis_id}] Failed to emit progress event {event}")
+                finally:
+                    event_queue.task_done()
+
+        drainer = asyncio.create_task(_drain_progress())
 
         try:
             from zerde.pipeline import run_pipeline
 
             logger.info(f"[{analysis_id}] Pipeline execution started for {file_path}")
-            result = await run_pipeline(file_path, output_path)
+            result = await run_pipeline(file_path, output_path, progress=on_progress)
             logger.info(f"[{analysis_id}] Pipeline execution completed. Calculating scores...")
 
-            sent_stages |= handler._sent
+            # Wait for all progress events emitted during run_pipeline to be
+            # flushed (ordered, one at a time) before the final stage_done.
+            await event_queue.join()
+
             await _emit(analysis_id, {"type": "stage_done", "stage": "report"})
 
             # Структурная надёжность — берём из объекта анализа, НЕ выскребаем
@@ -157,10 +168,16 @@ async def _run_analysis(analysis_id: str, file_path: str) -> None:
         except Exception as exc:
             logger.exception(f"[Analysis] Pipeline error for {analysis_id}: {exc}")
             await jobs.set_status(analysis_id, "error", error=str(exc))
-            sent_stages |= handler._sent
+
+            # Flush any progress events queued before the failure — keeps emit
+            # ordering consistent with the success path.
+            await event_queue.join()
+
             for stage in ["extract", "search", "verify", "report"]:
                 if stage not in sent_stages:
                     await _emit(analysis_id, {"type": "stage_error", "stage": stage, "message": str(exc)})
             await _emit(analysis_id, {"type": "error", "message": str(exc)})
         finally:
-            zerde_logger.removeHandler(handler)
+            drainer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drainer

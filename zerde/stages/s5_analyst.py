@@ -21,7 +21,7 @@ from zerde.models import (
     VerdictStatus,
 )
 from zerde.prompts.auditor import build_auditor_prompt
-from zerde.utils.llm_client import cached_llm_call, make_llm_client
+from zerde.utils.llm_client import cached_llm_call, make_llm_client, record_batch_failures
 
 if TYPE_CHECKING:
     from zerde.utils.cache import CacheManager
@@ -95,9 +95,31 @@ async def run_auditor(
 
     # Батчи независимы (свой prompt/id_map/claims) → шлём параллельно. Глобальный
     # семафор в llm_client (5) ограничивает фактическую конкурентность LLM-вызовов.
-    all_analysis_jsons = list(await asyncio.gather(*(_run_batch(b) for b in batches)))
+    # return_exceptions=True: один упавший батч (после исчерпания ретраев
+    # llm_client) не должен ронять весь S5 — его claim'ы дозаполнятся как
+    # UNVERIFIED через _validate_claim_coverage ниже (fail-closed, как при
+    # отсутствии evidence — никогда CONFIRMED по умолчанию).
+    results = await asyncio.gather(*(_run_batch(b) for b in batches), return_exceptions=True)
 
-    if not all_analysis_jsons:
+    failed_batches = 0
+    all_analysis_jsons: list[AnalysisJSON] = []
+    for batch, res in zip(batches, results):
+        if isinstance(res, BaseException):
+            failed_batches += 1
+            logger.error(
+                "[S5] batch of %d claims failed, backfilling as UNVERIFIED: %r",
+                len(batch), res,
+            )
+            continue
+        all_analysis_jsons.append(res)
+
+    if failed_batches:
+        logger.warning(
+            "[S5] %d/%d auditor batches failed (claims → UNVERIFIED)",
+            failed_batches, len(batches),
+        )
+
+    if not batches:
         return AnalysisJSON(
             analysis_id="empty",
             source_doc_id=plan.source_doc_id,
@@ -111,14 +133,30 @@ async def run_auditor(
             verdicts=[]
         )
 
-    final_analysis = all_analysis_jsons[0]
-    for a in all_analysis_jsons[1:]:
-        final_analysis.facts.extend(a.facts)
-        final_analysis.conclusions.extend(a.conclusions)
-        final_analysis.negative_space.extend(a.negative_space)
-        final_analysis.normative.extend(a.normative)
-        final_analysis.cons.extend(a.cons)
-        final_analysis.verdicts.extend(a.verdicts)
+    if not all_analysis_jsons:
+        # Все батчи упали — нет валидного AnalysisJSON для основы merge'а.
+        # _validate_claim_coverage ниже дозаполнит все claim'ы как UNVERIFIED.
+        final_analysis = AnalysisJSON(
+            analysis_id="empty",
+            source_doc_id=plan.source_doc_id,
+            plan_id=plan.plan_id,
+            facts=[],
+            conclusions=[],
+            negative_space=[],
+            normative=[],
+            cons=[],
+            llm_model_used=settings.llm_model_analyst,
+            verdicts=[],
+        )
+    else:
+        final_analysis = all_analysis_jsons[0]
+        for a in all_analysis_jsons[1:]:
+            final_analysis.facts.extend(a.facts)
+            final_analysis.conclusions.extend(a.conclusions)
+            final_analysis.negative_space.extend(a.negative_space)
+            final_analysis.normative.extend(a.normative)
+            final_analysis.cons.extend(a.cons)
+            final_analysis.verdicts.extend(a.verdicts)
 
     # Дедуп пробелов регулирования по описанию: разные батчи (по 5 claim) могут
     # независимо вернуть одну и ту же находку.
@@ -134,6 +172,7 @@ async def run_auditor(
         final_analysis.negative_space = uniq_ns
 
     _validate_claim_coverage(final_analysis, claims)
+    record_batch_failures(failed_batches)
     return final_analysis
 
 

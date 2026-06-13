@@ -33,6 +33,7 @@ def test_split_long_article_fallback():
         assert len(chunk["content"]) <= 4000
         assert chunk["article_num"].startswith("12_p")
 
+@pytest.mark.heavy
 @pytest.mark.asyncio
 async def test_language_penalization_in_search(temp_db_path):
     cache = CacheManager(temp_db_path)
@@ -73,6 +74,7 @@ async def test_language_penalization_in_search(temp_db_path):
     assert len(results_ru) >= 1
     assert results_ru[0].chunk_id == "chunk_ru_lang"
 
+@pytest.mark.heavy
 @pytest.mark.asyncio
 async def test_version_freshness_boost(temp_db_path):
     cache = CacheManager(temp_db_path)

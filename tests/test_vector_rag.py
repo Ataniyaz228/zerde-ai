@@ -4,6 +4,9 @@ import pytest
 from zerde.models import EvidenceChunk, LegalRank
 from zerde.utils.cache import CacheManager
 
+# Весь файл грузит BGE-M3 (torch) — деселектится на CI (-m 'not heavy').
+pytestmark = pytest.mark.heavy
+
 
 @pytest.fixture
 def temp_db_path(tmp_path):

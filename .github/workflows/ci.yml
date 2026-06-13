@@ -7,9 +7,18 @@ on:
 permissions:
   contents: read
 
+# ZERDE_CACHE_DB: law-registry reads ONLY (37-row law_metadata fixture, ~24KB).
+# CACHE_DB_PATH: writable scratch — code that writes through settings.cache_db_path
+#   must not pollute the committed fixture.
+# ZERDE_NO_BGE=1: conftest blocks real BGE-M3 loads, so any test that touches
+#   torch/semantics without the `heavy` marker fails loudly instead of trying to
+#   download ~2.3GB on CI (guards marker completeness).
+# -m "not heavy and not llm": skip BGE/torch + full-corpus tests (heavy) and any
+#   token-spending LLM tests (llm).
 env:
-  CACHE_DB_PATH: tests/fixtures/law_metadata.db
   ZERDE_CACHE_DB: tests/fixtures/law_metadata.db
+  CACHE_DB_PATH: /tmp/zerde_ci_scratch.db
+  ZERDE_NO_BGE: "1"
 
 jobs:
   ci:
@@ -29,7 +38,7 @@ jobs:
         continue-on-error: true
         run: ruff check .
       - name: Pytest (offline, blocking — expect 0 failed)
-        run: PYTHONPATH=. python -m pytest -q
+        run: PYTHONPATH=. python -m pytest -q -m "not heavy and not llm"
       - name: Mypy (non-blocking — 133 known errors)
         continue-on-error: true
         run: mypy zerde

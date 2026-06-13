@@ -71,6 +71,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "heavy: loads the BGE-M3 model (torch, GPU/CPU) and/or needs the full local zerde_cache.db corpus; deselected on CI via -m 'not heavy'",
+    "llm: makes real LLM API calls (spends tokens); never run on CI (reserved for future token-spending tests)",
+]
 
 [build-system]
 requires = ["hatchling"]

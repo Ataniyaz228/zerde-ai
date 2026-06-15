@@ -8,9 +8,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 output/
-# docs/ держит и корпус законов (папки — не коммитим), и документацию (*.md — коммитим)
-docs/*
-!docs/*.md
+# docs/ — только проектная документация (*.md), коммитим целиком.
+# Исходники корпуса (PDF законов + manifest.json) переехали в data/corpus_sources/ (не коммитим).
+data/corpus_sources/
 *.egg-info/
 dist/
 build/

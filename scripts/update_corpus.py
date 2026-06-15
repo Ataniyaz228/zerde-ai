@@ -116,7 +116,7 @@ def main():
     parser.add_argument("--force", action="store_true", help="Force redownload and re-ingest all documents even if up to date")
     args = parser.parse_args()
 
-    manifest_path = Path("docs/manifest.json")
+    manifest_path = Path("data/corpus_sources/manifest.json")
     if not manifest_path.exists():
         print(f"❌ Manifest file {manifest_path} not found!")
         sys.exit(1)

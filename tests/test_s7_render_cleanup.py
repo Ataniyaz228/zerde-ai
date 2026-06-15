@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 import zerde.stages.s7_render as s7
 from zerde.models import LegalRank
-from zerde.stages.s7_render import _clean_label_leak, _is_authoritative
+from zerde.stages.s7_render import (
+    _clean_label_leak,
+    _is_authoritative,
+    _is_placeholder_code,
+    _render_grounding_integrity,
+)
 
 
 def test_clean_label_leak_strips_internal_labels():
@@ -62,3 +67,59 @@ def test_source_display_title_keeps_web_title(monkeypatch):
     # law_id есть, но названия в реестре нет → тоже не ломаем (fallback на source_title).
     unk = SimpleNamespace(law_id="999-ZZ", article=5, source_title="НПА 999-ZZ | Ст. 5", law_title=None)
     assert s7._source_display_title(unk) == "НПА 999-ZZ | Ст. 5"
+
+
+# ── Grounding integrity (cause B: corpus version conflict / unverified code) ──
+
+def test_placeholder_code_detection():
+    assert _is_placeholder_code("K2600000000_")        # 26 + all-zeros body
+    assert not _is_placeholder_code("K950001000_")     # real Constitution
+    assert not _is_placeholder_code("Z1300000094")
+    assert not _is_placeholder_code("K1400000226")
+    assert not _is_placeholder_code("")
+
+
+class _IntegrityRegistry:
+    """get_title + get_adilet_code; placeholder code returned as-is (id-shaped)."""
+    def __init__(self, titles, codes):
+        self._t, self._c = titles, codes
+
+    def get_title(self, law_id, lang="ru"):
+        return self._t.get(law_id, law_id)
+
+    def get_adilet_code(self, law_id):
+        return self._c.get(law_id, law_id)
+
+
+def _ch(law_id, url, rank=None):
+    return SimpleNamespace(law_id=law_id, source_url=url, legal_rank=rank or LegalRank.LAW_RK)
+
+
+def test_grounding_integrity_flags_version_conflict_and_unverified(monkeypatch):
+    # Две «Конституции РК»: одна с валидным кодом, другая — placeholder (404).
+    reg = _IntegrityRegistry(
+        titles={"K950001000_": "Конституция Республики Казахстан",
+                "K2600000000_": "Конституция Республики Казахстан"},
+        codes={"K950001000_": "K950001000_", "K2600000000_": "K2600000000_"},
+    )
+    monkeypatch.setattr(s7, "get_registry", lambda: reg)
+    chunks = [
+        _ch("K950001000_", "https://adilet.zan.kz/rus/docs/K950001000_#1"),
+        _ch("K2600000000_", "https://adilet.zan.kz/rus/docs/K2600000000_#71"),
+    ]
+    out = _render_grounding_integrity(chunks)
+    assert "Целостность грунтования" in out
+    assert "несколько редакций" in out
+    assert "не подтверждён" in out and "adilet ✓" in out
+    assert "K2600000000_" in out
+
+
+def test_grounding_integrity_empty_when_all_verified(monkeypatch):
+    # Обычный билль: один закон, валидный код → секции нет (no-op).
+    reg = _IntegrityRegistry(
+        titles={"226-V-UK": "Уголовный кодекс Республики Казахстан"},
+        codes={"226-V-UK": "K1400000226"},
+    )
+    monkeypatch.setattr(s7, "get_registry", lambda: reg)
+    chunks = [_ch("226-V-UK", "https://adilet.zan.kz/rus/docs/K1400000226#403")]
+    assert _render_grounding_integrity(chunks) == ""

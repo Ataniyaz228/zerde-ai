@@ -72,6 +72,81 @@ def _is_authoritative(c: EvidenceChunk) -> bool:
     return c.legal_rank != LegalRank.MEDIA_UNKNOWN and "adilet.zan.kz" in (c.source_url or "")
 
 
+def _is_placeholder_code(code: str | None) -> bool:
+    """Синтетический/невалидный adilet-код: тело (после букв, без хвостового «_»)
+    после 2-значного года — все нули (напр. K2600000000_ → «2600000000»: 26 +
+    00000000). Реальные коды имеют ненулевую последовательность (K950001000_,
+    Z1300000094, K1400000226). Эвристика детерминированная, без сети."""
+    body = re.sub(r"^[A-Za-z]+", "", (code or "")).rstrip("_")
+    return len(body) >= 3 and set(body[2:]) <= {"0"}
+
+
+def _law_adilet_verified(law_id: str | None) -> bool:
+    """Закон подтверждён на adilet = есть непустой НЕ-placeholder adilet-код.
+
+    get_adilet_code возвращает сам law_id для id-shaped входа (fallback), поэтому
+    «непустой код» сам по себе не значит «валиден» — отсекаем placeholder'ы."""
+    if not law_id:
+        return False
+    code = get_registry().get_adilet_code(law_id)
+    return bool(code and code.strip()) and not _is_placeholder_code(code)
+
+
+def _render_grounding_integrity(active_chunks: list[EvidenceChunk]) -> str:
+    """Причина B (видимость): целостность грунтования. БЕЗ смены вердиктов —
+    предупреждает, когда отчёт опирается на источник без подтверждённого
+    adilet-кода ИЛИ когда в корпусе есть конфликтующие редакции одного закона
+    (напр. две «Конституции РК»). Лечит корень «молчаливое доверие к
+    неверифицированной/неоднозначной норме», делая риск явным. Пусто, если
+    проблем нет → на обычных биллях секции не будет (no-op)."""
+    reg = get_registry()
+    title_by_law: dict[str, str] = {}
+    unverified: dict[str, str] = {}
+    for c in active_chunks:
+        lid = c.law_id
+        if not lid:
+            continue
+        title = reg.get_title(lid)
+        title_by_law[lid] = title
+        looks_normative = "adilet.zan.kz" in (c.source_url or "") or c.legal_rank != LegalRank.MEDIA_UNKNOWN
+        if looks_normative and not _law_adilet_verified(lid):
+            unverified[lid] = title
+
+    by_title: dict[str, set[str]] = {}
+    for lid, title in title_by_law.items():
+        by_title.setdefault(title, set()).add(lid)
+    conflicts = {t: ids for t, ids in by_title.items() if len(ids) > 1}
+
+    if not unverified and not conflicts:
+        return ""
+
+    lines = [
+        "## 🛡️ Целостность грунтования\n",
+        "> [!CAUTION]",
+        "> Предупреждение о **доверии к источникам**, не об ошибке вердиктов. "
+        "Перечисленные выводы стоит проверить вручную по adilet.zan.kz — "
+        "ground truth определяет adilet, а не корпус.\n",
+    ]
+    if conflicts:
+        lines.append("**В корпусе несколько редакций одного закона — грунтование может быть неоднозначным:**")
+        for title, ids in sorted(conflicts.items()):
+            parts = [
+                f"`{lid}` — {'adilet ✓' if _law_adilet_verified(lid) else 'не подтверждён'}"
+                for lid in sorted(ids)
+            ]
+            lines.append(f"- **{title}**: {'; '.join(parts)}")
+        lines.append("")
+    if unverified:
+        lines.append(
+            "**Источники без подтверждённого кода adilet** "
+            "(ссылка может не открываться, действующий статус нормы не доказан):"
+        )
+        for lid, title in sorted(unverified.items(), key=lambda kv: kv[1]):
+            lines.append(f"- {title} (`{lid}`)")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _law_name(chunk: EvidenceChunk) -> str:
     """Человеческое имя закона из реестра вместо синтезированного «НПА {код}».
 
@@ -218,6 +293,7 @@ async def render_report(
     sections = [
         _render_header(analysis),
         _render_executive_summary(analysis),
+        _render_grounding_integrity(active_chunks),
         _render_policy_analysis(policy_analysis),
         _render_structural_checklist(analysis),
         _render_normative_base(active_chunks),
@@ -428,7 +504,8 @@ def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
         for law_key, law_chunks in law_groups.items():
             # Берём заголовок из первого chunk'а группы
             representative = law_chunks[0]
-            lines.append(f"- **{_law_name(representative)}**")
+            unverified_mark = "" if _law_adilet_verified(representative.law_id) else " — ⚠️ не подтверждён на adilet"
+            lines.append(f"- **{_law_name(representative)}**{unverified_mark}")
             # Подпункты — статьи/ссылки (дедуп: один и тот же (URL, статья) не повторяем —
             # у одной статьи бывает несколько чанков: рус/каз/сегменты).
             seen_refs: set[tuple[str, str]] = set()

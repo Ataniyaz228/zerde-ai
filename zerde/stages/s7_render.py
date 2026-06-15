@@ -17,6 +17,7 @@ Stage 7: Renderer (Markdown "Lawyer" Format)
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -34,6 +35,41 @@ from zerde.models import (
     VerdictStatus,
 )
 from zerde.utils.law_registry import get_registry
+
+
+def _clean_label_leak(text: str) -> str:
+    """Убирает внутренние метки источников/чанков (S1, S5, S6, S12…), которые
+    LLM иногда вписывает прямо в прозу вердиктов/коллизий/пробелов.
+
+    Это служебные ярлыки чанков (рус/каз/сегменты), а не часть правовой нормы —
+    в пользовательском тексте они только сбивают с толку («источник S5»,
+    «в редакции S5, S6», «(S4, S5, S6)»). Чистим аккуратно, не трогая «ст.»/«п.».
+    """
+    if not text:
+        return text
+    t = text
+    t = re.sub(r"\(\s*S\d+(?:\s*,\s*S\d+)*\s*\)", "", t)            # (S5) (S5, S6)
+    t = re.sub(r"(?<=\()\s*S\d+(?:\s*,\s*S\d+)*\s*,\s*", "", t)     # (S4, ст… → (ст…
+    t = re.sub(r"\s*,\s*S\d+(?:\s*,\s*S\d+)*\s*(?=\))", "", t)      # …, S6) → …)
+    t = re.sub(r",?\s*источник[аи]?\s+S\d+(?:\s*,\s*S\d+)*\s*:?", "", t, flags=re.I)
+    t = re.sub(r",?\s*в\s+ред(?:акции|\.)?\s+S\d+(?:\s*,\s*S\d+)*", "", t, flags=re.I)
+    # Подчистка следов
+    t = re.sub(r"\(\s*[;:,]\s*", "(", t)
+    t = re.sub(r"\(\s*\)", "", t)
+    t = re.sub(r"\s{2,}", " ", t)
+    t = re.sub(r"\s+([.,;:)])", r"\1", t)
+    return t.strip()
+
+
+def _is_authoritative(c: EvidenceChunk) -> bool:
+    """Авторитетный нормативный источник = только adilet.zan.kz (ground truth).
+
+    Веб-агрегаторы/новости (akorda, 1tv, pavlodar, kodeksy-kz, prg…) получают
+    legal_rank ≠ MEDIA_UNKNOWN и иначе попадали бы в иерархию НПА как «Закон РК».
+    Здесь — чисто отображение: такие источники уходят в «Дополнительные
+    (информационные)», не влияя на вердикты (их решал S5 выше).
+    """
+    return c.legal_rank != LegalRank.MEDIA_UNKNOWN and "adilet.zan.kz" in (c.source_url or "")
 
 
 def _source_link_url(chunk: EvidenceChunk) -> str:
@@ -352,8 +388,8 @@ def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
         return "## 📚 Нормативная База\n\n*Источники не найдены.*"
 
     # FIX 6: Separate authoritative sources from informational ones
-    authoritative = [c for c in active_chunks if c.legal_rank != LegalRank.MEDIA_UNKNOWN]
-    informational = [c for c in active_chunks if c.legal_rank == LegalRank.MEDIA_UNKNOWN]
+    authoritative = [c for c in active_chunks if _is_authoritative(c)]
+    informational = [c for c in active_chunks if not _is_authoritative(c)]
 
     # Группируем по рангу → law_id → chunks
     by_rank: dict[LegalRank, dict[str, list[EvidenceChunk]]] = {}
@@ -402,10 +438,7 @@ def _render_conflicts(
     """V7.0: Единая секция конфликтов: S4 (chunks) + S6 (bridge)."""
     # FIX 5: Filter out non-authoritative sources from conflict list
     # MEDIA_UNKNOWN (rank 11) sources like Wikipedia should not appear as legal conflicts
-    authoritative_conflicts = [
-        c for c in conflict_chunks
-        if c.legal_rank != LegalRank.MEDIA_UNKNOWN
-    ]
+    authoritative_conflicts = [c for c in conflict_chunks if _is_authoritative(c)]
     total = len(authoritative_conflicts) + len(bridge_conflicts)
     if not total:
         return "## ⚖️ Конфликты и Коллизии\n\n*Конфликтов не выявлено.*"
@@ -438,10 +471,13 @@ def _render_conflicts(
         for rec in bridge_conflicts:
             sev_icon = "🔴" if rec.severity == ClaimSeverity.HIGH else "🟡"
             lines.append(f"#### {sev_icon} `{rec.record_id}` — {rec.conflict_type.value}")
-            lines.append(f"- **Claim:** {rec.claim_text}")
+            lines.append(f"- **Claim:** {_clean_label_leak(rec.claim_text)}")
             if rec.document_value and rec.found_value:
-                lines.append(f"- **Документ:** {rec.document_value} → **Норма:** {rec.found_value}")
-            lines.append(f"- **Детали:** {rec.detail}")
+                lines.append(
+                    f"- **Документ:** {_clean_label_leak(rec.document_value)} "
+                    f"→ **Норма:** {_clean_label_leak(rec.found_value)}"
+                )
+            lines.append(f"- **Детали:** {_clean_label_leak(rec.detail)}")
             lines.append("")
 
     return "\n".join(lines)
@@ -460,7 +496,22 @@ def _render_facts_and_conclusions(
 
     if analysis.facts:
         lines.append("### Установленные факты\n")
-        for fact in analysis.facts:
+        # Сортируем факты по номеру claim'а (иначе номера скачут: 0069, 0116,
+        # 0032…) и убираем текстовых близнецов (разные батчи дают дубли, напр.
+        # 0036==0037).
+        def _claim_num(f: Fact) -> int:
+            m = re.search(r"(\d+)", f.claim_id or "")
+            return int(m.group(1)) if m else 1_000_000
+        _seen_claim_text: set[str] = set()
+        ordered_facts: list[Fact] = []
+        for f in sorted(analysis.facts, key=_claim_num):
+            norm = (f.claim or "").strip().lower()
+            if norm and norm in _seen_claim_text:
+                continue
+            _seen_claim_text.add(norm)
+            ordered_facts.append(f)
+
+        for fact in ordered_facts:
             verdict = verdict_map.get(fact.claim_id) if fact.claim_id else None
             if not verdict:
                 # Fallback на дефолтный пустой вердикт, если связь не найдена
@@ -471,19 +522,20 @@ def _render_facts_and_conclusions(
             score_str = f" (BM25: {fact.bm25_score:.2f})" if fact.bm25_score is not None else ""
             lines.append(f"#### {icon} `{fact.fact_id}`{score_str}")
 
+            claim_txt = _clean_label_leak(fact.claim)
             if verdict.status == VerdictStatus.CONTRADICTED:
                 lines.append("> [!WARNING]")
-                lines.append(f"> **[ОШИБКА]** {fact.claim}\n")
+                lines.append(f"> **[ОШИБКА]** {claim_txt}\n")
             elif verdict.status == VerdictStatus.CONFIRMED:
                 lines.append("> [!NOTE]")
-                lines.append(f"> **[ПОДТВЕРЖДЕНО]** {fact.claim}\n")
+                lines.append(f"> **[ПОДТВЕРЖДЕНО]** {claim_txt}\n")
             elif verdict.status == VerdictStatus.UNVERIFIED and verdict.confidence in ("HIGH", "MEDIUM"):
                 # V7.0: Risk flag для важных непроверенных claims
                 lines.append("> [!CAUTION]")
-                lines.append(f"> **[⚠️ РИСК РЕТРИВАЛА]** {fact.claim}\n")
+                lines.append(f"> **[⚠️ РИСК РЕТРИВАЛА]** {claim_txt}\n")
                 lines.append("> *Система не смогла найти подтверждающие источники. Требуется ручная верификация.*\n")
             else:
-                lines.append(f"> **[НЕ ПРОВЕРЕНО]** {fact.claim}\n")
+                lines.append(f"> **[НЕ ПРОВЕРЕНО]** {claim_txt}\n")
 
             # Рендерим только реальные источники (не виртуальные); дедуп по
             # (URL, статья) — у одной статьи бывает несколько чанков (рус/каз/сегменты),
@@ -536,7 +588,7 @@ def _render_negative_space(analysis: AnalysisJSON) -> str:
         icon = gap_icons.get(item.gap_type, "⚫")
         lines.append(f"### {icon} `{item.item_id}` — {item.gap_type}")
         lines.append(f"**Домен:** {item.affected_domain}\n")
-        lines.append(f"{item.description}\n")
+        lines.append(f"{_clean_label_leak(item.description)}\n")
 
     return "\n".join(lines)
 
@@ -670,9 +722,12 @@ def _render_how_to_read(analysis: AnalysisJSON) -> str:
         "2. **⚠️ Не проверено + риск ретривала** — система не смогла найти "
         "источник, при этом утверждение похоже на ссылку на существующую "
         "норму. Стоит проверить вручную.\n"
-        "3. **✅ Подтверждено с BM25 ≥ 0.5** — высокая уверенность в "
-        "соответствии действующему праву. Источники приведены ниже каждого "
-        "пункта в виде ссылок на adilet.zan.kz.\n\n"
+        "3. **✅ Подтверждено с BM25 ≥ 0.5** — высокая текстовая близость к "
+        "найденному источнику. Это сильнее всего, когда источник — ссылка на "
+        "**adilet.zan.kz** (первоисточник). Если источник — новостной/"
+        "агрегаторный сайт (akorda.kz, kodeksy-kz.com и т.п.), это лишь "
+        "косвенное подтверждение существования нормы, а не её действующей "
+        "редакции — проверяйте по adilet.\n\n"
         "### Что Reliability ≠\n\n"
         "- ❌ Не показатель «нужен ли этот закон».\n"
         "- ❌ Не оценка юридической техники проекта.\n"

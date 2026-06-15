@@ -50,6 +50,19 @@ _TRANSIENT_LLM_ERRORS = (
     asyncio.TimeoutError,
 )
 
+# Закрепление провайдера OpenRouter (детерминизм прогонов). Одна модель
+# (deepseek-v4-pro / gpt-5-nano) у OpenRouter обслуживается РАЗНЫМИ провайдерами
+# (Fireworks/DeepInfra/Baidu/…), которые даже при temperature=0 дают разный
+# вывод → экстрактор выделяет разные факты от прогона к прогону. order +
+# allow_fallbacks=True: предпочитаем перечисленных провайдеров, но не падаем,
+# если они недоступны (OpenRouter уйдёт на запасного). НЕ влияет на ключ кэша
+# (provider не входит в messages) → pin-тест зелёный. Пусто = выключено.
+_OPENROUTER_PROVIDER_ORDER = [
+    p.strip()
+    for p in os.getenv("ZERDE_OPENROUTER_PROVIDER_ORDER", "openai,deepinfra,fireworks").split(",")
+    if p.strip()
+]
+
 # Жёсткий потолок на ОДИН LLM-вызов (весь запрос целиком, не между байтами).
 # httpx read-таймаут (300с) ловит только паузы между чанками — провайдер,
 # который медленно «капает» байтами, держит соединение и слот семафора(5)
@@ -329,6 +342,15 @@ async def cached_llm_call(
                 )
                 if use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
+                # Закрепляем провайдера для воспроизводимости (только OpenRouter).
+                # extra_body уходит в JSON-тело запроса, минуя ключ кэша.
+                if s.is_openrouter and _OPENROUTER_PROVIDER_ORDER:
+                    kwargs["extra_body"] = {
+                        "provider": {
+                            "order": _OPENROUTER_PROVIDER_ORDER,
+                            "allow_fallbacks": True,
+                        }
+                    }
 
                 # Транзиентные ошибки (таймаут/соединение/429/5xx) повторяем до
                 # 3 попыток с экспоненциальным backoff+jitter; BadRequestError

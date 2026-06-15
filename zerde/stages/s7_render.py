@@ -33,6 +33,25 @@ from zerde.models import (
     ValidationStatus,
     VerdictStatus,
 )
+from zerde.utils.law_registry import get_registry
+
+
+def _source_link_url(chunk: EvidenceChunk) -> str:
+    """Кликабельный URL источника.
+
+    Корпус хранит source_url, синтезированный из КОРОТКОГО law_id
+    (`adilet.zan.kz/rus/docs/171-VIII`) — такой путь на adilet 404-ит, т.к.
+    документы там адресуются по внутреннему коду (`.../docs/K2500000171`).
+    Берём реальный код из реестра (adilet_code); для не-реестровых источников
+    (веб) — оставляем исходный URL. Якорь #статья безвреден: на валидном
+    документе он просто не сработает, но не ломает переход. См. ground-truth
+    правило в CLAUDE.md — мёртвая ссылка = ложная цитата.
+    """
+    if chunk.law_id:
+        url = get_registry().get_adilet_url(chunk.law_id)
+        if url:
+            return f"{url}#{chunk.article}" if chunk.article else url
+    return chunk.source_url or ""
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +382,7 @@ def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
                 conflict_flag = " ⚠️ КОНФЛИКТ" if c.is_conflict else ""
                 art_ref = f" (ст. {c.article})" if c.article else ""
                 lines.append(
-                    f"  - [{c.source_title}]({c.source_url}){art_ref}{conflict_flag}"
+                    f"  - [{c.source_title}]({_source_link_url(c)}){art_ref}{conflict_flag}"
                 )
 
     # Informational sources in a separate subsection (not part of normative hierarchy)
@@ -483,7 +502,7 @@ def _render_facts_and_conclusions(
                     seen_fact_refs.add(ref_key)
                     art_ref = f" (ст. {chunk.article})" if chunk.article else ""
                     real_source_lines.append(
-                        f"- [{chunk.source_title}]({chunk.source_url}){art_ref}"
+                        f"- [{chunk.source_title}]({_source_link_url(chunk)}){art_ref}"
                     )
                 # Не нашли — просто пропускаем (не засоряем отчёт)
 

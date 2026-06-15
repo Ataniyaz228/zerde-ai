@@ -5,6 +5,13 @@ load_dotenv()
 import logging  # noqa: E402
 import sys  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# Log file lives at the project root — OUTSIDE the uvicorn --reload-dir watch
+# (web/backend + zerde). Writing it inside the watched tree created a feedback
+# loop: watchfiles' own "change detected" INFO lines were logged to the file,
+# which watchfiles then detected, logging another line, ~once per second.
+_LOG_PATH = Path(__file__).resolve().parents[2] / "zerde_backend.log"
 
 import uvicorn  # noqa: E402
 from api.routes import router as api_router  # noqa: E402
@@ -22,9 +29,12 @@ def setup_logging():
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler("zerde_backend.log", encoding="utf-8"),
+            logging.FileHandler(_LOG_PATH, encoding="utf-8"),
         ],
     )
+    # Quiet the reload watcher: its per-change INFO spam is noise in dev and was
+    # the source of the self-feeding log loop. Real reloads still print.
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
 
 setup_logging()
 

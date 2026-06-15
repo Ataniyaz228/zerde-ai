@@ -1,9 +1,5 @@
-"""
-Per-fact audit: BM25 scoring, article-boost rebound, arithmetic (number)
-checks, and score/confidence -> ValidationStatus conversions.
-
-Moved verbatim from zerde/stages/s6_auditor.py (Phase 1, Step 3). Magic
-numbers replaced with references into scoring_config.CONFIG.
+"""Аудит отдельных фактов: BM25-скоринг, article-boost, арифметические проверки
+и перевод score/confidence в ValidationStatus. Все пороги — из scoring_config.CONFIG.
 """
 
 from __future__ import annotations
@@ -65,7 +61,7 @@ def _audit_fact(
     # 2. BM25
     bm25_score = bm25.score(fact.claim, resolved_ids)
 
-    # V9.6: Если LLM привязала к общему закону (BM25 низкий),
+    # Если LLM привязала к общему закону (BM25 низкий),
     # но в claim есть номер статьи + target_law_id — найдём конкретный чанк статьи
     if claim and bm25_score < medium_threshold:
         article_num = _extract_article_from_claim(claim)
@@ -129,7 +125,7 @@ def _score_to_status(
 
 
 # ---------------------------------------------------------------------------
-# Arithmetic Check (safe float parser, Phase 1 Step 4)
+# Arithmetic Check (safe float parser, )
 # ---------------------------------------------------------------------------
 
 
@@ -193,8 +189,7 @@ _SAFE_NUM_RE = re.compile(r"^[\d.]+$")
 
 
 def _safe_float(s: str) -> float | None:
-    """Safe replacement for sympy.sympify on digit/dot-only strings
-    (Phase 1, Step 4). Inputs reaching here already failed a plain float()
+    """Safe replacement for sympy.sympify on digit/dot-only strings. Inputs reaching here already failed a plain float()
     and contain no '-'."""
     import ast
     if not _SAFE_NUM_RE.match(s):

@@ -1,11 +1,8 @@
-"""
-Frozen scoring constants for S6's reliability/audit math (Phase 1, Step 3).
+"""Замороженные константы скоринга для расчёта надёжности и аудита в S6.
 
-Every magic number previously inlined in zerde/stages/s6_auditor.py's
-audit_analysis / _audit_fact / reliability computation lives here. This is a
-pure data extraction -- values are unchanged; only their location moved.
-Import CONFIG (a module-level singleton) rather than instantiating
-ScoringConfig yourself.
+Все веса, пороги и штрафы собраны здесь, а не разбросаны по коду. Импортируй
+готовый синглтон CONFIG, а не создавай ScoringConfig вручную. Значения откалиброваны
+и покрыты golden-тестами — менять только с пересъёмкой голденов.
 """
 
 from __future__ import annotations
@@ -15,7 +12,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class ScoringConfig:
-    # --- Reliability formula weights (V9.4) ---
+    # --- Reliability formula weights ---
     # R = (w_v_ratio * V_ratio + w_q_auth * Q_auth + w_q_retrieval * Q_retrieval) * (1 - P_conflict)
     w_v_ratio: float = 0.50
     w_q_auth: float = 0.30

@@ -1,7 +1,5 @@
 """
 S6 BM25 retrieval: ZerdeBM25 index wrapper, corpus-wide fallback search.
-
-Moved verbatim from zerde/stages/s6_auditor.py (Phase 1, Step 3).
 """
 
 from __future__ import annotations
@@ -117,7 +115,7 @@ def _corpus_wide_bm25_search(
     if not bm25._bm25 or not bm25._ids:
         return None
 
-    # FIX 4: Use raw claim text from DocumentClaim for BM25, not the formatted
+    # Use raw claim text from DocumentClaim for BM25, not the formatted
     # fact.claim string which contains metadata like '[claim_0001]: ...' that
     # pollutes token matching. Fall back to fact.claim if no claim object.
     if claim:

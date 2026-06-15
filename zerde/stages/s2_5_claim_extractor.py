@@ -1,12 +1,9 @@
-"""
-Stage 2.5: Claim Extractor
-Вход:  DocumentState
-Выход: ClaimExtractionResult
+"""S2.5 — извлечение проверяемых утверждений (claims) из документа.
 
-Гибридный подход:
-  1. Детерминированный regex-этап — ловит числовые/ссылочные claims без LLM
-  2. LLM-этап — ловит контекстные утверждения (биометрия обязательна с 2026)
-  3. Reference Injector — проверяет entities по reference_data.py без LLM
+Гибрид regex + LLM: regex дёшево ловит числовые и ссылочные claims (суммы, сроки,
+номера статей), LLM добирает контекстные ("биометрия обязательна с 2026"). Поверх —
+reference_data.py выставляет детерминированные вердикты по известным фактам без LLM.
+ID claim'ов всегда генерим сами (claim_NNNN) — то, что вернула LLM, не используем.
 """
 
 from __future__ import annotations
@@ -90,14 +87,14 @@ _PATTERNS: list[tuple[re.Pattern, ClaimType, ClaimSeverity, str]] = [
 # Паттерн для извлечения года в контексте
 _YEAR_RE = re.compile(r"\b(202[0-9])\b")
 
-# V7.0: Стоп-слова для нормализации claims (дедупликация)
+# Стоп-слова для нормализации claims (дедупликация)
 _STOP_WORDS_CLAIM = frozenset([
     "и", "в", "на", "с", "по", "от", "до", "за", "при", "о", "об", "из",
     "или", "а", "но", "что", "как", "это", "не", "к", "для", "то",
     "документ", "утверждает", "строка", "таблица", "присутствует", "существует",
 ])
 
-# V7.0: Модальные глаголы — если есть, claim НЕ структурный (RU + KK)
+# Модальные глаголы — если есть, claim НЕ структурный (RU + KK)
 _MODAL_VERBS = frozenset([
     "обязан", "должен", "запрещается", "влечет", "устанавливается",
     "предусмотрено", "установлено", "нарушение", "ответственность", "штраф",
@@ -110,7 +107,7 @@ _MODAL_VERBS = frozenset([
 
 
 # ---------------------------------------------------------------------------
-# V9.6: Target Law Detection (для поправочных актов)
+# Target Law Detection (для поправочных актов)
 # ---------------------------------------------------------------------------
 
 # Паттерны для поиска закона-мишени в преамбуле/заголовке документа
@@ -172,7 +169,7 @@ _TITLE_HINT_MAP: dict[str, str] = {
 
 def _detect_target_laws(text: str) -> list[str]:
     """
-    V9.6: Определяет законы-мишени поправочного акта по преамбуле/заголовку.
+    Определяет законы-мишени поправочного акта по преамбуле/заголовку.
     Возвращает список short ID (напр. ['261-IV', '235-V']).
     """
     from zerde.utils.law_registry import get_registry
@@ -206,7 +203,7 @@ def _detect_target_laws(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# V9.6: Meta-claim filter (отсев мусорных тривиальных claims)
+# Meta-claim filter (отсев мусорных тривиальных claims)
 # ---------------------------------------------------------------------------
 
 # Паттерны для META claims — заголовков / самоописаний документа
@@ -221,7 +218,7 @@ _META_CLAIM_PATTERNS = (
 
 
 def _is_meta_claim(claim: DocumentClaim) -> bool:
-    """V9.6: True если claim — мета-описание документа, а не проверяемое утверждение."""
+    """True если claim — мета-описание документа, а не проверяемое утверждение."""
     text = claim.claim_text.strip()
     # Слишком короткие/общие
     if len(text) < 20:
@@ -233,7 +230,7 @@ def _is_meta_claim(claim: DocumentClaim) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# V7.0: Structural Filter & Claim Deduplication
+# Structural Filter & Claim Deduplication
 # ---------------------------------------------------------------------------
 
 
@@ -245,7 +242,7 @@ def _normalize_claim_text(text: str) -> str:
     return " ".join(tokens)
 
 
-# V7.0: Числовые показатели норм — если есть, claim НЕ структурный (RU + KK)
+# Числовые показатели норм — если есть, claim НЕ структурный (RU + KK)
 _NORMATIVE_UNITS_RE = re.compile(
     r"\b\d+[\s\xa0]*(?:мрп|аек|мзп|тәм|тенге|теңге|часов?|сағат|дней?|күн|күні|месяц|ай|лет|жыл|процент|пайыз|%)",
     re.I | re.U,
@@ -253,7 +250,7 @@ _NORMATIVE_UNITS_RE = re.compile(
 
 
 def _is_structural_claim(claim: DocumentClaim) -> bool:
-    """V7.0: Определяет, является ли claim чисто структурным (не идёт в Auditor)."""
+    """Определяет, является ли claim чисто структурным (не идёт в Auditor)."""
     text_lower = claim.claim_text.lower()
 
     # 0. Исключаем переходные/вступительные положения самого законопроекта (commencement clauses)
@@ -310,7 +307,7 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
     if claim.claim_type == ClaimType.LEGAL_REF:
         if claim.deterministic_verdict:
             return False
-        # V9.6: если знаем целевой закон, простую ссылку на статью можно верифицировать
+        # если знаем целевой закон, простую ссылку на статью можно верифицировать
         if getattr(claim, "target_law_ids", None):
             return False
         if re.search(r'стать[яи]\s*\d+.*[а-яё\s]{10,}', text_lower):
@@ -329,14 +326,14 @@ def _is_structural_claim(claim: DocumentClaim) -> bool:
     return False
 
 
-# V9.6: Karaim-ный регекс для извлечения article reference из любого языка.
+# Karaim-ный регекс для извлечения article reference из любого языка.
 # Ловит "статья 47", "ст. 47-1", "47-бап", "47-баптың", "(47-1)" и т.д.
 _ARTICLE_REF_RE = re.compile(
     r"(?:стать[яиеюй]\s*|ст\.?\s*|(?:^|\s))(\d{1,4}(?:[-]\d{1,3})?)\s*(?:-?\s*(?:бап|бабы|бабының|бапта|баптың|бабына))?",
     re.I | re.U,
 )
 
-# V9.6: Ключевые "юр.события" — для группировки claims разных языков об одной поправке
+# Ключевые "юр.события" — для группировки claims разных языков об одной поправке
 _SEMANTIC_EVENT_KEYWORDS = (
     # Каждый кортеж = (ключи поиска, нормализованный ID события)
     (("амнист", "рақымшылық"), "amnesty"),
@@ -374,7 +371,7 @@ def _extract_semantic_events(text: str) -> list[str]:
 
 def _semantic_dedup_key(claim: DocumentClaim) -> str | None:
     """
-    V9.6: Строит кросс-языковой ключ дедупликации.
+    Строит кросс-языковой ключ дедупликации.
     Возвращает None, если claim слишком общий (нет article + events).
 
     Идея: claims "В статью 61 добавляется абзац: согласие не требуется"
@@ -401,14 +398,14 @@ def _semantic_dedup_key(claim: DocumentClaim) -> str | None:
 
 
 def _dedup_claims(claims: list[DocumentClaim]) -> list[DocumentClaim]:
-    """V7.0+V9.6: Детерминированная дедупликация по нормализованному тексту + кросс-языковая по семантическому ключу."""
+    """Детерминированная дедупликация по нормализованному тексту + кросс-языковая по семантическому ключу."""
     groups: dict[str, list[DocumentClaim]] = {}
     for c in claims:
         if c.entities and c.deterministic_verdict is not None:
             sorted_ents = sorted(str(e).strip().replace(" ", "").upper() for e in c.entities)
             key = f"regex_{c.claim_type.value}_{'_'.join(sorted_ents)}"
         else:
-            # V9.6: сначала пробуем семантический ключ (кросс-язык),
+            # сначала пробуем семантический ключ (кросс-язык),
             # потом fallback на нормализованный текст
             sem_key = _semantic_dedup_key(c)
             if sem_key:
@@ -674,7 +671,7 @@ async def _llm_extract_chunk(
     MAX_RETRIES = 2
     raw_claims: list = []
     for attempt in range(1, MAX_RETRIES + 1):
-        # V9.6: На повторной попытке повышаем температуру чтобы получить другой ответ
+        # На повторной попытке повышаем температуру чтобы получить другой ответ
         temperature = 0.0 if attempt == 1 else 0.4
         try:
             parsed = await cached_llm_call(
@@ -801,7 +798,7 @@ async def extract_claims(doc_state: DocumentState) -> ClaimExtractionResult:
 
     logger.info(f"[S2.5] Claim extraction start. doc_id={doc_state.doc_id[:8]}…")
 
-    # V9.6: Определяем законы-мишени документа (для поправочных актов)
+    # Определяем законы-мишени документа (для поправочных актов)
     target_law_ids = _detect_target_laws(text)
     if target_law_ids:
         logger.info(f"[S2.5] Detected target laws: {target_law_ids}")
@@ -816,23 +813,23 @@ async def extract_claims(doc_state: DocumentState) -> ClaimExtractionResult:
 
     all_claims = regex_claims + llm_claims
 
-    # V9.6: Проставляем target_law_ids во все claims (чтобы S6 знал контекст закона)
+    # Проставляем target_law_ids во все claims (чтобы S6 знал контекст закона)
     if target_law_ids:
         for c in all_claims:
             if not c.target_law_ids:
                 c.target_law_ids = target_law_ids
 
-    # V9.6: Фильтр мусорных meta-claims
+    # Фильтр мусорных meta-claims
     before_meta = len(all_claims)
     all_claims = [c for c in all_claims if not _is_meta_claim(c)]
     if before_meta != len(all_claims):
         logger.info(f"[S2.5] Meta-filter: dropped {before_meta - len(all_claims)} trivial claims")
 
-    # V7.0+V9.6: Детерминированная дедупликация (включая кросс-языковую)
+    # Детерминированная дедупликация (включая кросс-языковую)
     deduped = _dedup_claims(all_claims)
     logger.info(f"[S2.5] Dedup: {len(all_claims)} → {len(deduped)} unique claims")
 
-    # V7.0: Разделение на аналитические и структурные claims
+    # Разделение на аналитические и структурные claims
     analytical: list[DocumentClaim] = []
     structural: list[DocumentClaim] = []
     for c in deduped:

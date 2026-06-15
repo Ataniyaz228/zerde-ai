@@ -1,5 +1,10 @@
-"""
-Stage 5: The Auditor (Claim-based Verification)
+"""S5 — LLM-аудитор: проверяет каждый claim против собранных чанков.
+
+Под каждый claim подбираются релевантные чанки (forced adilet/conflict + точное
+совпадение law_id+article + BM25). Чанки показываются LLM короткими метками
+(S1, S2…), её ответ ремапится обратно в полные chunk_id — выдуманные метки
+отбрасываются. Вердикт: CONFIRMED / CONTRADICTED / UNVERIFIED. Главное правило —
+cite-or-abstain: нет цитаты → UNVERIFIED, никогда CONFIRMED.
 """
 
 from __future__ import annotations

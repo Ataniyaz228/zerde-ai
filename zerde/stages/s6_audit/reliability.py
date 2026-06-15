@@ -1,10 +1,9 @@
-"""
-V9.4 Calibrated Legal Confidence Metric & Statistics Aggregator.
+"""Калиброванная метрика надёжности и агрегатор статистики для S6.
 
-Moved verbatim from zerde/stages/s6_auditor.py (Phase 1, Step 3). Magic
-numbers replaced with references into scoring_config.CONFIG. Behavior,
-including the n_total<=2-all-UNVERIFIED -> None early-return path, is
-UNCHANGED -- frozen and golden-tested (tests/test_s6_goldens.py).
+Все веса и пороги живут в scoring_config.CONFIG. Поведение заморожено и
+покрыто golden-тестами (tests/test_s6_goldens.py) — включая граничный случай
+"n_total <= 2 и все UNVERIFIED → reliability=None". Менять только вместе с
+пересъёмкой голденов.
 """
 
 from __future__ import annotations
@@ -70,7 +69,7 @@ def _compute_reliability_and_stats(analysis: AnalysisJSON, corpus_index: dict) -
         and any(sid and sid != "UNLINKED" and not sid.startswith("reference_") for sid in v.source_ids)
     )
 
-    # V9.6: При очень малом числе аналитических claims reliability нельзя считать надёжно.
+    # При очень малом числе аналитических claims reliability нельзя считать надёжно.
     # n_total=1-2 даёт экстремально низкие значения даже для корректных документов.
     if n_total <= 2 and n_total > 0:
         all_unverified = all(v.status == VerdictStatus.UNVERIFIED for v in analytical_verdicts)
@@ -213,8 +212,8 @@ def _compute_reliability_and_stats(analysis: AnalysisJSON, corpus_index: dict) -
 
     # Compile and attach AnalysisStats (v9.4 Immutable Stage)
 
-    # FIX 3 + FIX 5: Conditional pros — don't claim "Confirmed 0" as a positive.
-    # FIX 5: Don't generate false positive "no contradictions" when corpus is empty.
+    # Conditional pros — don't claim "Confirmed 0" as a positive.
+    # Don't generate false positive "no contradictions" when corpus is empty.
     # corpus_index может быть пустым (0 локальных чанков) — в этом случае
     # "противоречий не обнаружено" — ложный позитив, т.к. мы ничего не проверяли.
     has_real_evidence = len(corpus_index) > 0

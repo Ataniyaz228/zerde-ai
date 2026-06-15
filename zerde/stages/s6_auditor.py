@@ -1,19 +1,9 @@
-"""
-Stage 6: The Auditor
-Вход:  AnalysisJSON + list[EvidenceChunk]
-Выход: AnalysisJSON со статусами
+"""Совместимостный фасад над пакетом zerde/stages/s6_audit/.
 
-Реализация:
-  1. Topology check: source_ids существуют в корпусе
-  2. BM25 scoring: rank_bm25.BM25Okapi, нормализованный score
-  3. Arithmetic check: безопасный float-парсинг чисел
-  Строго без Retry: ошибка → UNVERIFIED
-
-Phase 1, Step 3: this module is now a thin re-export shim over
-zerde/stages/s6_audit/ (the decomposed package). All symbols below are
-imported verbatim from their new homes so existing call sites
-(zerde/pipeline.py, zerde/stages/s5_analyst.py, scripts/eval/*, tests/*)
-keep working unchanged.
+Сам аудит (topology-check, BM25-скоринг, арифметика, расчёт надёжности) разнесён
+по модулям s6_audit/. Здесь только реэкспорт публичных символов, чтобы старые
+импорты (pipeline, s5_analyst, scripts/eval, tests) продолжали работать.
+Новый код импортируй прямо из s6_audit.*.
 """
 
 from __future__ import annotations

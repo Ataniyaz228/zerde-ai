@@ -1,11 +1,7 @@
-"""
-Pipeline Orchestrator
-Связывает все этапы в единый асинхронный пайплайн.
+"""Оркестратор пайплайна: связывает стадии S1→S7 в один асинхронный прогон.
 
-Этапы:
-  - Stage 2.5: Claim Extractor (гибридный regex + LLM)
-  - Stage 5: run_auditor() вместо run_analyst() — claim-by-claim верификация
-  - reference_data.py: детерминированные вердикты без LLM
+Каждая стадия — отдельная функция в zerde/stages/; здесь только порядок их
+вызова, распараллеливание независимых стадий и передача результатов дальше.
 """
 
 from __future__ import annotations
@@ -32,8 +28,8 @@ from zerde.stages.s2_planner import build_query_plan
 from zerde.stages.s3_5_local_rag import inject_claim_driven, inject_local_rag
 from zerde.stages.s3_gather import gather_evidence
 from zerde.stages.s4_fusion import fuse_and_validate
+from zerde.stages.s5_2_verifier import verify_contradictions
 from zerde.stages.s5_5_analyst import run_policy_analyst
-from zerde.stages.s5_5_verifier import verify_contradictions
 from zerde.stages.s5_analyst import run_auditor
 from zerde.stages.s6_auditor import audit_analysis
 from zerde.stages.s7_render import render_report
@@ -44,10 +40,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class ZerdePipelineResult:
-    """
-    Контейнер для результатов полного пайплайна.
-    Доступ: result.doc_state, result.analysis, result.report_path, etc.
-    """
+    """Результаты полного прогона: документ, план, claims, чанки, анализ, отчёт."""
 
     doc_state: DocumentState
     query_plan: QueryPlan
@@ -62,7 +55,7 @@ class ZerdePipelineResult:
 
 @dataclass(frozen=True, slots=True)
 class ProgressEvent:
-    """Лёгкое уведомление о смене этапа пайплайна для вызывающей стороны (backend)."""
+    """Уведомление о смене этапа — backend транслирует его в WebSocket прогресс-бара."""
 
     stage: str
     message: str
@@ -72,7 +65,6 @@ def _emit_progress(
     progress: Callable[[ProgressEvent], None] | None,
     ev: ProgressEvent,
 ) -> None:
-    """Вызывает progress(ev), если callback передан."""
     if progress is not None:
         progress(ev)
 
@@ -82,39 +74,26 @@ async def run_pipeline(
     output_path: str | Path | None = None,
     progress: Callable[[ProgressEvent], None] | None = None,
 ) -> ZerdePipelineResult:
-    """
-    Запускает полный пайплайн от файла до Markdown-отчёта.
+    """Прогоняет документ через весь пайплайн и возвращает отчёт + промежуточные результаты.
 
-    Архитектура:
-      S1 → S2 → S2.5 → S3 → S4 → S5 → S6 → S7
-
-    Args:
-        file_path: Путь к входному документу (PDF/DOCX/TXT).
-        output_path: Путь для сохранения отчёта (опционально).
-        progress: Опциональный callback, вызываемый синхронно при смене этапа
-            (extract → search → verify → report) — для прогресс-баров (WS).
-
-    Returns:
-        ZerdePipelineResult с результатами всех этапов.
+    file_path   — входной документ (PDF/DOCX/TXT).
+    output_path — куда сохранить Markdown-отчёт (None → не сохранять на диск).
+    progress    — синхронный callback на смену этапа; backend шлёт его в WebSocket.
     """
     get_settings()
     start_time = time.perf_counter()
 
-    logger.info("=" * 60)
-    logger.info("Pipeline Start")
-    logger.info(f"Input: {file_path}")
-    logger.info("=" * 60)
+    logger.info("Pipeline start: %s", file_path)
     _emit_progress(progress, ProgressEvent("extract", "Загрузка и извлечение тезисов"))
 
-    # ─── ЭТАП 1: Document Ingestion ───────────────────────────────────────
+    # S1 — извлечение текста из файла.
     t1 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 1: Document Ingestion")
     doc_state = await ingest_document(file_path)
-    logger.info(f"[Pipeline] ✓ Stage 1 done ({time.perf_counter() - t1:.2f}s) — {doc_state.char_count} chars")
+    logger.info("Stage 1 done (%.2fs) — %d chars", time.perf_counter() - t1, doc_state.char_count)
 
-    # ─── ЭТАП 2 + 2.5 + 2.7: LLM Planner, Claim Extractor и Self-Check (ПАРАЛЛЕЛЬНО) ────────────
+    # S2/S2.5/S2.7 независимы друг от друга — гоним их параллельно.
+    # (self-check синхронный, поэтому уезжает в отдельный поток.)
     t2 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 2 + 2.5 + 2.7: LLM Planner, Claim Extractor и Self-Check (параллельно)")
     query_plan, claims, selfcheck_claims = await asyncio.gather(
         build_query_plan(doc_state),
         extract_claims(doc_state),
@@ -122,38 +101,35 @@ async def run_pipeline(
     )
     if selfcheck_claims:
         claims.claims.extend(selfcheck_claims)
-        logger.info(f"[Pipeline] ✓ Stage 2.7 — {len(selfcheck_claims)} internal contradictions added")
-    elapsed_2 = time.perf_counter() - t2
+        logger.info("Stage 2.7 — %d internal contradictions added", len(selfcheck_claims))
     logger.info(
-        f"[Pipeline] ✓ Stage 2 done — {query_plan.total_queries} queries | "
-        f"Stage 2.5 + 2.7 done — {claims.total_count} claims ({len(claims.critical_claims)} critical) "
-        f"| время: {elapsed_2:.2f}s"
+        "Stage 2 done (%.2fs) — %d queries, %d claims (%d critical)",
+        time.perf_counter() - t2,
+        query_plan.total_queries,
+        claims.total_count,
+        len(claims.critical_claims),
     )
 
-    # ─── ЭТАП 3: Data Gathering ───────────────────────────────────────────
+    # S3 — сбор доказательств из adilet + web.
     t3 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 3: Evidence Gathering")
     _emit_progress(progress, ProgressEvent("search", "Поиск в базе НПА Казахстана"))
     raw_chunks = await gather_evidence(query_plan)
-    logger.info(f"[Pipeline] ✓ Stage 3 done ({time.perf_counter() - t3:.2f}s) — {len(raw_chunks)} chunks")
+    logger.info("Stage 3 done (%.2fs) — %d chunks", time.perf_counter() - t3, len(raw_chunks))
 
-    # ─── ЭТАП 3.5 + 3.6: Local RAG / Claim-driven Injection ────────────────
+    # S3.5/S3.6 — добиваем недостающие статьи из локального корпуса:
+    # сначала по парам (law_id, article) из плана, затем по тем же парам из claims.
     rag_cache = CacheManager(get_settings().cache_db_path)
     raw_chunks = await inject_local_rag(raw_chunks, query_plan, cache=rag_cache)
     raw_chunks = inject_claim_driven(raw_chunks, claims, cache=rag_cache)
 
-    # ─── ЭТАП 4: Fusion & Validation ─────────────────────────────────────
+    # S4 — дедупликация и детекция конфликтов.
     t4 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 4: Fusion & Conflict Detection")
-
-    # Language filtering removed as it was dropping cross-lingual web results
     fused_chunks = await fuse_and_validate(raw_chunks)
     active_chunks = [c for c in fused_chunks if not c.is_duplicate]
-    logger.info(f"[Pipeline] ✓ Stage 4 done ({time.perf_counter() - t4:.2f}s) — {len(active_chunks)} active")
+    logger.info("Stage 4 done (%.2fs) — %d active", time.perf_counter() - t4, len(active_chunks))
 
-    # ─── ЭТАП 5 + 5.2: LLM Auditor & Contradiction Verifier ────────────────────────────
+    # S5 — LLM-аудитор, затем детерминированная проверка вердиктов CONTRADICTED.
     t5 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 5 + 5.2: LLM Auditor & Contradiction Verifier")
     _emit_progress(progress, ProgressEvent("verify", "Верификация и анализ коллизий"))
 
     if not claims.claims:
@@ -179,24 +155,23 @@ async def run_pipeline(
         )
         analysis = await verify_contradictions(analysis, active_chunks)
 
-    # V7.0: Переносим структурные claims в analysis для рендеринга
+    # Структурные claims идут в отчёт отдельным чеклистом, а не как вердикты.
     analysis.structural_claims = claims.structural_claims
     from zerde.stages.s5_analyst import _validate_claim_coverage
     _validate_claim_coverage(analysis, claims)
 
     contradicted = sum(1 for v in analysis.verdicts if v.status.value == "CONTRADICTED")
     logger.info(
-        f"[Pipeline] ✓ Stage 5 + 5.2 done ({time.perf_counter() - t5:.2f}s) — "
-        f"verdicts={len(analysis.verdicts)} contradicted={contradicted} "
-        f"structural={len(claims.structural_claims)}"
+        "Stage 5 done (%.2fs) — %d verdicts, %d contradicted, %d structural",
+        time.perf_counter() - t5,
+        len(analysis.verdicts),
+        contradicted,
+        len(claims.structural_claims),
     )
 
-    # ─── ЭТАП 5.5 + 6: Policy Analyst и BM25 Audit (ПАРАЛЛЕЛЬНО) ──────
+    # S5.5 (policy) и S6 (аудит) независимы — гоним параллельно. Обе ветви мутируют
+    # analysis/chunks in-place, поэтому каждой даём свою глубокую копию.
     t56 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 5.5 + 6: Policy Analyst ∥ BM25 Audit (параллельно)")
-
-    # C2 Fix: Избегаем in-place мутаций разделяемого объекта analysis и chunks.
-    # Создаем изолированные глубокие копии для обеих параллельных ветвей (S5.5 и S6).
     analysis_for_policy = analysis.model_copy(deep=True)
     active_chunks_for_policy = [c.model_copy(deep=True) for c in active_chunks]
 
@@ -215,29 +190,27 @@ async def run_pipeline(
         _run_s6(),
     )
     logger.info(
-        f"[Pipeline] ✓ Stage 5.5+6 done ({time.perf_counter() - t56:.2f}s) — "
-        f"policy={'✓' if policy_analysis else '✗'}"
+        "Stage 5.5+6 done (%.2fs) — policy=%s",
+        time.perf_counter() - t56,
+        "ok" if policy_analysis else "none",
     )
 
-    # ─── ЭТАП 7: Render ──────────────────────────────────────────────────
+    # S7 — рендер Markdown-отчёта.
     t7 = time.perf_counter()
-    logger.info("[Pipeline] ► Stage 7: Report Rendering")
     _emit_progress(progress, ProgressEvent("report", "Формирование отчёта"))
     report_md = await render_report(audited_analysis, active_chunks, output_path, policy_analysis)
     report_path = str(output_path) if output_path else "output/zerde_report_*.md"
-    logger.info(f"[Pipeline] ✓ Stage 7 done ({time.perf_counter() - t7:.2f}s)")
+    logger.info("Stage 7 done (%.2fs)", time.perf_counter() - t7)
 
     total_elapsed = time.perf_counter() - start_time
-
-    logger.info("=" * 60)
-    logger.info(f"Pipeline Complete ({total_elapsed:.2f}s)")
     logger.info(
-        f"Claims: {claims.total_count} | "
-        f"Verdicts: {len(audited_analysis.verdicts)} | "
-        f"Contradicted: {contradicted} | "
-        f"Reliability: {audited_analysis.overall_reliability if audited_analysis.overall_reliability is not None else 'N/A'}"
+        "Pipeline complete (%.2fs) — %d claims, %d verdicts, %d contradicted, reliability=%s",
+        total_elapsed,
+        claims.total_count,
+        len(audited_analysis.verdicts),
+        contradicted,
+        audited_analysis.overall_reliability if audited_analysis.overall_reliability is not None else "N/A",
     )
-    logger.info("=" * 60)
 
     result = ZerdePipelineResult(
         doc_state=doc_state,

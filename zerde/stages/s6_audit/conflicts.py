@@ -1,7 +1,5 @@
 """
 Conclusions audit + CONTRADICTED-verdicts -> ConflictRecord bridge.
-
-Moved verbatim from zerde/stages/s6_auditor.py (Phase 1, Step 3).
 """
 
 from __future__ import annotations
@@ -49,7 +47,7 @@ def _audit_conclusions(
 
 
 # ---------------------------------------------------------------------------
-# V7.0: Conflicts Bridge
+# Conflicts Bridge
 # ---------------------------------------------------------------------------
 
 
@@ -57,7 +55,7 @@ def _build_conflicts_from_verdicts(verdicts: list[ClaimVerdict]) -> list[Conflic
     """
     Превращает CONTRADICTED вердикты в ConflictRecord для единой секции конфликтов.
 
-    V8.0: Классификация ConflictType основана на структурированных приоритетах:
+    Классификация ConflictType основана на структурированных приоритетах:
       1. HIERARCHY: только если в contradiction_detail есть явные иерархические сигналы
          (отсылки на КоАП, иерархию актов, подзаконные акты vs кодекс)
          Сигнал: "коап" | "иерарх" | "подзакон" | "ппрк" | "постановление правительства"

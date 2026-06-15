@@ -1,15 +1,10 @@
-"""
-Stage 4: Fusion & Quality Validation
-Вход:  list[EvidenceChunk] (сырые)
-Выход: list[EvidenceChunk] (с флагами)
+"""S4 — дедупликация чанков и детекция конфликтов между ними.
 
-Реализация:
-  1. SHA256 дедупликация — O(n)
-  2. Cosine Similarity деdup — OpenAI embeddings, батчи по 100, порог 0.92
-  3. HIERARCHY конфликты — rank delta + domain check
-  4. TEMPORAL конфликты — law_id + article + effective_date
-  5. FACTUAL конфликты — regex числа + нормализация
-  6. ENFORCEMENT_GAP — cosine distance норма vs. практика
+Дубликаты убираем в два прохода: сначала точные по SHA256, затем близкие по
+cosine-сходству эмбеддингов (порог 0.92). Параллельно размечаем конфликты:
+HIERARCHY (разный legal_rank в одном домене), TEMPORAL (один law_id+article,
+разные даты вступления), FACTUAL (расходятся числа/даты) и ENFORCEMENT_GAP
+(норма расходится с практикой). Чанки не удаляются — только помечаются флагами.
 """
 
 from __future__ import annotations

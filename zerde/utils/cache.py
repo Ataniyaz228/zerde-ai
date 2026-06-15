@@ -42,11 +42,8 @@ def _get_db_lock() -> asyncio.Lock:
 # инвалидировать устаревшие закэшированные ответы (входит в _make_key).
 PROMPT_CACHE_VERSION = 1
 
-# ───────────────────────────────────────────────────────────────────────────
-# Fix #3: BGE-M3 Синглтон на уровне модуля
-# Все инстансы CacheManager разделяют одну модель через глобальные переменные
-# уровня модуля. Решает "Broken pipe" при параллельных subprocess.
-# ───────────────────────────────────────────────────────────────────────────
+# Модель BGE-M3 — один экземпляр на процесс: все CacheManager'ы делят её через
+# эти модульные переменные. Иначе при параллельных subprocess ловили "Broken pipe".
 _BGE_LOCK = threading.Lock()
 _BGE_MODEL: SentenceTransformer | None = None
 _BGE_DEVICE: str | None = None
@@ -475,8 +472,7 @@ class CacheManager:
         return results
 
     def _tokenize_for_bm25(self, text: str) -> list[str]:
-        """Delegates to zerde.utils.textproc.tokenize_morph (Phase 1, Step 2:
-        stemming machinery moved out of CacheManager). Kept as a method
+        """Delegates to zerde.utils.textproc.tokenize_morph. Kept as a method
         because internal callers (and S5) call self._tokenize_for_bm25(...)."""
         from zerde.utils.textproc import tokenize_morph
         return tokenize_morph(text)
@@ -988,7 +984,7 @@ class LLMCache:
 
 
 # ---------------------------------------------------------------------------
-# Dynamic Cache Healing (v9.5)
+# Dynamic Cache Healing
 # ---------------------------------------------------------------------------
 
 

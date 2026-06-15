@@ -153,7 +153,7 @@ Claim-by-claim верификация с цитатами.
 
 ---
 
-### S5.2 — Contradiction Verifier (`s5_5_verifier.py`)
+### S5.2 — Contradiction Verifier (`s5_2_verifier.py`)
 
 Детерминированная проверка вердиктов CONTRADICTED.
 

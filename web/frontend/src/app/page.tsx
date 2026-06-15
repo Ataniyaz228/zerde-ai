@@ -1,122 +1,111 @@
 "use client";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, Scale, ShieldCheck, FileText, Activity } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import s from "./Home.module.css";
 
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 14 },
   animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.55, delay, ease: "easeOut" as const },
+  transition: { duration: 0.5, delay, ease: [0.22, 1, 0.36, 1] as const },
 });
 
 export default function Home() {
   const { t } = useTranslation();
 
-  const STAGES = [
-    { label: t("step_extract_short"), pct: 100 },
-    { label: t("step_search_short"), pct: 78 },
-    { label: t("step_verify_short"), pct: 54 },
-    { label: t("step_report_short"), pct: 30 },
+  const VERDICTS = [
+    { kind: "ok", label: t("verdict_confirmed"), text: t("verdict_sample_confirmed") },
+    { kind: "err", label: t("verdict_contradicted"), text: t("verdict_sample_contradicted") },
+    { kind: "warn", label: t("verdict_unverified"), text: t("verdict_sample_unverified") },
+  ] as const;
+
+  const STATS = [
+    { value: "38", label: t("stats_codes") },
+    { value: "20 000+", label: t("stats_norms") },
+    { value: "adilet.zan.kz", label: t("stats_source") },
   ];
 
-  const FEATURES = [
-    { icon: Scale, title: t("feat_accuracy"), desc: t("feat_accuracy_desc") },
-    { icon: ShieldCheck, title: t("feat_risk"), desc: t("feat_risk_desc") },
-    { icon: FileText, title: t("feat_report"), desc: t("feat_report_desc") },
+  const STEPS = [
+    { n: "01", title: t("feat_accuracy"), desc: t("feat_accuracy_desc") },
+    { n: "02", title: t("feat_risk"), desc: t("feat_risk_desc") },
+    { n: "03", title: t("feat_report"), desc: t("feat_report_desc") },
   ];
 
   return (
     <div className={s.page}>
-      <div className={s.inner}>
-        <div className={s.grid}>
-          {/* ── Left: Hero ── */}
-          <div>
-            <motion.div {...fadeUp(0)} className={s.badge}>
-              <Activity size={12} strokeWidth={2} />
-              {t("hero_badge")}
-            </motion.div>
+      {/* ── Hero ── */}
+      <section className={s.hero}>
+        <div className={s.heroText}>
+          <motion.span {...fadeUp(0)} className={`eyebrow ${s.eyebrow}`}>
+            {t("hero_badge")}
+          </motion.span>
 
-            <motion.h1 {...fadeUp(0.08)} className={s.title}>
-              <span className={s.titleLight}>{t("hero_title_1")}<br /></span>
-              <span className={s.titleDim}>{t("hero_title_2")}</span>
-            </motion.h1>
+          <motion.h1 {...fadeUp(0.06)} className={s.title}>
+            {t("hero_title_1")}{" "}
+            <span className={s.titleAccent}>{t("hero_title_2")}</span>
+          </motion.h1>
 
-            <motion.p {...fadeUp(0.16)} className={s.sub}>
-              {t("hero_sub")}
-            </motion.p>
+          <motion.p {...fadeUp(0.12)} className={s.sub}>
+            {t("hero_sub")}
+          </motion.p>
 
-            <motion.div {...fadeUp(0.24)} className={s.actions}>
-              <Link href="/analyze" className={s.cta}>
-                {t("hero_cta")}
-                <ArrowRight size={15} strokeWidth={2} />
-              </Link>
-              <Link href="/reports" className={s.ctaSecondary}>
-                {t("hero_link")}
-              </Link>
-            </motion.div>
-          </div>
-
-          {/* ── Right: Decorative card ── */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.7, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
-            className={s.decorativeCol}
-          >
-            <div className={s.card}>
-              <div className={s.cardHeader}>
-                <div className={s.cardDots}>
-                  <div className={s.dot} /><div className={s.dot} /><div className={s.dot} />
-                </div>
-                <span className={s.cardLabel}>zerde.pipeline</span>
-              </div>
-
-              {STAGES.map((stage, i) => (
-                <div key={i} className={s.cardRow}>
-                  <div className={s.cardRowIcon}>
-                    <Activity size={12} strokeWidth={2} />
-                  </div>
-                  <div className={s.cardRowBody}>
-                    <p className={s.cardRowLabel}>{stage.label}</p>
-                    <div className={s.cardRowBar}>
-                      <motion.div
-                        className={s.cardRowFill}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${stage.pct}%` }}
-                        transition={{ duration: 1.2, delay: 0.6 + i * 0.15, ease: [0.22, 1, 0.36, 1] }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              <div className={s.cardFooter}>
-                <span className={s.cardFooterDesc}>{t("card_footer_desc")}</span>
-              </div>
-            </div>
+          <motion.div {...fadeUp(0.18)} className={s.actions}>
+            <Link href="/analyze" className={s.cta}>
+              {t("hero_cta")}
+              <ArrowRight size={16} strokeWidth={2} />
+            </Link>
+            <Link href="/reports" className={s.ctaSecondary}>
+              {t("hero_link")}
+            </Link>
           </motion.div>
         </div>
 
-        {/* ── Features row ── */}
+        {/* Образец вердиктов — показывает суть продукта вместо декоративной заглушки */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.5 }}
-          className={s.features}
+          transition={{ duration: 0.6, delay: 0.24, ease: [0.22, 1, 0.36, 1] }}
+          className={s.sample}
         >
-          {FEATURES.map((f, i) => (
-            <div key={i} className={s.feature}>
-              <div className={s.featureIconWrap}>
-                <f.icon size={18} strokeWidth={1.5} />
-              </div>
-              <h3 className={s.featureTitle}>{f.title}</h3>
-              <p className={s.featureDesc}>{f.desc}</p>
+          {VERDICTS.map((v) => (
+            <div key={v.kind} className={s.sampleRow}>
+              <span className={`${s.tag} ${s[`tag_${v.kind}`]}`}>{v.label}</span>
+              <p className={s.sampleText}>{v.text}</p>
             </div>
           ))}
         </motion.div>
-      </div>
+      </section>
+
+      {/* ── Принцип ── */}
+      <section className={s.principle}>
+        <span className="eyebrow">{t("principle_eyebrow")}</span>
+        <blockquote className={s.quote}>{t("principle_text")}</blockquote>
+      </section>
+
+      {/* ── Цифры ── */}
+      <section className={s.stats}>
+        {STATS.map((st) => (
+          <div key={st.label} className={s.stat}>
+            <span className={s.statValue}>{st.value}</span>
+            <span className={s.statLabel}>{st.label}</span>
+          </div>
+        ))}
+      </section>
+
+      {/* ── Как это работает ── */}
+      <section className={s.how}>
+        <span className="eyebrow">{t("how_eyebrow")}</span>
+        <div className={s.steps}>
+          {STEPS.map((step) => (
+            <div key={step.n} className={s.step}>
+              <span className={s.stepNum}>{step.n}</span>
+              <h3 className={s.stepTitle}>{step.title}</h3>
+              <p className={s.stepDesc}>{step.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

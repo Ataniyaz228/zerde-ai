@@ -73,7 +73,7 @@
 
 .stepIconActive {
   border-color: var(--accent);
-  background: var(--accent-muted);
+  background: var(--accent-soft);
   color: var(--accent);
   animation: pulse 1.8s ease-in-out infinite;
 }

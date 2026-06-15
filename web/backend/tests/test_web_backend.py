@@ -222,6 +222,34 @@ def test_jobs_persist_across_init_db(app_env):
     asyncio.run(_run())
 
 
+def test_reconcile_interrupted_fails_running_jobs(app_env):
+    """A restart leaves jobs 'running'; reconcile flips them to error with a
+    terminal error event so resuming clients stop spinning."""
+    from services import jobs
+
+    async def _run():
+        await jobs.init_db()
+        await jobs.create_job("zombie-1", "bill.docx", "/tmp/zombie-1.docx")
+        await jobs.set_status("zombie-1", "running")
+        await jobs.append_event("zombie-1", {"type": "stage_start", "stage": "verify"})
+        await jobs.create_job("done-1", "ok.docx", "/tmp/ok-1.docx")
+        await jobs.set_status("done-1", "completed", report_id="r.md", score=42)
+
+        n = await jobs.reconcile_interrupted()
+        assert n == 1  # only the running job
+
+        zombie = await jobs.get_job("zombie-1")
+        assert zombie["status"] == "error"
+        events = await jobs.get_events("zombie-1")
+        assert events[-1]["type"] == "error"
+
+        # Completed jobs are untouched.
+        done = await jobs.get_job("done-1")
+        assert done["status"] == "completed"
+
+    asyncio.run(_run())
+
+
 def test_translate_progress_sequence():
     """on_progress's translation: pipeline ProgressEvents -> frozen WS shapes.
 

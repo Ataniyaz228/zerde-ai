@@ -90,26 +90,80 @@
   overflow: hidden;
 }
 
-.sampleRow {
+.sampleHead {
   display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 1.1rem 1.25rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.sampleCaption {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.sampleDots { display: flex; gap: 6px; }
+.sampleDots i { width: 8px; height: 8px; border-radius: 50%; display: block; }
+.dotOk   { background: var(--status-ok); }
+.dotErr  { background: var(--status-err); }
+.dotWarn { background: var(--status-warn); }
+
+.sampleRow {
+  position: relative;
+  padding: 1.05rem 1.25rem 1.05rem 1.5rem;
+  transition: background var(--duration);
 }
 .sampleRow + .sampleRow { border-top: 1px solid var(--border-subtle); }
+.sampleRow:hover { background: var(--bg-elevated); }
+
+/* Цветной рейл-индикатор слева — статус виден ещё до чтения */
+.sampleRow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+}
+.row_ok::before   { background: var(--status-ok); }
+.row_err::before  { background: var(--status-err); }
+.row_warn::before { background: var(--status-warn); }
+
+.sampleBody { display: flex; flex-direction: column; gap: 7px; }
+
+.sampleTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 
 .tag {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  padding: 4px 9px;
+  padding: 4px 10px;
   border-radius: 999px;
   white-space: nowrap;
 }
 .tag_ok   { color: var(--status-ok);   background: var(--status-ok-bg); }
 .tag_err  { color: var(--status-err);  background: var(--status-err-bg); }
 .tag_warn { color: var(--status-warn); background: var(--status-warn-bg); }
+
+.sampleSrc {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .sampleText {
   font-size: 13.5px;

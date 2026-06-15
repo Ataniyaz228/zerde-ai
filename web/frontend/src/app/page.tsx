@@ -15,9 +15,9 @@ export default function Home() {
   const { t } = useTranslation();
 
   const VERDICTS = [
-    { kind: "ok", label: t("verdict_confirmed"), text: t("verdict_sample_confirmed") },
-    { kind: "err", label: t("verdict_contradicted"), text: t("verdict_sample_contradicted") },
-    { kind: "warn", label: t("verdict_unverified"), text: t("verdict_sample_unverified") },
+    { kind: "ok", label: t("verdict_confirmed"), text: t("verdict_sample_confirmed"), src: "ст. 14 · adilet.zan.kz" },
+    { kind: "err", label: t("verdict_contradicted"), text: t("verdict_sample_contradicted"), src: "ст. 9 · adilet.zan.kz" },
+    { kind: "warn", label: t("verdict_unverified"), text: t("verdict_sample_unverified"), src: t("sample_no_source") },
   ] as const;
 
   const STATS = [
@@ -68,10 +68,24 @@ export default function Home() {
           transition={{ duration: 0.6, delay: 0.24, ease: [0.22, 1, 0.36, 1] }}
           className={s.sample}
         >
+          <div className={s.sampleHead}>
+            <span className={s.sampleCaption}>{t("sample_caption")}</span>
+            <span className={s.sampleDots} aria-hidden>
+              <i className={s.dotOk} />
+              <i className={s.dotErr} />
+              <i className={s.dotWarn} />
+            </span>
+          </div>
+
           {VERDICTS.map((v) => (
-            <div key={v.kind} className={s.sampleRow}>
-              <span className={`${s.tag} ${s[`tag_${v.kind}`]}`}>{v.label}</span>
-              <p className={s.sampleText}>{v.text}</p>
+            <div key={v.kind} className={`${s.sampleRow} ${s[`row_${v.kind}`]}`}>
+              <div className={s.sampleBody}>
+                <div className={s.sampleTop}>
+                  <span className={`${s.tag} ${s[`tag_${v.kind}`]}`}>{v.label}</span>
+                  <span className={s.sampleSrc}>{v.src}</span>
+                </div>
+                <p className={s.sampleText}>{v.text}</p>
+              </div>
             </div>
           ))}
         </motion.div>

@@ -6,7 +6,7 @@ import { ArrowLeft, Shield, ShieldAlert, AlertTriangle } from "lucide-react";
 import ReportViewer from "@/components/ReportViewer";
 import VerdictBadges from "@/components/VerdictBadges";
 import { useTranslation } from "@/lib/i18n";
-import { API_URL } from "@/lib/api";
+import { API_URL, apiFetch } from "@/lib/api";
 import s from "./ReportDetail.module.css";
 
 interface ReportData {
@@ -41,7 +41,7 @@ export default function ReportDetailPage({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/reports/${id}`)
+    apiFetch(`${API_URL}/api/reports/${id}`)
       .then((r) => r.json())
       .then((data) => { setReport(data); setLoading(false); })
       .catch(() => setLoading(false));

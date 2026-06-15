@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { FileText, Plus, ChevronRight, Search, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
-import { API_URL } from "@/lib/api";
+import { API_URL, apiFetch } from "@/lib/api";
 import VerdictBadges from "@/components/VerdictBadges";
 import s from "./Reports.module.css";
 
@@ -47,7 +47,7 @@ export default function ReportsPage() {
   const [filter, setFilter] = useState<FilterKey>("all");
 
   useEffect(() => {
-    fetch(`${API_URL}/api/reports`)
+    apiFetch(`${API_URL}/api/reports`)
       .then((r) => r.json())
       .then((data) => { setReports(data); setLoading(false); })
       .catch(() => setLoading(false));

@@ -250,6 +250,57 @@ def test_reconcile_interrupted_fails_running_jobs(app_env):
     asyncio.run(_run())
 
 
+def test_api_key_required_when_set(app_env, monkeypatch):
+    """С заданным ZERDE_API_KEY запрос без верного X-API-Key получает 401."""
+    from config import settings
+    monkeypatch.setattr(settings, "api_key", "secret-key")
+
+    app = _get_app()
+    with TestClient(app) as client:
+        files = {"file": ("bill.txt", b"content", "text/plain")}
+        assert client.post("/api/analyze", files=files).status_code == 401
+        bad = client.post("/api/analyze", files=files, headers={"X-API-Key": "wrong"})
+        assert bad.status_code == 401
+        ok = client.post("/api/analyze", files=files, headers={"X-API-Key": "secret-key"})
+        assert ok.status_code == 200
+
+
+def test_rate_limit_blocks_excess(app_env, monkeypatch):
+    """Сверх лимита запусков с одного клиента — 429."""
+    from config import settings
+    monkeypatch.setattr(settings, "analyze_rate_limit", 2)
+    monkeypatch.setattr(settings, "analyze_rate_window_s", 3600)
+
+    app = _get_app()
+    with TestClient(app) as client:
+        files = {"file": ("bill.txt", b"content", "text/plain")}
+        assert client.post("/api/analyze", files=files).status_code == 200
+        assert client.post("/api/analyze", files=files).status_code == 200
+        blocked = client.post("/api/analyze", files=files)
+        assert blocked.status_code == 429
+        assert "Retry-After" in blocked.headers
+
+
+def test_resume_queued_lists_pending_and_skips_running(app_env):
+    """list_queued видит непустартовавшие задачи; reconcile их не трогает."""
+    from services import jobs
+
+    async def _run():
+        await jobs.init_db()
+        await jobs.create_job("pending-1", "p.txt", "/tmp/p.txt")
+        await jobs.create_job("zombie-1", "z.txt", "/tmp/z.txt")
+        await jobs.set_status("zombie-1", "running")
+
+        n = await jobs.reconcile_interrupted()
+        assert n == 1  # только running
+        assert (await jobs.get_job("pending-1"))["status"] == "queued"
+
+        queued = await jobs.list_queued()
+        assert [j["analysis_id"] for j in queued] == ["pending-1"]
+
+    asyncio.run(_run())
+
+
 def test_translate_progress_sequence():
     """on_progress's translation: pipeline ProgressEvents -> frozen WS shapes.
 

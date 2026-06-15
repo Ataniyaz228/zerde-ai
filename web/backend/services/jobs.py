@@ -152,18 +152,19 @@ async def get_job(analysis_id: str, db_path: Path | str | None = None) -> dict |
 
 
 def _reconcile_interrupted_sync(db_path: Path | str) -> int:
-    """Fail any job left 'running'/'queued' by a crash or restart.
+    """Помечает ошибкой задачи, зависшие в 'running' после краша/рестарта.
 
-    A single-loop backend executes the pipeline in-process, so a restart kills
-    the running task without ever emitting a terminal event. Such a job stays
-    'running' forever and the frontend's resume logic re-attaches to it,
-    showing an endless spinner. On startup we flip these to 'error' and append
-    a terminal error event so any (re)connecting client stops waiting.
+    Single-loop бэкенд выполняет пайплайн в процессе, поэтому рестарт убивает
+    запущенную задачу без терминального события — она навсегда остаётся
+    'running', а фронтенд переподключается к ней и крутит спиннер вечно. На
+    старте флипаем такие в 'error' с терминальным событием, чтобы клиент
+    перестал ждать. Статус 'queued' здесь НЕ трогаем: эти задачи ещё не
+    стартовали, их дозапускает resume_queued.
     """
     conn = _connect(db_path)
     try:
         rows = conn.execute(
-            "SELECT analysis_id, events_json FROM jobs WHERE status IN ('running', 'queued')"
+            "SELECT analysis_id, events_json FROM jobs WHERE status = 'running'"
         ).fetchall()
         now = _now()
         msg = "Анализ прерван (сервер был перезапущен). Запустите анализ заново."
@@ -184,6 +185,23 @@ def _reconcile_interrupted_sync(db_path: Path | str) -> int:
 async def reconcile_interrupted(db_path: Path | str | None = None) -> int:
     path = db_path if db_path is not None else settings.jobs_db_path
     return await asyncio.to_thread(_reconcile_interrupted_sync, path)
+
+
+def _list_queued_sync(db_path: Path | str) -> list[dict]:
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT analysis_id, stored_path FROM jobs WHERE status = 'queued' ORDER BY created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+async def list_queued(db_path: Path | str | None = None) -> list[dict]:
+    """Задачи, принятые до рестарта, но ещё не стартовавшие — их можно дозапустить."""
+    path = db_path if db_path is not None else settings.jobs_db_path
+    return await asyncio.to_thread(_list_queued_sync, path)
 
 
 def _get_events_sync(db_path: Path | str, analysis_id: str) -> list[dict]:

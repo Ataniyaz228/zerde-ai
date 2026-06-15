@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 import weakref
@@ -38,7 +39,23 @@ logger = logging.getLogger(__name__)
 # BadRequestError (400, напр. json_object не поддерживается моделью) сюда
 # НЕ входит — повтор того же запроса даст ту же ошибку; для него уже есть
 # отдельный fallback-без-json_mode ниже по коду.
-_TRANSIENT_LLM_ERRORS = (APITimeoutError, APIConnectionError, RateLimitError, InternalServerError)
+# asyncio.TimeoutError — наш wall-clock потолок (см. _LLM_OVERALL_TIMEOUT_S):
+# зависший/«капающий» upstream не ловится httpx read-таймаутом (он между байтами),
+# поэтому оборачиваем create() в asyncio.wait_for и ретраим его таймаут как транзиент.
+_TRANSIENT_LLM_ERRORS = (
+    APITimeoutError,
+    APIConnectionError,
+    RateLimitError,
+    InternalServerError,
+    asyncio.TimeoutError,
+)
+
+# Жёсткий потолок на ОДИН LLM-вызов (весь запрос целиком, не между байтами).
+# httpx read-таймаут (300с) ловит только паузы между чанками — провайдер,
+# который медленно «капает» байтами, держит соединение и слот семафора(5)
+# бесконечно, вешая весь S5. Этот wall-clock cap гарантирует освобождение
+# семафора за конечное время. Переопределяется ZERDE_LLM_OVERALL_TIMEOUT_S.
+_LLM_OVERALL_TIMEOUT_S = float(os.getenv("ZERDE_LLM_OVERALL_TIMEOUT_S", "240"))
 
 
 # См. комментарий в zerde/utils/cache.py: per-loop регистрация, т.к. backend
@@ -328,7 +345,13 @@ async def cached_llm_call(
                 async def _create_with_retry() -> object:
                     nonlocal attempts
                     attempts += 1
-                    return await client.chat.completions.create(**kwargs)
+                    # wait_for отменяет висящий create() по wall-clock и
+                    # освобождает слот семафора; asyncio.TimeoutError → транзиент,
+                    # tenacity повторит (до 3), затем fail-closed в run_auditor.
+                    return await asyncio.wait_for(
+                        client.chat.completions.create(**kwargs),
+                        timeout=_LLM_OVERALL_TIMEOUT_S,
+                    )
 
                 response = await _create_with_retry()
                 # Защита от 200-ответа без choices (transient upstream 429 через

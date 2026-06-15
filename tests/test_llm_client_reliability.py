@@ -17,6 +17,7 @@ cached_llm_call(client=..., model=..., messages=..., settings=...) — все
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -217,6 +218,39 @@ async def test_retry_exhausts_and_reraises(settings, monkeypatch):
     assert put_called["flag"] is False
     # Исключение распространилось ДО кода записи в манифест — записи нет.
     assert get_manifest() == []
+
+
+# ---------------------------------------------------------------------------
+# 3b. A stalled upstream (create() never returns) is bounded by the wall-clock
+#     timeout, not hung forever — the bug that wedged S5. asyncio.wait_for
+#     cancels it; asyncio.TimeoutError is transient → retried 3× → re-raised.
+# ---------------------------------------------------------------------------
+
+async def test_stalled_create_is_bounded_by_wall_clock(settings, monkeypatch):
+    # Tiny overall cap so the test is instant.
+    monkeypatch.setattr("zerde.utils.llm_client._LLM_OVERALL_TIMEOUT_S", 0.05)
+
+    client = make_llm_client(settings)
+    calls = {"n": 0}
+
+    async def _create(**_kwargs):
+        calls["n"] += 1
+        # Hang forever (independent of asyncio.sleep, which the autouse fixture
+        # stubs out) — simulates a provider trickling/holding the connection.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(client.chat.completions, "create", _create)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await cached_llm_call(
+            client=client,
+            model="test-model/v1",
+            messages=_MESSAGES,
+            settings=settings,
+        )
+
+    # Retried up to stop_after_attempt(3) before fail-closed propagation.
+    assert calls["n"] == 3
 
 
 # ---------------------------------------------------------------------------

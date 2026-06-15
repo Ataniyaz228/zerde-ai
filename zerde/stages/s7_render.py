@@ -72,6 +72,29 @@ def _is_authoritative(c: EvidenceChunk) -> bool:
     return c.legal_rank != LegalRank.MEDIA_UNKNOWN and "adilet.zan.kz" in (c.source_url or "")
 
 
+def _law_name(chunk: EvidenceChunk) -> str:
+    """Человеческое имя закона из реестра вместо синтезированного «НПА {код}».
+
+    Корпус «запекает» source_title как «НПА K2600000000_ | Ст. 71» при ингесте;
+    реестр (law_metadata.title_ru) знает «Конституция Республики Казахстан».
+    Для веб-источников (нет law_id в реестре) оставляем исходный заголовок.
+    """
+    if chunk.law_id:
+        title = get_registry().get_title(chunk.law_id)
+        if title and title != chunk.law_id:
+            return title
+    return chunk.law_title or chunk.source_title or "Источник"
+
+
+def _source_display_title(chunk: EvidenceChunk) -> str:
+    """Подпись ссылки: «<имя закона> | Ст. N» для НПА, исходный title для веба."""
+    if chunk.law_id:
+        title = get_registry().get_title(chunk.law_id)
+        if title and title != chunk.law_id:
+            return f"{title} | Ст. {chunk.article}" if chunk.article else title
+    return chunk.source_title
+
+
 def _source_link_url(chunk: EvidenceChunk) -> str:
     """Кликабельный URL источника.
 
@@ -405,8 +428,7 @@ def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
         for law_key, law_chunks in law_groups.items():
             # Берём заголовок из первого chunk'а группы
             representative = law_chunks[0]
-            law_title = representative.law_title or representative.source_title
-            lines.append(f"- **{law_title}**")
+            lines.append(f"- **{_law_name(representative)}**")
             # Подпункты — статьи/ссылки (дедуп: один и тот же (URL, статья) не повторяем —
             # у одной статьи бывает несколько чанков: рус/каз/сегменты).
             seen_refs: set[tuple[str, str]] = set()
@@ -418,7 +440,7 @@ def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
                 conflict_flag = " ⚠️ КОНФЛИКТ" if c.is_conflict else ""
                 art_ref = f" (ст. {c.article})" if c.article else ""
                 lines.append(
-                    f"  - [{c.source_title}]({_source_link_url(c)}){art_ref}{conflict_flag}"
+                    f"  - [{_source_display_title(c)}]({_source_link_url(c)}){art_ref}{conflict_flag}"
                 )
 
     # Informational sources in a separate subsection (not part of normative hierarchy)
@@ -554,7 +576,7 @@ def _render_facts_and_conclusions(
                     seen_fact_refs.add(ref_key)
                     art_ref = f" (ст. {chunk.article})" if chunk.article else ""
                     real_source_lines.append(
-                        f"- [{chunk.source_title}]({_source_link_url(chunk)}){art_ref}"
+                        f"- [{_source_display_title(chunk)}]({_source_link_url(chunk)}){art_ref}"
                     )
                 # Не нашли — просто пропускаем (не засоряем отчёт)
 

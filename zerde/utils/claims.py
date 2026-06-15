@@ -1,6 +1,5 @@
 """
-Shared claim-introspection helpers, extracted from zerde/stages/s6_auditor.py
-(Phase 1, Step 2). Pure functions over DocumentClaim used by S6's audit and
+Shared claim-introspection helpers, extracted from zerde/stages/s6_auditor.py. Pure functions over DocumentClaim used by S6's audit and
 by eval/grounding scripts.
 """
 
@@ -78,7 +77,7 @@ def are_law_ids_synonymous(law_a: str, law_b: str) -> bool:
 
 
 def extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
-    # V9.7: если S2.5 определил target_law_ids (поправочный закон с явной
+    # если S2.5 определил target_law_ids (поправочный закон с явной
     # привязкой к закону-мишени), считаем это authoritative и игнорируем
     # law_id'ы из entities/text/regex. Иначе alias-карты подмешивают чужие
     # законы (напр. "акт амнистии"/"исполнительном производстве" -> 261-IV
@@ -121,9 +120,6 @@ def extract_referenced_law_ids(claim: DocumentClaim) -> list[str]:
     for m in matches:
         clean_m = m.upper().replace(" ", "").replace("І", "I").replace("і", "i")
         law_ids.append(clean_m)
-
-    # Fallback на target_law_ids убран в V9.7 — strict mode выполняется в
-    # начале функции (см. блок V9.7 выше).
 
     return list(set(law_ids))
 

@@ -1,13 +1,8 @@
-"""
-Stage 2: LLM Planner
-Вход:  DocumentState
-Выход: QueryPlan
+"""S2 — LLM строит QueryPlan: какие запросы слать в adilet и web.
 
-Особенности:
-  - temperature=0, response_format=json_object
-  - Кэшируемый вызов через cached_llm_call с ручной инвалидацией кэша
-  - Schema validation с fallback на пустой план
-  - Автоматическое разбиение длинных документов
+Вызов детерминированный (temperature=0, JSON-режим) и кэшируется. Длинные
+документы режутся на части. Если ответ не проходит схему — отдаём пустой план,
+а не падаем: пустой план просто означает «нет внешних запросов».
 """
 
 from __future__ import annotations

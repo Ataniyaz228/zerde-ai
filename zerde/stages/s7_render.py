@@ -1,17 +1,11 @@
-"""
-Stage 7: Renderer (Markdown "Lawyer" Format)
-Вход:  AnalysisJSON (валидированный)
-Выход: Markdown-отчёт
+"""S7 — сборка финального Markdown-отчёта из AnalysisJSON.
 
-Структура отчёта:
-  1. Executive Summary
-  2. Нормативная база (источники по рангу)
-  3. Выявленные конфликты
-  4. Аналитические выводы (факты + выводы)
-  5. Пробелы регулирования
-  6. Нормативные оценки (pros/cons, affected parties)
-  7. Рекомендации
-  8. Reliability Score
+Отчёт идёт сверху вниз: краткая сводка, целостность грунтования, нормативная база
+(источники по рангу), конфликты и коллизии, аналитические выводы, пробелы
+регулирования, нормативные оценки, рекомендации и итоговый reliability score.
+
+Чистый рендер: метрику здесь не считаем и вердикты не меняем. Имена и ссылки
+источников берём из реестра, внутренние метки чанков (S1/S5/…) вычищаем из прозы.
 """
 
 from __future__ import annotations
@@ -189,7 +183,7 @@ def _source_link_url(chunk: EvidenceChunk) -> str:
 
 logger = logging.getLogger(__name__)
 
-# Иконки статусов для Markdown (V7.0)
+# Иконки статусов для Markdown
 _STATUS_ICONS = {
     ValidationStatus.HIGH: "🟢",
     ValidationStatus.MEDIUM: "🟡",
@@ -197,7 +191,7 @@ _STATUS_ICONS = {
     ValidationStatus.UNVERIFIED: "⚫",
 }
 
-# V7.0: Умный выбор иконки факта с учётом вердикта
+# Умный выбор иконки факта с учётом вердикта
 _RISK_ICONS = {
     "CONTRADICTED": "🔴",
     "UNVERIFIED_RISK": "🟠",
@@ -207,7 +201,7 @@ _RISK_ICONS = {
 
 
 def _fact_icon(fact: Fact, verdict_map: dict[str, ClaimVerdict]) -> str:
-    """V7.0: Определяет иконку факта с учётом вердикта (override BM25-цвета)."""
+    """Определяет иконку факта с учётом вердикта (override BM25-цвета)."""
     import re
     claim_id = fact.claim_id
     if not claim_id and fact.claim:
@@ -346,7 +340,7 @@ def _render_executive_summary(analysis: AnalysisJSON) -> str:
     structural_cnt = len(analysis.structural_claims)
     total = confirmed + contradicted + unverified
 
-    # FIX 7: Compact reliability label for summary (full bar in footer)
+    # Compact reliability label for summary (full bar in footer)
     score = analysis.overall_reliability
     if score is not None:
         percent = int(score * 100)
@@ -378,7 +372,7 @@ def _render_executive_summary(analysis: AnalysisJSON) -> str:
 
 
 def _render_structural_checklist(analysis: AnalysisJSON) -> str:
-    """V7.0: Компактный чеклист структурных claims с конкретными статьями."""
+    """Компактный чеклист структурных claims с конкретными статьями."""
     if not analysis.structural_claims:
         return ""
 
@@ -482,11 +476,11 @@ def _render_policy_analysis(policy: dict | None) -> str:
 
 
 def _render_normative_base(active_chunks: list[EvidenceChunk]) -> str:
-    """V7.0: Таблица источников, агрегированная по law_id внутри ранга."""
+    """Таблица источников, агрегированная по law_id внутри ранга."""
     if not active_chunks:
         return "## 📚 Нормативная База\n\n*Источники не найдены.*"
 
-    # FIX 6: Separate authoritative sources from informational ones
+    # Separate authoritative sources from informational ones
     authoritative = [c for c in active_chunks if _is_authoritative(c)]
     informational = [c for c in active_chunks if not _is_authoritative(c)]
 
@@ -534,8 +528,8 @@ def _render_conflicts(
     conflict_chunks: list[EvidenceChunk],
     bridge_conflicts: list[ConflictRecord],
 ) -> str:
-    """V7.0: Единая секция конфликтов: S4 (chunks) + S6 (bridge)."""
-    # FIX 5: Filter out non-authoritative sources from conflict list
+    """Единая секция конфликтов: S4 (chunks) + S6 (bridge)."""
+    # Filter out non-authoritative sources from conflict list
     # MEDIA_UNKNOWN (rank 11) sources like Wikipedia should not appear as legal conflicts
     authoritative_conflicts = [c for c in conflict_chunks if _is_authoritative(c)]
     total = len(authoritative_conflicts) + len(bridge_conflicts)
@@ -557,7 +551,7 @@ def _render_conflicts(
             lines.append(f"- Тип: {conflict_str} | Ранг: {rank_label}")
             if chunk.conflict_with_ids:
                 lines.append(f"- Конфликтует с: {', '.join(c[:12] for c in chunk.conflict_with_ids)}")
-            # FIX 5: Add content snippet so users can see what actually conflicts
+            # Add content snippet so users can see what actually conflicts
             if chunk.content:
                 snippet = chunk.content[:200].replace("\n", " ").strip()
                 if len(chunk.content) > 200:
@@ -616,7 +610,7 @@ def _render_facts_and_conclusions(
                 # Fallback на дефолтный пустой вердикт, если связь не найдена
                 verdict = ClaimVerdict(claim_id=fact.claim_id or "", status=VerdictStatus.UNVERIFIED, source_ids=fact.source_ids)
 
-            # V7.0: Умная иконка с учётом вердикта (override BM25-цвета)
+            # Умная иконка с учётом вердикта (override BM25-цвета)
             icon = _fact_icon(fact, verdict_map)
             score_str = f" (BM25: {fact.bm25_score:.2f})" if fact.bm25_score is not None else ""
             lines.append(f"#### {icon} `{fact.fact_id}`{score_str}")
@@ -629,7 +623,7 @@ def _render_facts_and_conclusions(
                 lines.append("> [!NOTE]")
                 lines.append(f"> **[ПОДТВЕРЖДЕНО]** {claim_txt}\n")
             elif verdict.status == VerdictStatus.UNVERIFIED and verdict.confidence in ("HIGH", "MEDIUM"):
-                # V7.0: Risk flag для важных непроверенных claims
+                # Risk flag для важных непроверенных claims
                 lines.append("> [!CAUTION]")
                 lines.append(f"> **[⚠️ РИСК РЕТРИВАЛА]** {claim_txt}\n")
                 lines.append("> *Система не смогла найти подтверждающие источники. Требуется ручная верификация.*\n")

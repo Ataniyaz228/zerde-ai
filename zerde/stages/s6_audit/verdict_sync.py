@@ -1,8 +1,6 @@
 """
 Post-fact-audit verdict synchronization: CONTRADICTED override + tiered
 UNVERIFIED<->CONFIRMED sync based on fact validation_status/bm25_score.
-
-Moved verbatim from zerde/stages/s6_auditor.py (Phase 1, Step 3).
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _sync_verdicts_with_facts(analysis: AnalysisJSON) -> None:
     """
-    V7.0: Override validation_status для CONTRADICTED verdicts.
+    Override validation_status для CONTRADICTED verdicts.
     Если вердикт CONTRADICTED — статус всегда LOW (красный), независимо от BM25.
     UNVERIFIED вердикты НЕ override'ятся в LOW — они остаются UNVERIFIED.
 

@@ -125,7 +125,7 @@ zerde/
 │   │   ├── s4_fusion.py       # Дедупликация и конфликты
 │   │   ├── s5_analyst.py      # LLM-аудитор
 │   │   ├── s5_5_analyst.py    # Policy analyst
-│   │   ├── s5_5_verifier.py   # Верификатор противоречий
+│   │   ├── s5_2_verifier.py   # Верификатор противоречий
 │   │   ├── s6_auditor.py      # BM25 детерминированный аудит
 │   │   └── s7_render.py       # Рендеринг Markdown-отчёта
 │   └── utils/

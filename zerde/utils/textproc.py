@@ -88,8 +88,10 @@ _STOP_WORDS = frozenset([
 
 def tokenize_simple(text: str) -> list[str]:
     """
-    Токенизация для S6 BM25: lowercase + удаление пунктуации + стоп-слова.
-    No stemming. Moved verbatim from zerde.stages.s6_auditor._tokenize.
+    Токенизация для BM25 в S6: lowercase + удаление пунктуации + стоп-слова.
+
+    Без стемминга — пороги S6 (0.25/0.12/0.20) откалиброваны именно под этот
+    токенайзер, поэтому не объединять с морфологическим tokenize_morph ниже.
     """
     text = text.lower()
     # Удаляем пунктуацию (кроме дефиса в словах)
@@ -165,10 +167,8 @@ def _stem_word(w: str) -> str:
 
 def tokenize_morph(text: str) -> list[str]:
     """
-    Токенизация для cache.py BM25 (S5 retrieval): lowercase + пунктуация +
-    юридические стоп-слова + pymorphy3-стемминг (с fallback на ручные
-    окончания). Moved verbatim from
-    zerde.utils.cache.CacheManager._tokenize_for_bm25.
+    Токенизация для BM25 в cache.py (S5 retrieval): lowercase + чистка пунктуации
+    + юридические стоп-слова + pymorphy3-стемминг (с fallback на ручные окончания).
     """
     text_lower = text.lower()
     # Удаляем пунктуацию (кроме дефиса в словах)

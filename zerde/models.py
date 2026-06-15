@@ -212,17 +212,17 @@ class DocumentClaim(BaseModel):
         description="Точный статус (CONFIRMED/CONTRADICTED) для детерминированных проверок",
     )
 
-    # V7.0: Структурные claims ("Статья N присутствует") — не идут в Auditor
+    # Структурные claims ("Статья N присутствует") — не идут в Auditor
     is_structural: bool = Field(
         default=False,
         description="True если claim не несёт аналитической ценности (только структура)",
     )
-    # V7.0: Дедупликация — храним альтернативные цитаты одного и того же claim
+    # Дедупликация — храним альтернативные цитаты одного и того же claim
     quote_variants: list[str] = Field(
         default_factory=list,
         description="Альтернативные цитаты из документа (при дедупликации)",
     )
-    # V9.6: Законы, которые изменяет/дополняет данный документ (поправочный акт).
+    # Законы, которые изменяет/дополняет данный документ (поправочный акт).
     # Используется S6 для привязки claim → корпус при отсутствии явной ссылки на закон.
     target_law_ids: list[str] = Field(
         default_factory=list,
@@ -405,7 +405,7 @@ class AffectedParty(BaseModel):
 
 
 class ConflictRecord(BaseModel):
-    """V7.0: Bridge-конфликт из Auditor (S5/S6) → Renderer (S7).
+    """Bridge-конфликт из Auditor (S5/S6) → Renderer (S7).
 
     Любой вердикт CONTRADICTED порождает ConflictRecord для единой
     секции 'Выявленные конфликты и коллизии' в отчёте.
@@ -422,7 +422,7 @@ class ConflictRecord(BaseModel):
 
 
 class AnalysisStats(BaseModel):
-    """Иммутабельное агрегированное состояние статистики аудита (v9.4)."""
+    """Иммутабельное агрегированное состояние статистики аудита."""
 
     n_total: int
     n_confirmed: int
@@ -487,7 +487,7 @@ class AnalysisJSON(BaseModel):
         default=None,
         ge=0.0,
         le=1.0,
-        description="Штрафная модель надёжности (V7.0)",
+        description="Штрафная модель надёжности",
     )
 
     # Заполняется Claim Verifier (Stage 2.5 + Auditor v2)
@@ -496,16 +496,16 @@ class AnalysisJSON(BaseModel):
         description="Вердикты по каждому утверждению документа",
     )
 
-    # V7.0: Структурные claims (из Stage 2.6) — для рендеринга чеклиста
+    # Структурные claims (из Stage 2.6) — для рендеринга чеклиста
     structural_claims: list[DocumentClaim] = Field(default_factory=list)
 
-    # V7.0: Bridge-конфликты из S6 — для единой секции конфликтов
+    # Bridge-конфликты из S6 — для единой секции конфликтов
     conflicts: list[ConflictRecord] = Field(
         default_factory=list,
         description="Конфликты, выявленные Auditor (S5/S6), для рендеринга",
     )
 
-    # V9.4: Иммутабельное состояние статистики
+    # Иммутабельное состояние статистики
     stats: AnalysisStats | None = None
 
 

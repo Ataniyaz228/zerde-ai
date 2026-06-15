@@ -1,8 +1,6 @@
 """
 Source-id resolution, topology/cross-domain checks, source-domain filtering
 and the "UNLINKED -> CONFIRMED" downgrade loophole closure.
-
-Moved verbatim from zerde/stages/s6_auditor.py (Phase 1, Step 3).
 """
 
 from __future__ import annotations
@@ -77,7 +75,7 @@ def _check_topology(
 
     # Strict Cross-Domain Check: Предотвращает ложное подтверждение статей разных доменов
     text_lower = (fact.claim + " " + (claim.claim_text if claim else "")).lower()
-    # V9.6: Точная проверка КоАП — только по аббревиатуре или точной фразе,
+    # Точная проверка КоАП — только по аббревиатуре или точной фразе,
     # не по слову "административ" (слишком широко: есть в АППК, КоАП, приказах МВД и т.д.)
     is_koap_claim = (
         "коап" in text_lower

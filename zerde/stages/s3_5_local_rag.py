@@ -78,7 +78,7 @@ async def inject_local_rag(
         if law_id_to_articles:
             logger.info(f"[Pipeline/S3.5] Прямой RAG-запрос: {law_id_to_articles}")
 
-            # ── Шаг A: Прямой SQL по метаданным (гарантированное попадание) ──
+            # Шаг A: точный SQL по метаданным — гарантированное попадание.
             injected = 0
             for lid, arts in law_id_to_articles.items():
                 if arts:
@@ -99,8 +99,7 @@ async def inject_local_rag(
                             existing_chunk_ids.add(chunk.chunk_id)
                             injected += 1
 
-            # ── Шаг B: Дополнительный семантический поиск (search_local) ──
-            # Ловит чанки без точных метаданных, но семантически релевантные
+            # Шаг B: семантический поиск — добирает релевантные чанки без точных метаданных.
             rag_tasks = [
                 rag_cache.search_local(
                     query_text=aq.query_text,
@@ -134,7 +133,7 @@ def inject_claim_driven(
     cache: CacheManager | None = None,
 ) -> list[EvidenceChunk]:
     """
-    Stage 3.6: Claim-driven Injection (v9.6).
+    Stage 3.6: Claim-driven Injection.
 
     Planner (S2) не видит будущих claims, поэтому S3.5 пропускает статьи,
     упоминаемые ТОЛЬКО в S2.5 claim extractor. Здесь догружаем chunks по

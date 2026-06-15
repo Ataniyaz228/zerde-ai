@@ -1,7 +1,5 @@
 """
 Stage 6: The Auditor — orchestrator.
-
-Moved verbatim from zerde/stages/s6_auditor.py:audit_analysis (Phase 1, Step 3).
 """
 
 from __future__ import annotations
@@ -94,7 +92,7 @@ def audit_analysis(
         try:
             claim = claim_map.get(fact.claim_id) if (fact.claim_id and fact.claim_id in claim_map) else None
 
-            # --- METADATA-FIRST SEARCH (v9.4 Step 1) ---
+            # --- METADATA-FIRST SEARCH ---
             # Совпадение (law_id, article) — это привязка к ПЕРВОИСТОЧНИКУ, НЕ
             # доказательство, что текст статьи подтверждает СУТЬ claim. Раньше тут
             # жёстко ставилось bm25=1.0 + HIGH, и sync-блок ниже апгрейдил
@@ -192,7 +190,7 @@ def audit_analysis(
     # Audit выводов
     _audit_conclusions(analysis, corpus_index)
 
-    # V9.4: Calibrated Legal Confidence Metric & Statistics Aggregator
+    # Calibrated Legal Confidence Metric & Statistics Aggregator
     if analysis.verdicts:
         early_return = _compute_reliability_and_stats(analysis, corpus_index)
         if early_return:
@@ -205,12 +203,12 @@ def audit_analysis(
     for fact in analysis.facts:
         status_counts[fact.validation_status] += 1
 
-    # V7.0: Conflicts Bridge — превращаем CONTRADICTED вердикты в ConflictRecord
+    # Conflicts Bridge — превращаем CONTRADICTED вердикты в ConflictRecord
     # для единой секции "Выявленные конфликты и коллизии" в отчёте
     analysis.conflicts = _build_conflicts_from_verdicts(analysis.verdicts)
     logger.info(f"[S6/Conflicts] Bridge created {len(analysis.conflicts)} conflict records")
 
-    # C6 Fix: reliability может быть 0.0, проверяем на is not None
+    # reliability может быть 0.0, проверяем на is not None
     logger.info(
         f"[S6] Done. HIGH={status_counts[ValidationStatus.HIGH]} "
         f"MEDIUM={status_counts[ValidationStatus.MEDIUM]} "

@@ -1,7 +1,8 @@
-"""
-Stage 3: Data Gathering Agents
-Вход:  QueryPlan
-Выход: list[EvidenceChunk]
+"""S3 — сбор доказательств по QueryPlan: статьи с adilet.zan.kz + результаты web-поиска.
+
+Adilet парсим из HTML (тег `<b>Статья N. …</b>`) с TLS-верификацией off — его
+сертификат регулярно не проходит проверку. Web идёт через выбранный провайдер
+(DuckDuckGo по умолчанию). Каждый чанк размечается legal_rank и web_tier.
 """
 
 from __future__ import annotations

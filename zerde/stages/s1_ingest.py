@@ -1,14 +1,9 @@
-"""
-Stage 1: Document Ingestion
-Вход:  путь к файлу (PDF, DOCX, TXT)
-Выход: DocumentState
+"""S1 — извлечение текста из входного файла в DocumentState.
 
-Поддержка:
-  - PDF: pymupdf text layer → OCR fallback если текст < 100 символов
-  - DOCX: python-docx (параграфы + таблицы)
-  - TXT: chardet автодетект кодировки
-  - KZ Latin → кириллица транслитерация
-  - Язык: langdetect
+PDF читаем через pymupdf; если текстовый слой почти пустой (< 100 символов,
+скан) — откатываемся на Tesseract OCR. DOCX берём через python-docx (параграфы
+и таблицы), TXT — с автодетектом кодировки. Дальше нормализуем: казахскую
+латиницу транслитерируем в кириллицу, язык определяем через langdetect.
 """
 
 from __future__ import annotations

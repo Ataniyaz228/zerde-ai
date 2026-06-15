@@ -13,10 +13,10 @@ guard понижает заведомо-ложные случаи: фраза т
 import pytest
 
 from zerde.models import AnalysisJSON, ClaimVerdict, VerdictStatus
-from zerde.stages.s5_5_verifier import (
+from zerde.stages.s5_2_verifier import (
     _same_phrase_modulo_inflection as same,
 )
-from zerde.stages.s5_5_verifier import (
+from zerde.stages.s5_2_verifier import (
     verify_contradictions,
 )
 
@@ -102,7 +102,7 @@ async def test_verifier_keeps_genuine_misquote_numbers():
     # Поправка ссылается на «2000 тенге», а в норме 3000 — A в норме НЕ найден →
     # это возможный misquote, guard 0.7 НЕ должен глушить (демоция тут только от
     # отсутствия валидного источника, и без пометки про «дозаменную форму»).
-    from zerde.stages.s5_5_verifier import _amendment_targets_existing_text as tgt
+    from zerde.stages.s5_2_verifier import _amendment_targets_existing_text as tgt
     assert tgt("заменить «2000 тенге» на «5000 тенге»", "статья устанавливает 3000 тенге") is False
 
 

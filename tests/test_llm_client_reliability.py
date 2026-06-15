@@ -254,6 +254,57 @@ async def test_stalled_create_is_bounded_by_wall_clock(settings, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 3c. OpenRouter calls pin the provider (order + allow_fallbacks) for
+#     reproducibility; plain-OpenAI base_url does not.
+# ---------------------------------------------------------------------------
+
+async def test_openrouter_pins_provider(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "zerde.utils.llm_client._OPENROUTER_PROVIDER_ORDER", ["openai", "deepinfra"]
+    )
+    s = Settings(
+        _env_file=None,
+        openai_api_key="k",
+        openai_base_url="https://openrouter.ai/api/v1",
+        cache_db_path=str(tmp_path / "c.db"),
+    )
+    client = make_llm_client(s)
+    seen: list[dict] = []
+
+    async def _create(**kwargs):
+        seen.append(kwargs)
+        return _fake_completion(_VALID_CONTENT)
+
+    monkeypatch.setattr(client.chat.completions, "create", _create)
+    await cached_llm_call(client=client, model="deepseek/v4", messages=_MESSAGES, settings=s)
+
+    assert seen[0]["extra_body"]["provider"] == {
+        "order": ["openai", "deepinfra"],
+        "allow_fallbacks": True,
+    }
+
+
+async def test_plain_openai_no_provider_pin(tmp_path, monkeypatch):
+    s = Settings(
+        _env_file=None,
+        openai_api_key="k",
+        openai_base_url="https://api.openai.com/v1",
+        cache_db_path=str(tmp_path / "c.db"),
+    )
+    client = make_llm_client(s)
+    seen: list[dict] = []
+
+    async def _create(**kwargs):
+        seen.append(kwargs)
+        return _fake_completion(_VALID_CONTENT)
+
+    monkeypatch.setattr(client.chat.completions, "create", _create)
+    await cached_llm_call(client=client, model="gpt-x", messages=_MESSAGES, settings=s)
+
+    assert "extra_body" not in seen[0]
+
+
+# ---------------------------------------------------------------------------
 # 4. Cache hit → network never called, manifest records cached=True.
 # ---------------------------------------------------------------------------
 

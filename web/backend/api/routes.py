@@ -1,8 +1,9 @@
 import uuid
 from pathlib import Path
 
+from api.security import rate_limit_analyze
 from config import settings
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from services import jobs
 from services.analysis import enqueue_analysis
@@ -28,7 +29,7 @@ class AnalysisResponse(BaseModel):
     status: str
 
 
-@router.post("/analyze", response_model=AnalysisResponse)
+@router.post("/analyze", response_model=AnalysisResponse, dependencies=[Depends(rate_limit_analyze)])
 async def analyze_document(file: UploadFile = File(...)):
     """Uploads a document and starts the pipeline analysis."""
     suffix = Path(file.filename or "").suffix.lower()

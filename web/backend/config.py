@@ -17,5 +17,14 @@ class Settings:
         self.output_dir: Path = _PROJECT_ROOT / "output"
         self.jobs_db_path: Path = Path(__file__).resolve().parent / "jobs.db"
 
+        # Общий API-ключ. Если переменная не задана — аутентификация выключена
+        # (локальная разработка, тесты). На проде задай ZERDE_API_KEY: тогда все
+        # /api-запросы потребуют заголовок X-API-Key с этим значением.
+        self.api_key: str | None = os.environ.get("ZERDE_API_KEY") or None
+
+        # Rate-limit на запуск анализа: N запусков с одного IP за окно (секунды).
+        self.analyze_rate_limit: int = int(os.environ.get("ZERDE_ANALYZE_RATE_LIMIT", "10"))
+        self.analyze_rate_window_s: int = int(os.environ.get("ZERDE_ANALYZE_RATE_WINDOW_S", "3600"))
+
 
 settings = Settings()

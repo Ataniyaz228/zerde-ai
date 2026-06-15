@@ -25,6 +25,11 @@ def app_env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "jobs_db_path", jobs_db)
     monkeypatch.setattr(settings, "max_upload_bytes", 25 * 1024 * 1024)
 
+    # Per-test isolation: clear in-memory rate-limit counters (they persist
+    # across requests within a process) so unrelated tests don't trip 429.
+    from api.security import reset_rate_limit
+    reset_rate_limit()
+
     # Also redirect storage.OUTPUT_DIR so /api/reports sees the fake reports.
     import services.storage as storage
     monkeypatch.setattr(storage, "OUTPUT_DIR", str(output_dir))

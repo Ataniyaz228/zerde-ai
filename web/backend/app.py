@@ -19,6 +19,7 @@ from api.ws import router as ws_router  # noqa: E402
 from config import settings  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 from services import jobs  # noqa: E402
 
 
@@ -41,12 +42,25 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log = logging.getLogger(__name__)
     await jobs.init_db()
-    # A restart kills any in-flight analysis without a terminal event; fail
-    # those jobs so resuming clients don't spin forever (see reconcile docs).
+    # Рестарт убивает запущенный анализ без терминального события — помечаем
+    # такие 'running'-задачи ошибкой, чтобы переподключившийся клиент не висел.
     n = await jobs.reconcile_interrupted()
     if n:
-        logging.getLogger(__name__).info(f"[startup] Reconciled {n} interrupted job(s) → error")
+        log.info(f"[startup] Reconciled {n} interrupted running job(s) → error")
+    # Задачи, принятые до рестарта, но не стартовавшие ('queued'), дозапускаем —
+    # их работа иначе потерялась бы молча.
+    from services.analysis import enqueue_analysis
+    resumed = 0
+    for job in await jobs.list_queued():
+        if Path(job["stored_path"]).exists():
+            enqueue_analysis(job["analysis_id"], job["stored_path"])
+            resumed += 1
+        else:
+            await jobs.set_status(job["analysis_id"], "error", error="Загруженный файл недоступен после рестарта.")
+    if resumed:
+        log.info(f"[startup] Resumed {resumed} queued job(s)")
     yield
 
 
@@ -66,13 +80,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(api_router, prefix="/api")
+# Все /api-роуты за API-ключом (включается только если задан ZERDE_API_KEY).
+from api.security import require_api_key  # noqa: E402
+from fastapi import Depends  # noqa: E402
+
+app.include_router(api_router, prefix="/api", dependencies=[Depends(require_api_key)])
 app.include_router(ws_router, prefix="/ws")
+
 
 @app.get("/health")
 async def health_check():
+    """Liveness: процесс жив и отвечает."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness: корпус-БД на месте и открывается. Иначе анализ работать не будет."""
+    import sqlite3
+
+    from zerde.config import get_settings as get_zerde_settings
+
+    db_path = Path(get_zerde_settings().cache_db_path)
+    if not db_path.exists():
+        return JSONResponse(status_code=503, content={"status": "not ready", "reason": "corpus db missing"})
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.execute("SELECT 1 FROM law_metadata LIMIT 1")
+        conn.close()
+    except sqlite3.Error as e:
+        return JSONResponse(status_code=503, content={"status": "not ready", "reason": str(e)})
+    return {"status": "ready"}
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

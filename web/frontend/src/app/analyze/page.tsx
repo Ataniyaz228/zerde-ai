@@ -6,7 +6,7 @@ import PipelineProgress, { PipelineStep } from "@/components/PipelineProgress";
 import ReportViewer from "@/components/ReportViewer";
 import VerdictBadges, { VerdictCounts } from "@/components/VerdictBadges";
 import { useTranslation } from "@/lib/i18n";
-import { API_URL, WS_URL } from "@/lib/api";
+import { API_URL, WS_URL, apiFetch } from "@/lib/api";
 import s from "./Analyze.module.css";
 
 type Phase = "idle" | "uploading" | "progress" | "done" | "error";
@@ -101,7 +101,7 @@ export default function AnalyzePage() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(`${API_URL}/api/analyze`, { method: "POST", body: form });
+      const res = await apiFetch(`${API_URL}/api/analyze`, { method: "POST", body: form });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`${res.status}: ${text}`);

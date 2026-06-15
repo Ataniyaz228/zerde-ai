@@ -189,6 +189,60 @@
   align-items: center;
 }
 
+/* ===== Verdict status pills ===== */
+
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: 0.05em;
+  border: 1px solid transparent;
+}
+
+.pillGood {
+  color: var(--status-ok, #22c55e);
+  background: color-mix(in srgb, var(--status-ok, #22c55e) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-ok, #22c55e) 35%, transparent);
+}
+.pillBad {
+  color: var(--status-err, #ef4444);
+  background: color-mix(in srgb, var(--status-err, #ef4444) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-err, #ef4444) 35%, transparent);
+}
+.pillWarn {
+  color: var(--status-warn, #f59e0b);
+  background: color-mix(in srgb, var(--status-warn, #f59e0b) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-warn, #f59e0b) 35%, transparent);
+}
+.pillNeutral {
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+/* ===== Coloured callouts (blockquote by verdict) ===== */
+
+.calloutGood    { border-left-color: var(--status-ok, #22c55e) !important; }
+.calloutBad     { border-left-color: var(--status-err, #ef4444) !important; }
+.calloutWarn    { border-left-color: var(--status-warn, #f59e0b) !important; }
+.calloutNeutral { border-left-color: var(--border-strong) !important; }
+
+.calloutGood { background: color-mix(in srgb, var(--status-ok, #22c55e) 5%, transparent); }
+.calloutBad  { background: color-mix(in srgb, var(--status-err, #ef4444) 6%, transparent); }
+.calloutWarn { background: color-mix(in srgb, var(--status-warn, #f59e0b) 6%, transparent); }
+
+.md blockquote.calloutGood,
+.md blockquote.calloutBad,
+.md blockquote.calloutWarn,
+.md blockquote.calloutNeutral {
+  padding-right: 0.85rem;
+  border-radius: 0 var(--radius-sm, 8px) var(--radius-sm, 8px) 0;
+}
+
 /* ===== MARKDOWN TYPOGRAPHY ===== */
 
 .md {

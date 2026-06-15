@@ -151,6 +151,41 @@ async def get_job(analysis_id: str, db_path: Path | str | None = None) -> dict |
     return await asyncio.to_thread(_get_job_sync, path, analysis_id)
 
 
+def _reconcile_interrupted_sync(db_path: Path | str) -> int:
+    """Fail any job left 'running'/'queued' by a crash or restart.
+
+    A single-loop backend executes the pipeline in-process, so a restart kills
+    the running task without ever emitting a terminal event. Such a job stays
+    'running' forever and the frontend's resume logic re-attaches to it,
+    showing an endless spinner. On startup we flip these to 'error' and append
+    a terminal error event so any (re)connecting client stops waiting.
+    """
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT analysis_id, events_json FROM jobs WHERE status IN ('running', 'queued')"
+        ).fetchall()
+        now = _now()
+        msg = "Анализ прерван (сервер был перезапущен). Запустите анализ заново."
+        for row in rows:
+            events = json.loads(row["events_json"])
+            events.append({"type": "error", "message": msg})
+            conn.execute(
+                "UPDATE jobs SET status = 'error', error = ?, events_json = ?, updated_at = ? "
+                "WHERE analysis_id = ?",
+                (msg, json.dumps(events, ensure_ascii=False), now, row["analysis_id"]),
+            )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+async def reconcile_interrupted(db_path: Path | str | None = None) -> int:
+    path = db_path if db_path is not None else settings.jobs_db_path
+    return await asyncio.to_thread(_reconcile_interrupted_sync, path)
+
+
 def _get_events_sync(db_path: Path | str, analysis_id: str) -> list[dict]:
     conn = _connect(db_path)
     try:

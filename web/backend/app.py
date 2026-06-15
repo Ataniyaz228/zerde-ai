@@ -42,6 +42,11 @@ setup_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await jobs.init_db()
+    # A restart kills any in-flight analysis without a terminal event; fail
+    # those jobs so resuming clients don't spin forever (see reconcile docs).
+    n = await jobs.reconcile_interrupted()
+    if n:
+        logging.getLogger(__name__).info(f"[startup] Reconciled {n} interrupted job(s) → error")
     yield
 
 

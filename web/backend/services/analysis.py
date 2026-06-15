@@ -163,6 +163,10 @@ async def _run_analysis(analysis_id: str, file_path: str) -> None:
                 "report": result.report_md,
                 "score": score,
                 "report_id": output_path.name,
+                "confirmed": summary["confirmed"],
+                "contradicted": summary["contradicted"],
+                "unverified": summary["unverified"],
+                "coverage_pct": summary["coverage_pct"],
             })
 
         except Exception as exc:

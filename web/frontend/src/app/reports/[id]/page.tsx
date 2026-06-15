@@ -4,6 +4,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowLeft, Shield, ShieldAlert, AlertTriangle } from "lucide-react";
 import ReportViewer from "@/components/ReportViewer";
+import VerdictBadges from "@/components/VerdictBadges";
 import { useTranslation } from "@/lib/i18n";
 import { API_URL } from "@/lib/api";
 import s from "./ReportDetail.module.css";
@@ -15,6 +16,11 @@ interface ReportData {
     filename: string;
     date: string;
     reliability_score: number;
+    confirmed?: number;
+    contradicted?: number;
+    unverified?: number;
+    total?: number;
+    coverage_pct?: number;
   };
 }
 
@@ -85,7 +91,7 @@ export default function ReportDetailPage({
           {/* Header */}
           <div className={s.headerCard}>
             <div className={s.docInfo}>
-              <p className={s.docMeta}>Исходный документ</p>
+              <p className={s.docMeta}>{t("report_source_doc")}</p>
               <h1 className={s.docName}>{report.metadata.filename}</h1>
               <p className={s.docDate}>{formatDate(report.metadata.date)}</p>
             </div>
@@ -99,8 +105,21 @@ export default function ReportDetailPage({
             </div>
           </div>
 
+          {/* Verdict dashboard */}
+          <div className={s.dashboard}>
+            <VerdictBadges
+              counts={{
+                confirmed: report.metadata.confirmed ?? 0,
+                contradicted: report.metadata.contradicted ?? 0,
+                unverified: report.metadata.unverified ?? 0,
+                total: report.metadata.total ?? 0,
+                coverage_pct: report.metadata.coverage_pct ?? 0,
+              }}
+            />
+          </div>
+
           {/* Report body */}
-          <ReportViewer content={report.content} />
+          <ReportViewer content={report.content} downloadName={report.metadata.filename} reportId={report.id} />
         </motion.div>
       </div>
     </div>

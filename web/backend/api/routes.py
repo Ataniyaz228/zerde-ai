@@ -16,6 +16,11 @@ class ReportMetadata(BaseModel):
     filename: str
     date: str
     reliability_score: float
+    confirmed: int = 0
+    contradicted: int = 0
+    unverified: int = 0
+    total: int = 0
+    coverage_pct: int = 0
 
 
 class AnalysisResponse(BaseModel):

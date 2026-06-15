@@ -110,3 +110,7 @@
   color: var(--text-secondary);
   font-size: 14px;
 }
+
+.dashboard {
+  margin: 4px 0 20px;
+}

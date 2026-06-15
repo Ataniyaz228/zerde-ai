@@ -1,0 +1,98 @@
+.footer {
+  border-top: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, transparent, var(--bg-elevated));
+  margin-top: 5rem;
+}
+
+.inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 3.5rem 1.75rem 2.25rem;
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr;
+  gap: 2.5rem;
+}
+
+@media (max-width: 680px) {
+  .inner { grid-template-columns: 1fr 1fr; gap: 2rem; }
+  .brandCol { grid-column: 1 / -1; }
+}
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0.9rem;
+}
+
+.logoMark {
+  width: 11px;
+  height: 11px;
+  background: var(--accent);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+
+.logoText {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.tagline {
+  font-size: var(--step-0);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 34ch;
+}
+
+.colHead {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 1rem;
+}
+
+.navCol { display: flex; flex-direction: column; }
+
+.link {
+  font-size: var(--step-0);
+  color: var(--text-secondary);
+  padding: 5px 0;
+  width: fit-content;
+  transition: color var(--duration);
+}
+.link:hover { color: var(--accent); }
+
+.sourceLink {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-strong);
+  padding-bottom: 2px;
+  width: fit-content;
+  transition: color var(--duration), border-color var(--duration);
+}
+.sourceLink:hover { color: var(--accent); border-color: var(--accent-border); }
+
+.baseline {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 1.25rem 1.75rem;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.made { text-align: right; }

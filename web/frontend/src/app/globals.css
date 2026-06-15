@@ -1,7 +1,11 @@
-/* ===== Zerde — дизайн-система =====
-   Палитра с казахским корнем: бумажная база, акцент-глина (терракота) и
-   степное золото. Светлая тема — основная (юристы читают документы на светлом),
-   тёмная включается через [data-theme="dark"]. Без glass/градиентов. */
+/* ===== Zerde — дизайн-система «Редакционный архив» =====
+   Палитра с казахским корнем: тёплая бумага, акцент-глина (терракота) и
+   степное золото. Светлая тема — основная (юристы читают документы на светлом);
+   тёмная — через [data-theme="dark"]. Без glass/неоновых градиентов: глубина
+   даётся тенью, волосяными линейками и лёгким зерном бумаги.
+
+   Все имена переменных сохранены — на них завязаны CSS-модули. Значения
+   уточнены; добавлены токены типошкалы, отступов, кольца фокуса и движения. */
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -10,95 +14,119 @@
 }
 
 :root {
-  /* Поверхности — тёплая бумага */
-  --bg-primary:  #F6F2E9;
+  /* Поверхности — прохладная бумага */
+  --bg-primary:  #F4F5F3;
   --bg-surface:  #FFFFFF;
-  --bg-elevated: #FBF8F1;
-  --bg-hover:    #EFEADD;
+  --bg-elevated: #F2F4F6;
+  --bg-hover:    #EAEDF1;
+  --bg-sunken:   #E6E9EE;
 
-  /* Акцент — глина (терракота) */
-  --accent:        #A8512E;
-  --accent-strong: #8C4123;
-  --accent-soft:   rgba(168, 81, 46, 0.08);
-  --accent-border: rgba(168, 81, 46, 0.20);
-  --text-on-accent: #FBF6EE;
+  /* Акцент — благородный индиго */
+  --accent:        #2E47B8;
+  --accent-strong: #233A8C;
+  --accent-soft:   rgba(46, 71, 184, 0.06);
+  --accent-tint:   rgba(46, 71, 184, 0.13);
+  --accent-border: rgba(46, 71, 184, 0.22);
+  --text-on-accent: #FFFFFF;
 
-  /* Второй акцент — степное золото */
-  --gold:      #B5862B;
-  --gold-soft: rgba(181, 134, 43, 0.12);
+  /* Второй акцент — приглушённая охра (редко, для тёплого контрапункта) */
+  --gold:        #A9781E;
+  --gold-soft:   rgba(169, 120, 30, 0.12);
+  --gold-border: rgba(169, 120, 30, 0.28);
 
-  /* Текст */
-  --text-primary:   #241D15;
-  --text-secondary: #6A5F52;
-  --text-tertiary:  #9C9183;
+  /* Текст — мягкие чернила (сниженный контраст = легче глазу) */
+  --text-primary:   #2A2E38;
+  --text-secondary: #646A78;
+  --text-tertiary:  #9AA0AD;
 
-  /* Границы (тёплые волоски) */
-  --border:        #E6DDCC;
-  --border-subtle: #EEE7D8;
-  --border-strong: #D6C9B2;
+  /* Границы (прохладные волоски) */
+  --border:        #E6E8EC;
+  --border-subtle: #EFF1F4;
+  --border-strong: #D6D9E0;
 
-  /* Статусы вердиктов */
-  --status-ok:      #3F7A52;
-  --status-ok-bg:   rgba(63, 122, 82, 0.10);
-  --status-warn:    #A9781E;
-  --status-warn-bg: rgba(169, 120, 30, 0.12);
-  --status-err:     #A23B33;
-  --status-err-bg:  rgba(162, 59, 51, 0.10);
+  /* Статусы вердиктов — отделены от бренд-индиго */
+  --status-ok:      #2E7D55;
+  --status-ok-bg:   rgba(46, 125, 85, 0.10);
+  --status-warn:    #B07A12;
+  --status-warn-bg: rgba(176, 122, 18, 0.12);
+  --status-err:     #C0392B;
+  --status-err-bg:  rgba(192, 57, 43, 0.10);
 
-  /* Тени (в светлой теме дают глубину вместо блюра) */
-  --shadow-sm: 0 1px 2px rgba(50, 38, 24, 0.05);
-  --shadow:    0 4px 18px rgba(50, 38, 24, 0.07), 0 1px 3px rgba(50, 38, 24, 0.05);
-  --shadow-lg: 0 12px 40px rgba(50, 38, 24, 0.12);
+  /* Тени — едва уловимые; глубину держим на линейках, а не на блюре */
+  --shadow-sm: 0 1px 2px rgba(20, 22, 34, 0.03);
+  --shadow:    0 2px 8px rgba(20, 22, 34, 0.045);
+  --shadow-lg: 0 10px 30px -14px rgba(20, 22, 34, 0.12);
+
+  /* Кольцо фокуса (доступность) */
+  --ring: 0 0 0 3px var(--accent-tint);
 
   /* Шрифты */
   --font-serif: var(--font-lora), Georgia, "Times New Roman", serif;
   --font-sans:  var(--font-inter), system-ui, -apple-system, sans-serif;
-  --font-mono:  ui-monospace, "SF Mono", "Fira Code", monospace;
+  --font-mono:  var(--font-mono-jb), ui-monospace, "SF Mono", "Fira Code", monospace;
+
+  /* Типографическая шкала (модульная, текучая) */
+  --step--1: clamp(0.78rem, 0.76rem + 0.10vw, 0.83rem);
+  --step-0:  clamp(0.94rem, 0.91rem + 0.13vw, 1.00rem);
+  --step-1:  clamp(1.12rem, 1.05rem + 0.34vw, 1.33rem);
+  --step-2:  clamp(1.40rem, 1.27rem + 0.66vw, 1.85rem);
+  --step-3:  clamp(1.80rem, 1.55rem + 1.24vw, 2.60rem);
+  --step-4:  clamp(2.30rem, 1.85rem + 2.24vw, 3.85rem);
+  --step-5:  clamp(2.90rem, 2.10rem + 3.95vw, 5.40rem);
 
   /* Радиусы — сдержанные, редакционные */
-  --radius-sm: 5px;
-  --radius:    8px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-sm: 6px;
+  --radius:    9px;
+  --radius-lg: 15px;
+  --radius-xl: 22px;
 
   /* Движение */
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --duration: 180ms;
+  --ease-out:   cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --duration:   180ms;
+  --duration-lg: 420ms;
+
+  color-scheme: light;
 }
 
 [data-theme="dark"] {
-  --bg-primary:  #17130E;
-  --bg-surface:  #201A13;
-  --bg-elevated: #292117;
-  --bg-hover:    #322819;
+  --bg-primary:  #121319;
+  --bg-surface:  #1A1B23;
+  --bg-elevated: #21232E;
+  --bg-hover:    #282A38;
+  --bg-sunken:   #0D0E13;
 
-  --accent:        #CC7A52;
-  --accent-strong: #E08E63;
-  --accent-soft:   rgba(204, 122, 82, 0.13);
-  --accent-border: rgba(204, 122, 82, 0.24);
-  --text-on-accent: #1A130C;
+  --accent:        #7C92F2;
+  --accent-strong: #97A9F6;
+  --accent-soft:   rgba(124, 146, 242, 0.12);
+  --accent-tint:   rgba(124, 146, 242, 0.20);
+  --accent-border: rgba(124, 146, 242, 0.28);
+  --text-on-accent: #10131F;
 
-  --gold:      #D4A857;
-  --gold-soft: rgba(212, 168, 87, 0.13);
+  --gold:        #D7AC5B;
+  --gold-soft:   rgba(215, 172, 91, 0.13);
+  --gold-border: rgba(215, 172, 91, 0.30);
 
-  --text-primary:   #ECE3D2;
-  --text-secondary: #A99C88;
-  --text-tertiary:  #6E6452;
+  --text-primary:   #E8EAF1;
+  --text-secondary: #9CA1B2;
+  --text-tertiary:  #646A7C;
 
-  --border:        #332918;
-  --border-subtle: #271F12;
-  --border-strong: #473922;
+  --border:        #2A2D3B;
+  --border-subtle: #20222E;
+  --border-strong: #3C4054;
 
-  --status-ok:      #5DA77A;
-  --status-ok-bg:   rgba(93, 167, 122, 0.13);
-  --status-warn:    #D6A24A;
-  --status-warn-bg: rgba(214, 162, 74, 0.14);
-  --status-err:     #D2675C;
-  --status-err-bg:  rgba(210, 103, 92, 0.13);
+  --status-ok:      #54B17C;
+  --status-ok-bg:   rgba(84, 177, 124, 0.13);
+  --status-warn:    #D8A44C;
+  --status-warn-bg: rgba(216, 164, 76, 0.14);
+  --status-err:     #E3675B;
+  --status-err-bg:  rgba(227, 103, 91, 0.13);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow:    0 6px 22px rgba(0, 0, 0, 0.38);
-  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.50);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.34);
+  --shadow:    0 6px 22px rgba(0, 0, 0, 0.44);
+  --shadow-lg: 0 22px 56px -14px rgba(0, 0, 0, 0.64), 0 8px 20px -10px rgba(0, 0, 0, 0.48);
+
+  color-scheme: dark;
 }
 
 html {
@@ -106,13 +134,15 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
 }
 
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  line-height: 1.6;
+  font-feature-settings: "kern", "liga", "calt";
+  line-height: 1.65;
   min-height: 100vh;
   transition: background-color var(--duration), color var(--duration);
 }
@@ -127,16 +157,36 @@ button {
   color: inherit;
 }
 
+input, textarea, select { font: inherit; }
+
 img, svg { display: block; }
 
-::selection { background: var(--accent-soft); }
+::selection { background: var(--accent-tint); color: var(--text-primary); }
+
+/* Единое кольцо фокуса по всему приложению (доступность). */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: var(--radius-sm);
+}
+
+/* Тонкая, тёплая полоса прокрутки. */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); background-clip: padding-box; }
 
 /* ===== Утилиты ===== */
 
 .container {
-  max-width: 1080px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 0 1.5rem;
+  padding: 0 1.75rem;
 }
 
 /* Сплошная панель вместо стеклянной — волосок + мягкая тень */
@@ -147,13 +197,36 @@ img, svg { display: block; }
   box-shadow: var(--shadow-sm);
 }
 
-/* Надзаголовок-капитель: капс-буквы с трекингом */
+/* Надзаголовок-капитель: капс-буквы с трекингом и короткой линейкой. */
 .eyebrow {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7em;
+  font-size: var(--step--1);
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.eyebrow::before {
+  content: "";
+  width: 1.7em;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.55;
+}
+/* Вариант без линейки (когда нужен только капс). */
+.eyebrow.bare::before { display: none; }
+
+/* Числа всегда табличные — для метрик и таблиц. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Тонкая редакционная линейка-разделитель. */
+.rule {
+  height: 1px;
+  border: none;
+  background: linear-gradient(90deg, var(--border-strong), var(--border) 35%, transparent);
 }
 
 /* ===== Анимации ===== */
@@ -172,9 +245,17 @@ img, svg { display: block; }
   to { transform: rotate(360deg); }
 }
 
+/* Мягкое «дыхание» активной стадии. */
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50%      { box-shadow: 0 0 0 6px var(--accent-soft); }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }

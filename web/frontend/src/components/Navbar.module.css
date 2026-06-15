@@ -2,15 +2,24 @@
   position: sticky;
   top: 0;
   z-index: 100;
-  height: 60px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border);
+  height: 64px;
+  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--duration), box-shadow var(--duration),
+    background var(--duration);
+}
+
+.scrolled {
+  border-bottom-color: var(--border);
+  background: color-mix(in srgb, var(--bg-primary) 96%, transparent);
 }
 
 .inner {
-  max-width: 1080px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 0 1.5rem;
+  padding: 0 1.75rem;
   height: 100%;
   display: flex;
   align-items: center;
@@ -20,24 +29,27 @@
 .logo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   transition: opacity var(--duration);
 }
 
-.logo:hover { opacity: 0.75; }
+.logo:hover { opacity: 0.78; }
+.logo:hover .logoMark { transform: rotate(135deg); }
 
 /* Знак-маркер: ромб-«зерно» цвета глины — лаконичная марка вместо стокового щита. */
 .logoMark {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
   background: var(--accent);
   transform: rotate(45deg);
-  border-radius: 2px;
+  border-radius: 2.5px;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  transition: transform var(--duration-lg) var(--ease-out);
 }
 
 .logoText {
   font-family: var(--font-serif);
-  font-size: 21px;
+  font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-primary);
@@ -66,21 +78,30 @@
   background: var(--bg-hover);
 }
 
+.navLinkActive { color: var(--text-primary); background: var(--bg-hover); }
+
 .navCta {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 15px;
+  padding: 8px 16px;
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 600;
   color: var(--text-on-accent);
   background: var(--accent);
-  transition: background var(--duration);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--duration), transform var(--duration),
+    box-shadow var(--duration);
   margin-left: 4px;
 }
 
-.navCta:hover { background: var(--accent-strong); }
+.navCta:hover {
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+.navCta:active { transform: translateY(0); }
 
 .iconBtn {
   display: inline-flex;
@@ -93,7 +114,7 @@
   transition: color var(--duration), background var(--duration);
 }
 
-.iconBtn:hover { color: var(--text-primary); background: var(--bg-hover); }
+.iconBtn:hover { color: var(--accent); background: var(--bg-hover); }
 
 .divider {
   width: 1px;
@@ -116,7 +137,7 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
-  transition: all var(--duration);
+  transition: color var(--duration), background var(--duration);
   letter-spacing: 0.03em;
 }
 
@@ -127,3 +148,8 @@
   color: var(--accent);
 }
 .langBtnActive:hover { color: var(--accent); }
+
+@media (max-width: 520px) {
+  .navLinkLabel { display: none; }
+  .inner { padding: 0 1.1rem; }
+}

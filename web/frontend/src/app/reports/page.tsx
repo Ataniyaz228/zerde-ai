@@ -72,7 +72,10 @@ export default function ReportsPage() {
     <div className={s.page}>
       <div className={s.inner}>
         <div className={s.pageHeader}>
-          <h1 className={s.title}>{t("reports_title")}</h1>
+          <div className={s.headingGroup}>
+            <span className={`eyebrow ${s.eyebrow}`}>{t("hero_badge")}</span>
+            <h1 className={s.title}>{t("reports_title")}</h1>
+          </div>
           {hasReports && (
             <span className={s.count}>{reports.length} {t("reports_count_label")}</span>
           )}
@@ -170,7 +173,7 @@ export default function ReportsPage() {
                           <FileText size={14} strokeWidth={1.5} />
                         </div>
                         <div className={s.fileMeta}>
-                          <span className={s.fileName}>{r.filename}</span>
+                          <span className={s.fileName} title={r.filename}>{r.filename}</span>
                           {r.contradicted > 0 && (
                             <span className={s.flag}>
                               <AlertTriangle size={11} strokeWidth={2.2} />
@@ -197,7 +200,7 @@ export default function ReportsPage() {
                       </span>
                     </td>
                     <td className={s.td} style={{ width: 32 }}>
-                      <ChevronRight size={14} strokeWidth={1.5} style={{ color: "var(--text-tertiary)" }} />
+                      <ChevronRight size={15} strokeWidth={1.5} className={s.chevron} />
                     </td>
                   </tr>
                 ))}

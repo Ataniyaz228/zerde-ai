@@ -3,6 +3,7 @@
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 /* ===== Toolbar (search + actions) ===== */
@@ -44,7 +45,8 @@
 }
 
 .searchInput:focus {
-  border-color: var(--accent, #6366f1);
+  border-color: var(--accent);
+  box-shadow: var(--ring);
 }
 
 .searchInput::placeholder { color: var(--text-tertiary); }
@@ -247,8 +249,8 @@
 /* ===== MARKDOWN TYPOGRAPHY ===== */
 
 .md {
-  font-size: 14px;
-  line-height: 1.75;
+  font-size: 14.5px;
+  line-height: 1.78;
   color: var(--text-primary);
 }
 
@@ -371,13 +373,16 @@
 }
 
 .md a {
-  color: #3b82f6;
+  color: var(--accent);
+  font-weight: 500;
   text-decoration: underline;
-  text-decoration-color: transparent;
-  transition: text-decoration-color 0.2s;
+  text-decoration-color: var(--accent-border);
+  text-underline-offset: 2px;
+  transition: text-decoration-color 0.2s, color 0.2s;
   cursor: pointer;
 }
 
 .md a:hover {
+  color: var(--accent-strong);
   text-decoration-color: currentColor;
 }

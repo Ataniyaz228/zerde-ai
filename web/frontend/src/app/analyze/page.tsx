@@ -223,6 +223,7 @@ export default function AnalyzePage() {
     <div className={s.page}>
       <div className={s.inner}>
         <div className={s.header}>
+          <span className={`eyebrow ${s.eyebrow}`}>{t("hero_badge")}</span>
           <h1 className={s.title}>{t("upload_title")}</h1>
           <p className={s.sub}>{t("upload_sub")}</p>
         </div>

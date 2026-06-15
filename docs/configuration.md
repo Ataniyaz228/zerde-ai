@@ -40,6 +40,13 @@
 | `LLM_MAX_TOKENS_ANALYST` | `16384` | Макс. токенов для Auditor |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding (если ключ задан) |
 
+### Надёжность LLM
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `ZERDE_LLM_OVERALL_TIMEOUT_S` | `240` | Жёсткий wall-clock потолок на один LLM-вызов целиком. httpx read-таймаут ловит только паузы между байтами; «капающий»/зависший провайдер иначе держал бы слот семафора и вешал S5. По таймауту вызов отменяется (tenacity ретраит как транзиент, затем fail-closed → UNVERIFIED). |
+| `ZERDE_OPENROUTER_PROVIDER_ORDER` | `openai,deepinfra,fireworks` | Порядок предпочитаемых провайдеров OpenRouter (`provider.order`, `allow_fallbacks=true`). Закрепляет провайдера для воспроизводимости (одна модель у разных провайдеров даёт разный вывод даже при `temperature=0`). НЕ входит в ключ кэша. Применяется только при OpenRouter base_url. |
+
 ### Поиск
 
 | Переменная | По умолчанию | Описание |

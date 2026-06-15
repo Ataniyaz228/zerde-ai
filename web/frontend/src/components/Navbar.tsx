@@ -1,25 +1,23 @@
 "use client";
 import Link from "next/link";
-import { Shield, History, Plus } from "lucide-react";
+import { History, Plus, Sun, Moon } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { useTheme } from "@/lib/theme";
 import s from "./Navbar.module.css";
 
 export default function Navbar() {
   const { lang, setLang, t } = useTranslation();
+  const { theme, toggle } = useTheme();
 
   return (
     <nav className={s.navbar}>
       <div className={s.inner}>
-        {/* Logo */}
         <Link href="/" className={s.logo}>
-          <Shield size={16} className={s.logoIcon} strokeWidth={1.5} />
+          <span className={s.logoMark} aria-hidden />
           <span className={s.logoText}>Zerde</span>
-          <span className={s.logoBadge}>AI</span>
         </Link>
 
-        {/* Navigation */}
         <div className={s.nav}>
-          {/* Lang toggle */}
           <div className={s.langToggle}>
             <button
               className={`${s.langBtn} ${lang === "ru" ? s.langBtnActive : ""}`}
@@ -35,10 +33,19 @@ export default function Navbar() {
             </button>
           </div>
 
+          <button
+            className={s.iconBtn}
+            onClick={toggle}
+            aria-label={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
+            title={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
+          >
+            {theme === "dark" ? <Sun size={15} strokeWidth={1.6} /> : <Moon size={15} strokeWidth={1.6} />}
+          </button>
+
           <div className={s.divider} />
 
           <Link href="/reports" className={s.navLink}>
-            <History size={14} strokeWidth={1.5} />
+            <History size={14} strokeWidth={1.6} />
             {t("nav_history")}
           </Link>
 

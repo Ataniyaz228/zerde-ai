@@ -16,9 +16,10 @@
 }
 
 .title {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--text-primary);
 }
 
@@ -175,7 +176,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent-dim);
+  color: var(--accent);
   flex-shrink: 0;
 }
 

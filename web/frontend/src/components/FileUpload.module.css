@@ -16,14 +16,14 @@
 }
 
 .zone:hover, .zoneDragging {
-  border-color: var(--accent-dim);
+  border-color: var(--accent);
   background: var(--bg-elevated);
 }
 
 .zoneSelected {
   border-style: solid;
   border-color: var(--accent);
-  background: var(--accent-muted);
+  background: var(--accent-soft);
 }
 
 .icon {
@@ -42,7 +42,7 @@
 .zoneSelected .icon {
   color: var(--accent);
   border-color: var(--accent-border);
-  background: var(--accent-muted);
+  background: var(--accent-soft);
 }
 
 .dropText {
@@ -99,7 +99,7 @@
 .fileIconWrap {
   width: 36px;
   height: 36px;
-  background: var(--accent-muted);
+  background: var(--accent-soft);
   border: 1px solid var(--accent-border);
   border-radius: var(--radius-sm);
   display: flex;

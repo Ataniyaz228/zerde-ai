@@ -7,23 +7,41 @@ from datetime import datetime
 OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "output"))
 
 
-def _read_score(filepath: str, content: str) -> int:
+def _read_meta(filepath: str) -> dict:
+    """Load the `<report>.meta.json` sidecar (verdict counts, reliability).
+
+    Returns {} when the sidecar is missing (old reports predate it).
+    """
+    try:
+        with open(filepath + ".meta.json", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _read_score(filepath: str, content: str, meta: dict | None = None) -> int:
     """Reliability score for a report.
 
     Prefers the structural sidecar `<report>.meta.json` written by the
     pipeline; falls back to regex-scraping the Markdown for old reports
     that predate the sidecar.
     """
-    meta_path = filepath + ".meta.json"
-    try:
-        with open(meta_path, encoding="utf-8") as f:
-            meta = json.load(f)
-        pct = meta.get("reliability_pct")
-        if pct is not None:
-            return int(pct)
-    except (OSError, ValueError):
-        pass
+    meta = _read_meta(filepath) if meta is None else meta
+    pct = meta.get("reliability_pct")
+    if pct is not None:
+        return int(pct)
     return _extract_score(content)
+
+
+def _verdict_counts(meta: dict) -> dict:
+    """Verdict breakdown for the UI dashboard, with safe defaults."""
+    return {
+        "confirmed": int(meta.get("confirmed") or 0),
+        "contradicted": int(meta.get("contradicted") or 0),
+        "unverified": int(meta.get("unverified") or 0),
+        "total": int(meta.get("total") or 0),
+        "coverage_pct": int(meta.get("coverage_pct") or 0),
+    }
 
 
 def _parse_date(filename: str) -> str:
@@ -70,12 +88,14 @@ def list_reports() -> list[dict]:
         except OSError:
             content = ""
 
+        meta = _read_meta(filepath)
         reports.append({
             "id": filename,
             "filename": filename,
             "date": _parse_date(filename),
-            "reliability_score": _read_score(filepath, content),
+            "reliability_score": _read_score(filepath, content, meta),
             "status": "done",
+            **_verdict_counts(meta),
         })
 
     return sorted(reports, key=lambda x: x["date"], reverse=True)
@@ -93,7 +113,8 @@ def get_report(report_id: str) -> dict | None:
     with open(filepath, encoding="utf-8") as f:
         content = f.read()
 
-    score = _read_score(filepath, content)
+    meta = _read_meta(filepath)
+    score = _read_score(filepath, content, meta)
 
     return {
         "id": report_id,
@@ -102,5 +123,6 @@ def get_report(report_id: str) -> dict | None:
             "filename": report_id,
             "date": _parse_date(report_id),
             "reliability_score": score,
+            **_verdict_counts(meta),
         },
     }

@@ -4,11 +4,21 @@ import { motion, AnimatePresence } from "framer-motion";
 import FileUpload from "@/components/FileUpload";
 import PipelineProgress, { PipelineStep } from "@/components/PipelineProgress";
 import ReportViewer from "@/components/ReportViewer";
+import VerdictBadges, { VerdictCounts } from "@/components/VerdictBadges";
 import { useTranslation } from "@/lib/i18n";
 import { API_URL, WS_URL } from "@/lib/api";
 import s from "./Analyze.module.css";
 
 type Phase = "idle" | "uploading" | "progress" | "done" | "error";
+
+type ReportState = {
+  content: string;
+  score: number;
+  filename: string;
+} & VerdictCounts;
+
+// Persisted across reloads so an in-flight analysis can be resumed (#4).
+const ACTIVE_KEY = "zerde_active_analysis";
 
 export default function AnalyzePage() {
   const { t } = useTranslation();
@@ -23,9 +33,11 @@ export default function AnalyzePage() {
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [steps, setSteps] = useState<PipelineStep[]>(makeSteps);
-  const [report, setReport] = useState<{ content: string; score: number } | null>(null);
+  const [report, setReport] = useState<ReportState | null>(null);
   const [analysisId, setAnalysisId] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string>("report");
   const [error, setError] = useState<string | null>(null);
+  const restoredRef = useRef(false);
 
   // Elapsed timer for active stage
   const [elapsed, setElapsed] = useState(0);
@@ -34,6 +46,7 @@ export default function AnalyzePage() {
   // Rebuild steps when language changes (only if not in progress)
   useEffect(() => {
     if (phase === "idle" || phase === "error") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSteps(makeSteps());
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -51,11 +64,38 @@ export default function AnalyzePage() {
 
   useEffect(() => () => stopTimer(), []);
 
+  // Resume an in-flight analysis after a page reload (#4). The WebSocket
+  // replays persisted events (including the final `done`), so re-attaching to
+  // the same analysis_id restores progress or the finished report. This is a
+  // one-shot init from sessionStorage after mount (avoids SSR hydration
+  // mismatch a lazy initializer would cause).
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    try {
+      const raw = sessionStorage.getItem(ACTIVE_KEY);
+      if (!raw) return;
+      const { id, filename } = JSON.parse(raw);
+      if (!id) return;
+      setFileName(filename ?? "report");
+      setAnalysisId(id);
+      setSteps((prev) => prev.map((step, i) =>
+        i === 0 ? { ...step, status: "active", message: t("restore_running") } : step
+      ));
+      startTimer();
+      setPhase("progress");
+    } catch { /* ignore corrupt state */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   async function handleAnalyze(file: File) {
     setPhase("uploading");
     setError(null);
     setReport(null);
     setSteps(makeSteps());
+    setFileName(file.name);
     stopTimer();
 
     try {
@@ -68,6 +108,9 @@ export default function AnalyzePage() {
       }
       const data = await res.json();
       setAnalysisId(data.analysis_id);
+      try {
+        sessionStorage.setItem(ACTIVE_KEY, JSON.stringify({ id: data.analysis_id, filename: file.name }));
+      } catch { /* storage unavailable */ }
       // Immediately mark first step as active — WS may arrive late
       setSteps((prev) => prev.map((step, i) =>
         i === 0 ? { ...step, status: "active", message: t("step_waiting") } : step
@@ -116,14 +159,28 @@ export default function AnalyzePage() {
         }
         if (msg.type === "done") {
           stopTimer();
-          setReport({ content: msg.report, score: msg.score });
+          // Mark every step done — a replayed/late connection may have
+          // missed intermediate stage_done events.
+          setSteps((prev) => prev.map((step) => ({ ...step, status: "done", message: undefined })));
+          setReport({
+            content: msg.report,
+            score: msg.score,
+            filename: fileName,
+            confirmed: msg.confirmed ?? 0,
+            contradicted: msg.contradicted ?? 0,
+            unverified: msg.unverified ?? 0,
+            total: (msg.confirmed ?? 0) + (msg.contradicted ?? 0) + (msg.unverified ?? 0),
+            coverage_pct: msg.coverage_pct ?? 0,
+          });
           setPhase("done");
+          try { sessionStorage.removeItem(ACTIVE_KEY); } catch { /* noop */ }
           ws.close();
         }
         if (msg.type === "error") {
           stopTimer();
           setError(msg.message);
           setPhase("error");
+          try { sessionStorage.removeItem(ACTIVE_KEY); } catch { /* noop */ }
           ws.close();
         }
       } catch { /* malformed json */ }
@@ -213,7 +270,9 @@ export default function AnalyzePage() {
                   <span className={`${s.scoreValue} ${scoreClass}`}>{report.score}%</span>
                 </div>
               </div>
-              <ReportViewer content={report.content} />
+              <VerdictBadges counts={report} />
+              <div style={{ height: 16 }} />
+              <ReportViewer content={report.content} downloadName={report.filename} />
             </motion.div>
           )}
         </AnimatePresence>

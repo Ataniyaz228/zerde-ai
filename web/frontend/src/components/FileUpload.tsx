@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState, useCallback, DragEvent } from "react";
-import { Upload, FileText, X } from "lucide-react";
+import { Upload, FileText, X, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import s from "./FileUpload.module.css";
 
@@ -8,6 +8,9 @@ interface Props {
   onAnalyze: (file: File) => void;
   isLoading: boolean;
 }
+
+const ALLOWED_EXT = [".pdf", ".doc", ".docx", ".txt"];
+const MAX_BYTES = 25 * 1024 * 1024;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -20,10 +23,23 @@ export default function FileUpload({ onAnalyze, isLoading }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const handleFile = useCallback((f: File) => {
+    const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
+    if (!ALLOWED_EXT.includes(ext)) {
+      setValidationError(t("upload_invalid_type"));
+      setFile(null);
+      return;
+    }
+    if (f.size > MAX_BYTES) {
+      setValidationError(t("upload_too_large"));
+      setFile(null);
+      return;
+    }
+    setValidationError(null);
     setFile(f);
-  }, []);
+  }, [t]);
 
   const onDragOver = (e: DragEvent) => {
     e.preventDefault();
@@ -77,6 +93,12 @@ export default function FileUpload({ onAnalyze, isLoading }: Props) {
               {t("upload_btn")}
             </button>
             <p className={s.hint}>{t("upload_hint")}</p>
+            {validationError && (
+              <p className={s.validationError}>
+                <AlertTriangle size={13} strokeWidth={2} />
+                {validationError}
+              </p>
+            )}
           </>
         ) : (
           <>
@@ -97,7 +119,7 @@ export default function FileUpload({ onAnalyze, isLoading }: Props) {
                 onClick={(e) => { e.stopPropagation(); onAnalyze(file); }}
               >
                 {isLoading ? (
-                  <><div className={s.spinner} /> Анализ...</>
+                  <><div className={s.spinner} /> {t("upload_analyzing")}</>
                 ) : (
                   t("upload_start")
                 )}

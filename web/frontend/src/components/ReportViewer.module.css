@@ -5,6 +5,124 @@
   overflow: hidden;
 }
 
+/* ===== Toolbar (search + actions) ===== */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.searchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 240px;
+  max-width: 380px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 8px 10px 8px 32px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  outline: none;
+  transition: border-color var(--duration, 0.15s);
+}
+
+.searchInput:focus {
+  border-color: var(--accent, #6366f1);
+}
+
+.searchInput::placeholder { color: var(--text-tertiary); }
+
+.searchClear {
+  position: absolute;
+  right: 56px;
+  display: flex;
+  padding: 2px;
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.searchClear:hover { color: var(--text-primary); }
+
+.searchCount {
+  position: absolute;
+  right: 10px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbarActions {
+  display: flex;
+  gap: 6px;
+}
+
+.toolBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  transition: background var(--duration, 0.15s), color var(--duration, 0.15s);
+}
+
+.toolBtn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* Hide the toolbar when printing — keep just the report body. */
+@media print {
+  .toolbar { display: none; }
+  .section { break-inside: avoid; }
+}
+
+@media (max-width: 560px) {
+  .toolBtnLabel { display: none; }
+}
+
+/* ===== Search highlight ===== */
+
+.hl {
+  background: color-mix(in srgb, var(--accent, #6366f1) 30%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* ===== Danger (contradictions) sections ===== */
+
+.sectionDanger {
+  border-left: 3px solid var(--status-err, #ef4444);
+}
+
+.sectionDanger .sectionTitle {
+  color: var(--status-err, #ef4444);
+}
+
 .section {
   border-bottom: 1px solid var(--border);
 }
@@ -49,6 +167,26 @@
 .sectionBody {
   padding: 0 20px 20px;
   overflow: hidden;
+}
+
+/* ===== INLINE STATUS ICONS (emoji → lucide) ===== */
+
+.ico {
+  display: inline-block;
+  vertical-align: -0.18em;
+  margin-right: 0.28em;
+  flex-shrink: 0;
+}
+
+.icoGood    { color: var(--status-ok, #22c55e); }
+.icoBad     { color: var(--status-err, #ef4444); }
+.icoWarn    { color: var(--status-warn, #f59e0b); }
+.icoNeutral { color: var(--text-tertiary); }
+
+/* Tighten spacing when an icon leads an accordion section title */
+.sectionTitle {
+  display: inline-flex;
+  align-items: center;
 }
 
 /* ===== MARKDOWN TYPOGRAPHY ===== */

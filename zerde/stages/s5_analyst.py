@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from zerde.config import get_settings
@@ -158,16 +159,28 @@ async def run_auditor(
             final_analysis.cons.extend(a.cons)
             final_analysis.verdicts.extend(a.verdicts)
 
-    # Дедуп пробелов регулирования по описанию: разные батчи (по 5 claim) могут
-    # независимо вернуть одну и ту же находку.
+    # Дедуп пробелов регулирования: разные батчи (по 5 claim) независимо
+    # возвращают одну и ту же находку РАЗНЫМИ словами. Точный префикс это не
+    # ловит → используем перекрытие множеств слов (Жаккар ≥ 0.6): если новый
+    # пробел почти повторяет уже принятый — отбрасываем. Так 20+ парафразов
+    # «терминология референдума / нет текста проекта» схлопываются в единицы.
     if final_analysis.negative_space:
-        seen_desc: set[str] = set()
+        def _wordset(s: str) -> set[str]:
+            return {w for w in re.findall(r"\w+", (s or "").lower()) if len(w) > 3}
+
+        kept_sets: list[set[str]] = []
         uniq_ns = []
         for ns in final_analysis.negative_space:
-            key = ns.description.strip().lower()[:120]
-            if key in seen_desc:
+            ws = _wordset(ns.description)
+            dup = False
+            for prev in kept_sets:
+                union = ws | prev
+                if union and len(ws & prev) / len(union) >= 0.6:
+                    dup = True
+                    break
+            if dup:
                 continue
-            seen_desc.add(key)
+            kept_sets.append(ws)
             uniq_ns.append(ns)
         final_analysis.negative_space = uniq_ns
 

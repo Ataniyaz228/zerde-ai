@@ -4,7 +4,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, Download, Printer, Link2, Check, Search, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { humanizeMarkdown, withIcons, highlight } from "@/lib/reportFormat";
+import { humanizeMarkdown, withIcons, highlight, statusPill, calloutClass } from "@/lib/reportFormat";
 import { useTranslation } from "@/lib/i18n";
 import s from "./ReportViewer.module.css";
 
@@ -32,7 +32,12 @@ function makeComponents(query: string): Components {
     h4: ({ node, children, ...props }) => <h4 {...props}>{deco(children)}</h4>,
     td: ({ node, children, ...props }) => <td {...props}>{deco(children)}</td>,
     th: ({ node, children, ...props }) => <th {...props}>{deco(children)}</th>,
-    blockquote: ({ node, children, ...props }) => <blockquote {...props}>{deco(children)}</blockquote>,
+    // Bold that is exactly a verdict status tag → coloured pill; otherwise bold.
+    strong: ({ node, children, ...props }) => statusPill(children) ?? <strong {...props}>{deco(children)}</strong>,
+    // Colour the callout border/tint by the verdict it carries.
+    blockquote: ({ node, children, ...props }) => (
+      <blockquote {...props} className={calloutClass(children)}>{deco(children)}</blockquote>
+    ),
   };
 }
 

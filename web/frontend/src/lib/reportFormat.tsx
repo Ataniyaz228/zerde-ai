@@ -37,9 +37,16 @@ import s from "@/components/ReportViewer.module.css";
 export function humanizeMarkdown(md: string): string {
   return (
     md
+      // GitHub-style alert markers (> [!NOTE] / [!WARNING] / …) — remark-gfm
+      // doesn't render them, so they leak as literal text. Drop the marker line;
+      // the verdict pill + coloured callout below convey the same meaning.
+      .replace(/^>\s*\[!(?:NOTE|WARNING|CAUTION|TIP|IMPORTANT)\]\s*$/gim, "")
       // fact_claim_0114 / claim_0037 → «утверждение №114»
       .replace(/\bfact_claim_0*(\d+)/g, "утверждение №$1")
       .replace(/\bclaim_0*(\d+)/g, "утверждение №$1")
+      // Redundant inline claim ref right after a status tag — the heading
+      // already names the claim. «[утверждение №0]: '…'» → «'…'»
+      .replace(/\s*\[утверждение №\d+\]:\s*/g, " ")
       // article_ref=18 → «статья 18»
       .replace(/\barticle_ref\s*=\s*(\d+)/g, "статья $1")
       // (BM25: 0.69) → (релевантность 0.69)
@@ -47,6 +54,51 @@ export function humanizeMarkdown(md: string): string {
       // record_id-style conflict codes стают читабельнее
       .replace(/\bconflict_0*(\d+)/g, "коллизия №$1")
   );
+}
+
+// ── Verdict status tags → coloured pills ─────────────────────────────────────
+
+/** Flatten a rendered node tree back to its plain text. */
+export function nodeText(node: ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join("");
+  if (isValidElement(node)) {
+    const el = node as React.ReactElement<{ children?: ReactNode }>;
+    return nodeText(el.props?.children);
+  }
+  return "";
+}
+
+const STATUS_PILLS: { test: RegExp; cls: string }[] = [
+  { test: /^\[ОШИБКА\]$/, cls: s.pillBad },
+  { test: /^\[ПОДТВЕРЖДЕНО\]$/, cls: s.pillGood },
+  { test: /РИСК РЕТРИВАЛА/, cls: s.pillWarn },
+  { test: /^\[ПРЕДУПРЕЖДЕНИЕ\]$/, cls: s.pillWarn },
+  { test: /^\[НЕ ПРОВЕРЕНО\]$/, cls: s.pillNeutral },
+];
+
+/** If `children` is a known verdict status tag, render it as a pill; else null. */
+export function statusPill(children: ReactNode): ReactNode | null {
+  const text = nodeText(children).trim();
+  for (const p of STATUS_PILLS) {
+    if (p.test.test(text)) {
+      // Strip the brackets and any leading status emoji (⚠️ etc.) — colour carries it.
+      const label = text.replace(/^\[\s*/, "").replace(/\s*\]$/, "").replace(/^[^\p{L}]+/u, "");
+      return <span className={`${s.pill} ${p.cls}`}>{label}</span>;
+    }
+  }
+  return null;
+}
+
+/** Colour-code a blockquote callout by the verdict it contains. */
+export function calloutClass(children: ReactNode): string {
+  const t = nodeText(children);
+  if (/ОШИБКА/.test(t)) return s.calloutBad;
+  if (/ПОДТВЕРЖДЕНО/.test(t)) return s.calloutGood;
+  if (/РИСК РЕТРИВАЛА|ПРЕДУПРЕЖДЕНИЕ/.test(t)) return s.calloutWarn;
+  if (/НЕ ПРОВЕРЕНО/.test(t)) return s.calloutNeutral;
+  return "";
 }
 
 // ── Emoji → icon mapping ─────────────────────────────────────────────────────

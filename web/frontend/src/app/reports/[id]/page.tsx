@@ -7,6 +7,8 @@ import ReportViewer from "@/components/ReportViewer";
 import VerdictBadges from "@/components/VerdictBadges";
 import { useTranslation } from "@/lib/i18n";
 import { API_URL, apiFetch } from "@/lib/api";
+import { scoreTier } from "@/lib/score";
+import { formatDate } from "@/lib/format";
 import s from "./ReportDetail.module.css";
 
 interface ReportData {
@@ -24,11 +26,8 @@ interface ReportData {
   };
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("ru-RU", {
-    day: "2-digit", month: "long", year: "numeric"
-  });
-}
+const SCORE_CLASS = { good: "scoreGood", warn: "scoreWarn", bad: "scoreBad" } as const;
+const SCORE_ICON = { good: Shield, warn: ShieldAlert, bad: AlertTriangle } as const;
 
 export default function ReportDetailPage({
   params,
@@ -72,8 +71,9 @@ export default function ReportDetailPage({
   }
 
   const score = report.metadata.reliability_score;
-  const scoreClass = score >= 75 ? s.scoreGood : score >= 50 ? s.scoreWarn : s.scoreBad;
-  const ScoreIcon = score >= 75 ? Shield : score >= 50 ? ShieldAlert : AlertTriangle;
+  const tier = scoreTier(score);
+  const scoreClass = s[SCORE_CLASS[tier]];
+  const ScoreIcon = SCORE_ICON[tier];
 
   return (
     <div className={s.page}>
@@ -93,7 +93,7 @@ export default function ReportDetailPage({
             <div className={s.docInfo}>
               <p className={s.docMeta}>{t("report_source_doc")}</p>
               <h1 className={s.docName}>{report.metadata.filename}</h1>
-              <p className={s.docDate}>{formatDate(report.metadata.date)}</p>
+              <p className={s.docDate}>{formatDate(report.metadata.date, "long")}</p>
             </div>
 
             <div className={`${s.scoreWrap} ${scoreClass}`}>

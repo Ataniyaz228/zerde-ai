@@ -79,7 +79,10 @@
 .toolBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  min-height: 40px;
+  min-width: 40px;
   padding: 7px 11px;
   font-size: 12px;
   font-weight: 500;
@@ -96,14 +99,18 @@
   color: var(--text-primary);
 }
 
+/* Mobile-first: на телефоне кнопки — только иконки; подписи с md (≥48rem). */
+.toolBtnLabel { display: none; }
+
+@media (min-width: 48rem) {
+  .toolBtnLabel { display: inline; }
+}
+
 /* Hide the toolbar when printing — keep just the report body. */
 @media print {
   .toolbar { display: none; }
   .section { break-inside: avoid; }
-}
-
-@media (max-width: 560px) {
-  .toolBtnLabel { display: none; }
+  .toolBtnLabel { display: inline; }
 }
 
 /* ===== Search highlight ===== */
@@ -332,12 +339,20 @@
   color: var(--text-primary);
 }
 
+/* Узкие экраны: широкие таблицы прокручиваются по горизонтали внутри обёртки. */
+.tableScroll {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  border-radius: var(--radius-sm);
+}
+
 .md table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
-  margin-bottom: 1rem;
 }
+.tableScroll .md table,
+.md .tableScroll table { margin-bottom: 0; }
 
 .md th {
   text-align: left;

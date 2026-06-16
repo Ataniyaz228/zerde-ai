@@ -1,25 +1,31 @@
+/* История отчётов. Mobile-first: карточки на телефоне, таблица c md (≥48rem). */
+
 .page {
-  min-height: calc(100vh - 64px);
-  padding: 3.5rem 1.75rem 5rem;
+  min-height: calc(100vh - var(--header-h));
+  padding: var(--space-6) var(--container-pad) var(--space-8);
 }
 
 .inner {
-  max-width: 940px;
+  max-width: var(--container-max-narrow);
   margin: 0 auto;
+}
+
+@media (min-width: 48rem) {
+  .page { padding: var(--space-7) var(--container-pad) var(--space-9); }
 }
 
 .pageHeader {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 2rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
 }
 
 .headingGroup {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .eyebrow { margin: 0; }
@@ -37,24 +43,24 @@
   font-size: 12px;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
-/* ─── Controls (search / filter / sort) ─── */
+/* ─── Контролы (поиск / фильтр / сортировка) ─── */
 
 .controls {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 18px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 
 .searchWrap {
   position: relative;
   display: flex;
   align-items: center;
-  flex: 1 1 220px;
-  max-width: 340px;
+  width: 100%;
 }
 
 .searchIcon {
@@ -66,6 +72,7 @@
 
 .searchInput {
   width: 100%;
+  min-height: var(--tap-min);
   padding: 9px 10px 9px 34px;
   font-size: 13px;
   color: var(--text-primary);
@@ -75,46 +82,72 @@
   outline: none;
   transition: border-color var(--duration), box-shadow var(--duration);
 }
-
 .searchInput:focus { border-color: var(--accent); box-shadow: var(--ring); }
 .searchInput::placeholder { color: var(--text-tertiary); }
 
-.segments {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+@media (min-width: 48rem) {
+  .controls { flex-direction: row; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .searchWrap { flex: 1 1 220px; max-width: 340px; width: auto; }
+}
+
+/* ─── Карточки (телефон) ─── */
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
   background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration), box-shadow var(--duration), transform var(--duration);
 }
+.card:hover { border-color: var(--accent-border); box-shadow: var(--shadow); }
+.card:active { transform: scale(0.995); }
 
-.segment {
-  display: inline-flex;
+.cardTop {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 8px 13px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: transparent;
-  cursor: pointer;
-  border-right: 1px solid var(--border);
-  transition: background var(--duration), color var(--duration);
+  gap: var(--space-3);
 }
 
-.segment:last-child { border-right: none; }
-.segment:hover { background: var(--bg-elevated); }
-
-.segmentActive {
-  background: var(--accent-soft);
-  color: var(--accent);
+.cardBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
 }
-.segmentActive:hover { background: var(--accent-soft); }
+
+/* Таблица скрыта на телефоне, карточки — на десктопе. */
+.tableWrap { display: none; }
+
+@media (min-width: 48rem) {
+  .cards { display: none; }
+  .tableWrap { display: block; }
+}
+
+/* Обёртка состояний (загрузка / пусто / ничего не найдено) — видна всегда. */
+.stateWrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+}
 
 .fileMeta {
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+  flex: 1;
 }
 
 .flag {
@@ -129,11 +162,11 @@
 .scoreCell {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   white-space: nowrap;
 }
 
-/* ─── Table ─── */
+/* ─── Таблица (планшет+) ─── */
 
 .tableWrap {
   border: 1px solid var(--border);
@@ -150,12 +183,10 @@
   table-layout: fixed;
 }
 
-/* Фиксированные колонки: имя забирает остаток и обрезается многоточием,
-   остальные — по содержимому, без переносов. */
-.th:nth-child(2), .td:nth-child(2) { width: 118px; }   /* дата */
-.th:nth-child(3), .td:nth-child(3) { width: 168px; }   /* надёжность */
-.th:nth-child(4), .td:nth-child(4) { width: 124px; }   /* статус */
-.th:nth-child(5), .td:nth-child(5) { width: 44px; }    /* шеврон */
+.th:nth-child(2), .td:nth-child(2) { width: 118px; }
+.th:nth-child(3), .td:nth-child(3) { width: 168px; }
+.th:nth-child(4), .td:nth-child(4) { width: 124px; }
+.th:nth-child(5), .td:nth-child(5) { width: 44px; }
 
 .th {
   text-align: left;
@@ -174,7 +205,6 @@
   transition: background var(--duration);
   border-bottom: 1px solid var(--border-subtle);
 }
-
 .tr:last-child { border-bottom: none; }
 .tr:hover { background: var(--bg-elevated); }
 .tr:hover .chevron { transform: translateX(3px); color: var(--accent); }
@@ -189,7 +219,7 @@
 .fileCell {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .fileIcon {
@@ -229,6 +259,7 @@
   font-size: 16px;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 .scoreGood { color: var(--status-ok); }
@@ -246,31 +277,24 @@
   white-space: nowrap;
 }
 
-.badgeDone {
-  background: var(--status-ok-bg);
-  color: var(--status-ok);
-}
-
-.badgePending {
-  background: var(--status-warn-bg);
-  color: var(--status-warn);
-}
+.badgeDone { background: var(--status-ok-bg); color: var(--status-ok); }
+.badgePending { background: var(--status-warn-bg); color: var(--status-warn); }
 
 .chevron {
   color: var(--text-tertiary);
   transition: transform var(--duration), color var(--duration);
 }
 
-/* ─── Empty state ─── */
+/* ─── Пустое состояние ─── */
 
 .empty {
-  padding: 5rem 2rem;
+  padding: var(--space-8) var(--space-6);
   text-align: center;
   color: var(--text-secondary);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
 .emptyIcon {
@@ -291,23 +315,13 @@
   color: var(--text-primary);
 }
 
-.emptyLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 11px 22px;
-  background: var(--accent);
-  color: var(--text-on-accent);
-  border-radius: var(--radius-sm);
+.emptySub {
   font-size: 13px;
-  font-weight: 600;
-  box-shadow: var(--shadow-sm);
-  transition: background var(--duration), transform var(--duration);
+  color: var(--text-tertiary);
 }
-.emptyLink:hover { background: var(--accent-strong); transform: translateY(-2px); }
 
 .loadingRow {
-  padding: 3rem;
+  padding: var(--space-7);
   text-align: center;
   color: var(--text-secondary);
   font-size: 13px;

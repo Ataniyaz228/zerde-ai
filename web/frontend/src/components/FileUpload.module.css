@@ -3,17 +3,21 @@
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
-  padding: 3.25rem 2rem;
+  padding: var(--space-7) var(--space-4);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
+  gap: var(--space-4);
   cursor: pointer;
   transition: border-color var(--duration), background var(--duration),
     box-shadow var(--duration), transform var(--duration);
   text-align: center;
-  min-height: 240px;
+  min-height: 220px;
+}
+
+@media (min-width: 48rem) {
+  .zone { padding: 3.25rem 2rem; min-height: 240px; }
 }
 
 .zone:hover, .zoneDragging {
@@ -136,17 +140,23 @@
 
 .actions {
   display: flex;
-  gap: 10px;
-  margin-top: 0.75rem;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
   width: 100%;
   justify-content: center;
-  flex-wrap: wrap;
+}
+
+@media (min-width: 30rem) {
+  .actions { flex-direction: row; flex-wrap: wrap; }
 }
 
 .startBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  min-height: var(--tap-min);
   padding: 11px 26px;
   background: var(--accent);
   color: var(--text-on-accent);
@@ -177,7 +187,9 @@
 .changeBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  min-height: var(--tap-min);
   padding: 11px 18px;
   background: var(--bg-surface);
   color: var(--text-secondary);

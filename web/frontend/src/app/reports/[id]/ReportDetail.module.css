@@ -1,6 +1,6 @@
 .page {
-  min-height: calc(100vh - 64px);
-  padding: 2.75rem 1.75rem 5rem;
+  min-height: calc(100vh - var(--header-h));
+  padding: var(--space-5) var(--container-pad) var(--space-8);
 }
 
 .inner {
@@ -8,14 +8,19 @@
   margin: 0 auto;
 }
 
+@media (min-width: 48rem) {
+  .page { padding: var(--space-6) var(--container-pad) var(--space-9); }
+}
+
 .back {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: var(--tap-min);
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
-  margin-bottom: 1.75rem;
+  margin-bottom: var(--space-5);
   transition: color var(--duration);
 }
 
@@ -35,14 +40,23 @@
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 1.75rem 1.85rem;
+  padding: var(--space-5);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
   box-shadow: var(--shadow-sm);
+}
+
+@media (min-width: 48rem) {
+  .headerCard {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+    padding: 1.75rem 1.85rem;
+  }
 }
 
 .docMeta {
@@ -76,12 +90,18 @@
   display: flex;
   align-items: center;
   gap: 14px;
+  align-self: stretch;
+  justify-content: flex-start;
   padding: 14px 22px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   flex-shrink: 0;
   box-shadow: var(--shadow-sm);
+}
+
+@media (min-width: 48rem) {
+  .scoreWrap { align-self: auto; background: var(--bg-surface); }
 }
 
 .scoreLabel {
@@ -120,5 +140,5 @@
 }
 
 .dashboard {
-  margin: 4px 0 22px;
+  margin: var(--space-1) 0 var(--space-5);
 }

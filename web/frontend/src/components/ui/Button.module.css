@@ -1,0 +1,61 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration), color var(--duration),
+    border-color var(--duration), transform var(--duration), box-shadow var(--duration);
+}
+.btn svg { transition: transform var(--duration); flex-shrink: 0; }
+.btn:active { transform: translateY(0); }
+
+/* ── Sizes (тач-цель ≥ --tap-min на не-icon) ── */
+.sm  { min-height: 36px; padding: var(--space-2) var(--space-4); font-size: 13px; }
+.md  { min-height: var(--tap-min); padding: var(--space-3) var(--space-5); font-size: 14px; }
+.lg  { min-height: 48px; padding: 0.85rem 1.6rem; font-size: 15px; }
+
+/* ── Variants ── */
+.primary {
+  color: var(--text-on-accent);
+  background: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+.primary:hover {
+  background: var(--accent-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+.primary:hover svg { transform: translateX(3px); }
+
+.secondary {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+}
+.secondary:hover {
+  border-color: var(--accent-border);
+  background: var(--bg-elevated);
+  transform: translateY(-2px);
+}
+
+.ghost {
+  color: var(--text-secondary);
+  background: transparent;
+}
+.ghost:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.icon {
+  width: var(--tap-min);
+  height: var(--tap-min);
+  min-height: 0;
+  padding: 0;
+  color: var(--text-secondary);
+  background: transparent;
+}
+.icon:hover { color: var(--accent); background: var(--bg-hover); }
+
+.block { width: 100%; }

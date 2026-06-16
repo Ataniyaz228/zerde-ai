@@ -3,10 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { FileText, Plus, ChevronRight, Search, AlertTriangle } from "lucide-react";
+import { FileText, ChevronRight, Search, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import { API_URL, apiFetch } from "@/lib/api";
+import { scoreTier } from "@/lib/score";
+import { formatDate } from "@/lib/format";
 import VerdictBadges from "@/components/VerdictBadges";
+import Button from "@/components/ui/Button";
+import SegmentedControl from "@/components/ui/SegmentedControl";
 import s from "./Reports.module.css";
 
 interface Report {
@@ -25,16 +29,9 @@ interface Report {
 type SortKey = "date" | "score";
 type FilterKey = "all" | "flagged";
 
+const SCORE_CLASS = { good: "scoreGood", warn: "scoreWarn", bad: "scoreBad" } as const;
 function scoreClass(score: number): string {
-  if (score >= 75) return s.scoreGood;
-  if (score >= 50) return s.scoreWarn;
-  return s.scoreBad;
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("ru-RU", {
-    day: "2-digit", month: "short", year: "numeric"
-  });
+  return s[SCORE_CLASS[scoreTier(score)]];
 }
 
 export default function ReportsPage() {
@@ -92,120 +89,143 @@ export default function ReportsPage() {
                 placeholder={t("reports_search_placeholder")}
               />
             </div>
-            <div className={s.segments}>
-              <button
-                className={`${s.segment} ${filter === "all" ? s.segmentActive : ""}`}
-                onClick={() => setFilter("all")}
-              >
-                {t("reports_filter_all")}
-              </button>
-              <button
-                className={`${s.segment} ${filter === "flagged" ? s.segmentActive : ""}`}
-                onClick={() => setFilter("flagged")}
-              >
-                <AlertTriangle size={12} strokeWidth={2} />
-                {t("reports_filter_flagged")}
-              </button>
-            </div>
-            <div className={s.segments}>
-              <button
-                className={`${s.segment} ${sortKey === "date" ? s.segmentActive : ""}`}
-                onClick={() => setSortKey("date")}
-              >
-                {t("reports_sort_date")}
-              </button>
-              <button
-                className={`${s.segment} ${sortKey === "score" ? s.segmentActive : ""}`}
-                onClick={() => setSortKey("score")}
-              >
-                {t("reports_sort_score")}
-              </button>
-            </div>
+            <SegmentedControl
+              ariaLabel={t("reports_filter_label")}
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { value: "all", label: t("reports_filter_all") },
+                {
+                  value: "flagged",
+                  label: <><AlertTriangle size={12} strokeWidth={2} />{t("reports_filter_flagged")}</>,
+                },
+              ]}
+            />
+            <SegmentedControl
+              ariaLabel={t("reports_sort_label")}
+              value={sortKey}
+              onChange={setSortKey}
+              options={[
+                { value: "date", label: t("reports_sort_date") },
+                { value: "score", label: t("reports_sort_score") },
+              ]}
+            />
           </div>
         )}
 
         {loading ? (
-          <div className={s.tableWrap}>
+          <div className={s.stateWrap}>
             <div className={s.loadingRow}>{t("loading")}</div>
           </div>
         ) : reports.length === 0 ? (
-          <div className={s.tableWrap}>
+          <div className={s.stateWrap}>
             <div className={s.empty}>
               <div className={s.emptyIcon}><FileText size={20} strokeWidth={1.5} /></div>
               <p className={s.emptyTitle}>{t("reports_empty")}</p>
-              <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>{t("reports_empty_sub")}</p>
-              <Link href="/analyze" className={s.emptyLink}>
-                <Plus size={14} strokeWidth={2} />
+              <p className={s.emptySub}>{t("reports_empty_sub")}</p>
+              <Button variant="primary" href="/analyze">
                 {t("nav_new")}
-              </Link>
+              </Button>
             </div>
           </div>
         ) : visible.length === 0 ? (
-          <div className={s.tableWrap}>
+          <div className={s.stateWrap}>
             <div className={s.loadingRow}>{t("reports_nothing_found")}</div>
           </div>
         ) : (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className={s.tableWrap}
           >
-            <table className={s.table}>
-              <thead className={s.thead}>
-                <tr>
-                  <th className={s.th}>{t("reports_col_file")}</th>
-                  <th className={s.th}>{t("reports_col_date")}</th>
-                  <th className={s.th}>{t("reports_col_score")}</th>
-                  <th className={s.th}>{t("reports_col_status")}</th>
-                  <th className={s.th} />
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((r) => (
-                  <tr
-                    key={r.id}
-                    className={s.tr}
-                    onClick={() => router.push(`/reports/${r.id}`)}
-                  >
-                    <td className={s.td}>
-                      <div className={s.fileCell}>
-                        <div className={s.fileIcon}>
-                          <FileText size={14} strokeWidth={1.5} />
-                        </div>
-                        <div className={s.fileMeta}>
-                          <span className={s.fileName} title={r.filename}>{r.filename}</span>
-                          {r.contradicted > 0 && (
-                            <span className={s.flag}>
-                              <AlertTriangle size={11} strokeWidth={2.2} />
-                              {t("report_has_contradictions")}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className={s.td}>
+            {/* Карточки — телефон (<md) */}
+            <div className={s.cards}>
+              {visible.map((r) => (
+                <Link key={r.id} href={`/reports/${r.id}`} className={s.card}>
+                  <div className={s.cardTop}>
+                    <div className={s.fileIcon}><FileText size={15} strokeWidth={1.5} /></div>
+                    <div className={s.fileMeta}>
+                      <span className={s.fileName} title={r.filename}>{r.filename}</span>
                       <span className={s.dateText}>{formatDate(r.date)}</span>
-                    </td>
-                    <td className={s.td}>
-                      <div className={s.scoreCell}>
-                        <span className={`${s.score} ${scoreClass(r.reliability_score)}`}>
-                          {r.reliability_score}%
-                        </span>
-                        <VerdictBadges counts={r} variant="compact" />
-                      </div>
-                    </td>
-                    <td className={s.td}>
-                      <span className={`${s.badge} ${r.status === "done" ? s.badgeDone : s.badgePending}`}>
-                        {r.status === "done" ? t("report_status_done") : t("report_status_pending")}
-                      </span>
-                    </td>
-                    <td className={s.td} style={{ width: 32 }}>
-                      <ChevronRight size={15} strokeWidth={1.5} className={s.chevron} />
-                    </td>
+                    </div>
+                    <span className={`${s.score} ${scoreClass(r.reliability_score)}`}>
+                      {r.reliability_score}%
+                    </span>
+                  </div>
+                  <div className={s.cardBottom}>
+                    <VerdictBadges counts={r} variant="compact" />
+                    <span className={`${s.badge} ${r.status === "done" ? s.badgeDone : s.badgePending}`}>
+                      {r.status === "done" ? t("report_status_done") : t("report_status_pending")}
+                    </span>
+                  </div>
+                  {r.contradicted > 0 && (
+                    <span className={s.flag}>
+                      <AlertTriangle size={11} strokeWidth={2.2} />
+                      {t("report_has_contradictions")}
+                    </span>
+                  )}
+                </Link>
+              ))}
+            </div>
+
+            {/* Таблица — планшет+ (≥md) */}
+            <div className={s.tableWrap}>
+              <table className={s.table}>
+                <thead className={s.thead}>
+                  <tr>
+                    <th className={s.th}>{t("reports_col_file")}</th>
+                    <th className={s.th}>{t("reports_col_date")}</th>
+                    <th className={s.th}>{t("reports_col_score")}</th>
+                    <th className={s.th}>{t("reports_col_status")}</th>
+                    <th className={s.th} />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {visible.map((r) => (
+                    <tr
+                      key={r.id}
+                      className={s.tr}
+                      onClick={() => router.push(`/reports/${r.id}`)}
+                    >
+                      <td className={s.td}>
+                        <div className={s.fileCell}>
+                          <div className={s.fileIcon}>
+                            <FileText size={14} strokeWidth={1.5} />
+                          </div>
+                          <div className={s.fileMeta}>
+                            <span className={s.fileName} title={r.filename}>{r.filename}</span>
+                            {r.contradicted > 0 && (
+                              <span className={s.flag}>
+                                <AlertTriangle size={11} strokeWidth={2.2} />
+                                {t("report_has_contradictions")}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className={s.td}>
+                        <span className={s.dateText}>{formatDate(r.date)}</span>
+                      </td>
+                      <td className={s.td}>
+                        <div className={s.scoreCell}>
+                          <span className={`${s.score} ${scoreClass(r.reliability_score)}`}>
+                            {r.reliability_score}%
+                          </span>
+                          <VerdictBadges counts={r} variant="compact" />
+                        </div>
+                      </td>
+                      <td className={s.td}>
+                        <span className={`${s.badge} ${r.status === "done" ? s.badgeDone : s.badgePending}`}>
+                          {r.status === "done" ? t("report_status_done") : t("report_status_pending")}
+                        </span>
+                      </td>
+                      <td className={s.td} style={{ width: 32 }}>
+                        <ChevronRight size={15} strokeWidth={1.5} className={s.chevron} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </motion.div>
         )}
       </div>

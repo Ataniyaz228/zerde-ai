@@ -1,6 +1,6 @@
 .page {
-  min-height: calc(100vh - 64px);
-  padding: 3.5rem 1.75rem 5rem;
+  min-height: calc(100vh - var(--header-h));
+  padding: var(--space-6) var(--container-pad) var(--space-8);
 }
 
 .inner {
@@ -9,11 +9,15 @@
 }
 
 .header {
-  margin-bottom: 2.5rem;
+  margin-bottom: var(--space-6);
 }
 
 .eyebrow {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-4);
+}
+
+@media (min-width: 48rem) {
+  .page { padding: var(--space-7) var(--container-pad) var(--space-9); }
 }
 
 .title {
@@ -31,7 +35,7 @@
 }
 
 .uploadSection {
-  margin-bottom: 2.5rem;
+  margin-bottom: var(--space-6);
 }
 
 /* ─── Progress section ─── */
@@ -39,22 +43,26 @@
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 1.85rem;
-  margin-bottom: 2.5rem;
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
   box-shadow: var(--shadow-sm);
+}
+
+@media (min-width: 48rem) {
+  .progressSection { padding: 1.85rem; }
 }
 
 /* ─── Report section ─── */
 .reportSection {
-  margin-top: 2rem;
+  margin-top: var(--space-6);
 }
 
 .reportHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
   flex-wrap: wrap;
 }
 

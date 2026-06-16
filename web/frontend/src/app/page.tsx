@@ -1,17 +1,12 @@
 "use client";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { fadeUp, fadeInUp } from "@/lib/motion";
 import AnimatedNumber from "@/components/AnimatedNumber";
+import ProductWindow from "@/components/ProductWindow";
+import Button from "@/components/ui/Button";
 import s from "./Home.module.css";
-
-const fadeUp = (delay = 0) => ({
-  initial: { opacity: 0, y: 16 },
-  whileInView: { opacity: 1, y: 0 },
-  viewport: { once: true, margin: "-60px" },
-  transition: { duration: 0.6, delay, ease: [0.22, 1, 0.36, 1] as const },
-});
 
 export default function Home() {
   const { t } = useTranslation();
@@ -30,53 +25,51 @@ export default function Home() {
 
   return (
     <div className={s.page}>
-      {/* ── Hero: типографическое высказывание, без плавающих карточек ── */}
+      {/* ── Hero: светлый премиум на чистом CSS ── */}
       <section className={s.hero}>
-        <motion.span
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-          className={`eyebrow ${s.eyebrow}`}
-        >
-          {t("hero_badge")}
-        </motion.span>
+        <div className={s.heroGlow} aria-hidden />
+        <div className={s.heroGrid} aria-hidden />
 
-        <motion.h1
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.65, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
-          className={s.title}
-        >
-          {t("hero_title_1")}{" "}
-          <span className={s.titleAccent}>{t("hero_title_2")}</span>
-        </motion.h1>
+        <div className={s.heroInner}>
+          <motion.span {...fadeInUp(0)} className={s.pill}>
+            <span className={s.pillDot} />
+            {t("hero_badge")}
+          </motion.span>
 
-        <motion.p
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.65, delay: 0.14, ease: [0.22, 1, 0.36, 1] }}
-          className={s.sub}
-        >
-          {t("hero_sub")}
-        </motion.p>
+          <motion.h1 {...fadeInUp(0.06)} className={s.title}>
+            {t("hero_title_1")}
+            <br />
+            <span className={s.titleAccent}>{t("hero_title_2")}</span>
+          </motion.h1>
+
+          <motion.p {...fadeInUp(0.14)} className={s.sub}>
+            {t("hero_sub")}
+          </motion.p>
+
+          <motion.div {...fadeInUp(0.22)} className={s.actions}>
+            <Button variant="primary" size="lg" href="/analyze">
+              {t("hero_cta")}
+              <ArrowRight size={16} strokeWidth={2} />
+            </Button>
+            <Button variant="secondary" size="lg" href="/reports">
+              {t("hero_link")}
+            </Button>
+          </motion.div>
+
+          <motion.span {...fadeInUp(0.34)} className={s.trust}>
+            <ShieldCheck size={14} strokeWidth={1.7} />
+            {t("hero_trust")}
+          </motion.span>
+        </div>
 
         <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.65, delay: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          className={s.actions}
+          initial={{ opacity: 0, y: 70, scale: 0.96 }}
+          whileInView={{ opacity: 1, y: 0, scale: 1 }}
+          viewport={{ once: true, margin: "-80px" }}
+          transition={{ duration: 0.9, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+          className={s.windowWrap}
         >
-          <Link href="/analyze" className={s.cta}>
-            {t("hero_cta")}
-            <ArrowRight size={16} strokeWidth={2} />
-          </Link>
-          <Link href="/reports" className={s.ctaSecondary}>
-            {t("hero_link")}
-          </Link>
-          <span className={s.trust}>
-            <ShieldCheck size={15} strokeWidth={1.7} />
-            {t("hero_trust")}
-          </span>
+          <ProductWindow />
         </motion.div>
       </section>
 
@@ -106,14 +99,7 @@ export default function Home() {
         </div>
         <div className={s.steps}>
           {STEPS.map((step, i) => (
-            <motion.div
-              key={step.n}
-              initial={{ opacity: 0, y: 18 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-40px" }}
-              transition={{ duration: 0.55, delay: i * 0.1, ease: [0.22, 1, 0.36, 1] }}
-              className={s.step}
-            >
+            <motion.div key={step.n} {...fadeUp(i * 0.1)} className={s.step}>
               <span className={s.stepNum}>{step.n}</span>
               <h3 className={s.stepTitle}>{step.title}</h3>
               <p className={s.stepDesc}>{step.desc}</p>
@@ -128,10 +114,10 @@ export default function Home() {
           <h2 className={s.ctaBandTitle}>{t("cta_band_title")}</h2>
           <p className={s.ctaBandSub}>{t("cta_band_sub")}</p>
         </div>
-        <Link href="/analyze" className={s.ctaBandBtn}>
+        <Button variant="primary" size="lg" href="/analyze">
           {t("hero_cta")}
           <ArrowRight size={16} strokeWidth={2} />
-        </Link>
+        </Button>
       </motion.section>
     </div>
   );

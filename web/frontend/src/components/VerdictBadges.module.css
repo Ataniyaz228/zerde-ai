@@ -6,14 +6,15 @@
   gap: 16px;
 }
 
+/* Mobile-first: одна колонка на телефоне, три — с 34rem. */
 .chips {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
-@media (max-width: 540px) {
-  .chips { grid-template-columns: 1fr; }
+@media (min-width: 34rem) {
+  .chips { grid-template-columns: repeat(3, 1fr); }
 }
 
 .chip {

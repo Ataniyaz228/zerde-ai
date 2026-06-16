@@ -86,6 +86,33 @@
   --duration:   180ms;
   --duration-lg: 420ms;
 
+  /* Шкала отступов (4px-база) — единый ритм вместо ad-hoc rem. */
+  --space-1: 0.25rem;  /* 4  */
+  --space-2: 0.5rem;   /* 8  */
+  --space-3: 0.75rem;  /* 12 */
+  --space-4: 1rem;     /* 16 */
+  --space-5: 1.5rem;   /* 24 */
+  --space-6: 2rem;     /* 32 */
+  --space-7: 3rem;     /* 48 */
+  --space-8: 4rem;     /* 64 */
+  --space-9: 6rem;     /* 96 */
+
+  /* Layout — ширины, отступ контейнера, высота шапки, минимальная тач-цель. */
+  --header-h: 64px;
+  --container-max: 1120px;
+  --container-max-narrow: 940px;
+  --container-pad: clamp(1rem, 4vw, 1.75rem);
+  --tap-min: 44px;
+
+  /* Z-index шкала. */
+  --z-nav: 100;
+  --z-overlay: 200;
+  --z-modal: 300;
+
+  /* Канон брейкпоинтов: sm 30rem(480) · md 48rem(768) · lg 64rem(1024).
+     CSS-переменные нельзя использовать в условии @media — всегда пишем
+     `@media (min-width: 48rem)` и т.п. Только min-width (mobile-first). */
+
   color-scheme: light;
 }
 
@@ -184,10 +211,11 @@ img, svg { display: block; }
 /* ===== Утилиты ===== */
 
 .container {
-  max-width: 1120px;
+  max-width: var(--container-max);
   margin: 0 auto;
-  padding: 0 1.75rem;
+  padding: 0 var(--container-pad);
 }
+.container.narrow { max-width: var(--container-max-narrow); }
 
 /* Сплошная панель вместо стеклянной — волосок + мягкая тень */
 .panel {

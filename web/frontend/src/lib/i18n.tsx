@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 
 // ===== TRANSLATIONS =====
 
@@ -9,6 +9,8 @@ const translations = {
     // Navbar
     nav_history: "История",
     nav_new: "Новый анализ",
+    nav_menu: "Меню",
+    nav_close: "Закрыть",
     // Landing
     hero_badge: "Правовой анализ НПА РК",
     hero_title_1: "Проверка законопроектов,",
@@ -65,6 +67,8 @@ const translations = {
     reports_sort_score: "По надёжности",
     reports_filter_all: "Все",
     reports_filter_flagged: "С опровержениями",
+    reports_filter_label: "Фильтр",
+    reports_sort_label: "Сортировка",
     reports_nothing_found: "Ничего не найдено",
     report_status_done: "Готов",
     report_status_pending: "В обработке",
@@ -93,6 +97,14 @@ const translations = {
     restore_running: "Восстановлен текущий анализ",
     // Landing — доп.
     hero_trust: "Без цитаты нет подтверждения",
+    sample_no_source_short: "нет источника",
+    sources_eyebrow: "Источники проверки",
+    sources_ground: "Грунт-истина",
+    sources_verified: "Проверено",
+    sources_primary_sub: "Эталонная база НПА · 20 000+ норм",
+    sources_card_claim: "Срок обжалования — 10 рабочих дней",
+    sources_card_quote: "…подаётся в течение десяти рабочих дней со дня вручения решения",
+    pw_claim_label: "Утверждение",
     how_lead: "Три проверяемых шага — от текста к вердикту со ссылкой.",
     cta_band_title: "Готовы проверить документ?",
     cta_band_sub: "Загрузите законопроект — и получите отчёт, где каждый вывод привязан к статье.",
@@ -109,6 +121,8 @@ const translations = {
   kz: {
     nav_history: "Тарих",
     nav_new: "Жаңа талдау",
+    nav_menu: "Мәзір",
+    nav_close: "Жабу",
     hero_badge: "ҚР НҚА құқықтық талдауы",
     hero_title_1: "Заң жобаларын тексеру,",
     hero_title_2: "нейрожелінің әңгімесі емес.",
@@ -163,6 +177,8 @@ const translations = {
     reports_sort_score: "Сенімділік бойынша",
     reports_filter_all: "Барлығы",
     reports_filter_flagged: "Теріске шығарулармен",
+    reports_filter_label: "Сүзгі",
+    reports_sort_label: "Сұрыптау",
     reports_nothing_found: "Ештеңе табылмады",
     report_status_done: "Дайын",
     report_status_pending: "Өңделуде",
@@ -191,6 +207,14 @@ const translations = {
     restore_running: "Ағымдағы талдау қалпына келтірілді",
     // Landing — қос.
     hero_trust: "Дәйексөз жоқ — растау жоқ",
+    sample_no_source_short: "дереккөз жоқ",
+    sources_eyebrow: "Тексеру дереккөздері",
+    sources_ground: "Шындық дереккөзі",
+    sources_verified: "Расталды",
+    sources_primary_sub: "НҚА эталондық базасы · 20 000+ норма",
+    sources_card_claim: "Шағым беру мерзімі — 10 жұмыс күні",
+    sources_card_quote: "…шешім тапсырылған күннен бастап он жұмыс күні ішінде беріледі",
+    pw_claim_label: "Тұжырым",
     how_lead: "Үш тексерілетін қадам — мәтіннен сілтемелі вердиктке дейін.",
     cta_band_title: "Құжатты тексеруге дайынсыз ба?",
     cta_band_sub: "Заң жобасын жүктеңіз — әр қорытынды бапқа байланған есеп аласыз.",
@@ -222,8 +246,29 @@ const I18nContext = createContext<I18nContextType>({
   t: (key) => translations.ru[key],
 });
 
+const STORAGE_KEY = "zerde-lang";
+
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLang] = useState<Lang>("ru");
+  // SSR-детерминированный дефолт — "ru". Сохранённый язык подхватываем на маунте.
+  const [lang, setLangState] = useState<Lang>("ru");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved === "ru" || saved === "kz") {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLangState(saved);
+        document.documentElement.lang = saved;
+      }
+    } catch { /* storage unavailable */ }
+  }, []);
+
+  const setLang = useCallback((l: Lang) => {
+    setLangState(l);
+    try { localStorage.setItem(STORAGE_KEY, l); } catch { /* noop */ }
+    document.documentElement.lang = l;
+  }, []);
+
   const t = (key: Keys): string => translations[lang][key];
   return (
     <I18nContext.Provider value={{ lang, setLang, t }}>

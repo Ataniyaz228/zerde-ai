@@ -1,30 +1,21 @@
 "use client";
-import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { fadeUp, fadeInUp } from "@/lib/motion";
+import AnimatedNumber from "@/components/AnimatedNumber";
+import ProductWindow from "@/components/ProductWindow";
+import Button from "@/components/ui/Button";
 import s from "./Home.module.css";
-
-const fadeUp = (delay = 0) => ({
-  initial: { opacity: 0, y: 14 },
-  animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.5, delay, ease: [0.22, 1, 0.36, 1] as const },
-});
 
 export default function Home() {
   const { t } = useTranslation();
 
-  const VERDICTS = [
-    { kind: "ok", label: t("verdict_confirmed"), text: t("verdict_sample_confirmed"), src: "ст. 14 · adilet.zan.kz" },
-    { kind: "err", label: t("verdict_contradicted"), text: t("verdict_sample_contradicted"), src: "ст. 9 · adilet.zan.kz" },
-    { kind: "warn", label: t("verdict_unverified"), text: t("verdict_sample_unverified"), src: t("sample_no_source") },
-  ] as const;
-
   const STATS = [
-    { value: "38", label: t("stats_codes") },
-    { value: "20 000+", label: t("stats_norms") },
-    { value: "adilet.zan.kz", label: t("stats_source") },
-  ];
+    { to: 38, suffix: "", label: t("stats_codes") },
+    { to: 20000, suffix: "+", label: t("stats_norms") },
+    { text: "adilet.zan.kz", label: t("stats_source") },
+  ] as const;
 
   const STEPS = [
     { n: "01", title: t("feat_accuracy"), desc: t("feat_accuracy_desc") },
@@ -34,92 +25,100 @@ export default function Home() {
 
   return (
     <div className={s.page}>
-      {/* ── Hero ── */}
+      {/* ── Hero: светлый премиум на чистом CSS ── */}
       <section className={s.hero}>
-        <div className={s.heroText}>
-          <motion.span {...fadeUp(0)} className={`eyebrow ${s.eyebrow}`}>
+        <div className={s.heroGlow} aria-hidden />
+        <div className={s.heroGrid} aria-hidden />
+
+        <div className={s.heroInner}>
+          <motion.span {...fadeInUp(0)} className={s.pill}>
+            <span className={s.pillDot} />
             {t("hero_badge")}
           </motion.span>
 
-          <motion.h1 {...fadeUp(0.06)} className={s.title}>
-            {t("hero_title_1")}{" "}
+          <motion.h1 {...fadeInUp(0.06)} className={s.title}>
+            {t("hero_title_1")}
+            <br />
             <span className={s.titleAccent}>{t("hero_title_2")}</span>
           </motion.h1>
 
-          <motion.p {...fadeUp(0.12)} className={s.sub}>
+          <motion.p {...fadeInUp(0.14)} className={s.sub}>
             {t("hero_sub")}
           </motion.p>
 
-          <motion.div {...fadeUp(0.18)} className={s.actions}>
-            <Link href="/analyze" className={s.cta}>
+          <motion.div {...fadeInUp(0.22)} className={s.actions}>
+            <Button variant="primary" size="lg" href="/analyze">
               {t("hero_cta")}
               <ArrowRight size={16} strokeWidth={2} />
-            </Link>
-            <Link href="/reports" className={s.ctaSecondary}>
+            </Button>
+            <Button variant="secondary" size="lg" href="/reports">
               {t("hero_link")}
-            </Link>
+            </Button>
           </motion.div>
+
+          <motion.span {...fadeInUp(0.34)} className={s.trust}>
+            <ShieldCheck size={14} strokeWidth={1.7} />
+            {t("hero_trust")}
+          </motion.span>
         </div>
 
-        {/* Образец вердиктов — показывает суть продукта вместо декоративной заглушки */}
         <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.24, ease: [0.22, 1, 0.36, 1] }}
-          className={s.sample}
+          initial={{ opacity: 0, y: 70, scale: 0.96 }}
+          whileInView={{ opacity: 1, y: 0, scale: 1 }}
+          viewport={{ once: true, margin: "-80px" }}
+          transition={{ duration: 0.9, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+          className={s.windowWrap}
         >
-          <div className={s.sampleHead}>
-            <span className={s.sampleCaption}>{t("sample_caption")}</span>
-            <span className={s.sampleDots} aria-hidden>
-              <i className={s.dotOk} />
-              <i className={s.dotErr} />
-              <i className={s.dotWarn} />
-            </span>
-          </div>
-
-          {VERDICTS.map((v) => (
-            <div key={v.kind} className={`${s.sampleRow} ${s[`row_${v.kind}`]}`}>
-              <div className={s.sampleBody}>
-                <div className={s.sampleTop}>
-                  <span className={`${s.tag} ${s[`tag_${v.kind}`]}`}>{v.label}</span>
-                  <span className={s.sampleSrc}>{v.src}</span>
-                </div>
-                <p className={s.sampleText}>{v.text}</p>
-              </div>
-            </div>
-          ))}
+          <ProductWindow />
         </motion.div>
       </section>
 
       {/* ── Принцип ── */}
-      <section className={s.principle}>
+      <motion.section {...fadeUp()} className={s.principle}>
         <span className="eyebrow">{t("principle_eyebrow")}</span>
-        <blockquote className={s.quote}>{t("principle_text")}</blockquote>
-      </section>
+        <blockquote className={s.quote} data-dropcap>{t("principle_text")}</blockquote>
+      </motion.section>
 
       {/* ── Цифры ── */}
-      <section className={s.stats}>
+      <motion.section {...fadeUp()} className={s.stats}>
         {STATS.map((st) => (
           <div key={st.label} className={s.stat}>
-            <span className={s.statValue}>{st.value}</span>
+            <span className={s.statValue}>
+              {"to" in st ? <AnimatedNumber to={st.to} suffix={st.suffix} /> : st.text}
+            </span>
             <span className={s.statLabel}>{st.label}</span>
           </div>
         ))}
-      </section>
+      </motion.section>
 
       {/* ── Как это работает ── */}
-      <section className={s.how}>
-        <span className="eyebrow">{t("how_eyebrow")}</span>
+      <motion.section {...fadeUp()} className={s.how}>
+        <div className={s.howHead}>
+          <span className="eyebrow">{t("how_eyebrow")}</span>
+          <p className={s.howLead}>{t("how_lead")}</p>
+        </div>
         <div className={s.steps}>
-          {STEPS.map((step) => (
-            <div key={step.n} className={s.step}>
+          {STEPS.map((step, i) => (
+            <motion.div key={step.n} {...fadeUp(i * 0.1)} className={s.step}>
               <span className={s.stepNum}>{step.n}</span>
               <h3 className={s.stepTitle}>{step.title}</h3>
               <p className={s.stepDesc}>{step.desc}</p>
-            </div>
+            </motion.div>
           ))}
         </div>
-      </section>
+      </motion.section>
+
+      {/* ── CTA-полоса ── */}
+      <motion.section {...fadeUp()} className={s.ctaBand}>
+        <div className={s.ctaBandText}>
+          <h2 className={s.ctaBandTitle}>{t("cta_band_title")}</h2>
+          <p className={s.ctaBandSub}>{t("cta_band_sub")}</p>
+        </div>
+        <Button variant="primary" size="lg" href="/analyze">
+          {t("hero_cta")}
+          <ArrowRight size={16} strokeWidth={2} />
+        </Button>
+      </motion.section>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 import { useRef, useState, useCallback, DragEvent } from "react";
 import { Upload, FileText, X, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { formatBytes } from "@/lib/format";
 import s from "./FileUpload.module.css";
 
 interface Props {
@@ -11,12 +12,6 @@ interface Props {
 
 const ALLOWED_EXT = [".pdf", ".doc", ".docx", ".txt"];
 const MAX_BYTES = 25 * 1024 * 1024;
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 export default function FileUpload({ onAnalyze, isLoading }: Props) {
   const { t } = useTranslation();

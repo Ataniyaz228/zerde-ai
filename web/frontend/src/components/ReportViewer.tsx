@@ -32,6 +32,12 @@ function makeComponents(query: string): Components {
     h4: ({ node, children, ...props }) => <h4 {...props}>{deco(children)}</h4>,
     td: ({ node, children, ...props }) => <td {...props}>{deco(children)}</td>,
     th: ({ node, children, ...props }) => <th {...props}>{deco(children)}</th>,
+    // Оборачиваем таблицу — на узких экранах прокручивается по горизонтали.
+    table: ({ node, ...props }) => (
+      <div className={s.tableScroll}>
+        <table {...props} />
+      </div>
+    ),
     // Bold that is exactly a verdict status tag → coloured pill; otherwise bold.
     strong: ({ node, children, ...props }) => statusPill(children) ?? <strong {...props}>{deco(children)}</strong>,
     // Colour the callout border/tint by the verdict it carries.

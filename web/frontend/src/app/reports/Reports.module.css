@@ -1,100 +1,145 @@
+/* История отчётов. Mobile-first: карточки на телефоне, таблица c md (≥48rem). */
+
 .page {
-  min-height: calc(100vh - 56px);
-  padding: 3rem 1.5rem 5rem;
+  min-height: calc(100vh - var(--header-h));
+  padding: var(--space-6) var(--container-pad) var(--space-8);
 }
 
 .inner {
-  max-width: 900px;
+  max-width: var(--container-max-narrow);
   margin: 0 auto;
+}
+
+@media (min-width: 48rem) {
+  .page { padding: var(--space-7) var(--container-pad) var(--space-9); }
 }
 
 .pageHeader {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   justify-content: space-between;
-  margin-bottom: 2rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
 }
+
+.headingGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.eyebrow { margin: 0; }
 
 .title {
   font-family: var(--font-serif);
-  font-size: 26px;
+  font-size: var(--step-3);
   font-weight: 600;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
 }
 
 .count {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
-/* ─── Controls (search / filter / sort) ─── */
+/* ─── Контролы (поиск / фильтр / сортировка) ─── */
 
 .controls {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 
 .searchWrap {
   position: relative;
   display: flex;
   align-items: center;
-  flex: 1 1 220px;
-  max-width: 340px;
+  width: 100%;
 }
 
 .searchIcon {
   position: absolute;
-  left: 10px;
+  left: 11px;
   color: var(--text-tertiary);
   pointer-events: none;
 }
 
 .searchInput {
   width: 100%;
-  padding: 8px 10px 8px 32px;
+  min-height: var(--tap-min);
+  padding: 9px 10px 9px 34px;
   font-size: 13px;
   color: var(--text-primary);
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   outline: none;
-  transition: border-color var(--duration);
+  transition: border-color var(--duration), box-shadow var(--duration);
 }
-
-.searchInput:focus { border-color: var(--accent); }
+.searchInput:focus { border-color: var(--accent); box-shadow: var(--ring); }
 .searchInput::placeholder { color: var(--text-tertiary); }
 
-.segments {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+@media (min-width: 48rem) {
+  .controls { flex-direction: row; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .searchWrap { flex: 1 1 220px; max-width: 340px; width: auto; }
 }
 
-.segment {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 7px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
+/* ─── Карточки (телефон) ─── */
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
   background: var(--bg-surface);
-  cursor: pointer;
-  border-right: 1px solid var(--border);
-  transition: background var(--duration), color var(--duration);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration), box-shadow var(--duration), transform var(--duration);
+}
+.card:hover { border-color: var(--accent-border); box-shadow: var(--shadow); }
+.card:active { transform: scale(0.995); }
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 
-.segment:last-child { border-right: none; }
-.segment:hover { background: var(--bg-elevated); }
+.cardBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
 
-.segmentActive {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
+/* Таблица скрыта на телефоне, карточки — на десктопе. */
+.tableWrap { display: none; }
+
+@media (min-width: 48rem) {
+  .cards { display: none; }
+  .tableWrap { display: block; }
+}
+
+/* Обёртка состояний (загрузка / пусто / ничего не найдено) — видна всегда. */
+.stateWrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .fileMeta {
@@ -102,6 +147,7 @@
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+  flex: 1;
 }
 
 .flag {
@@ -116,33 +162,41 @@
 .scoreCell {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
+  white-space: nowrap;
 }
 
-/* ─── Table ─── */
+/* ─── Таблица (планшет+) ─── */
 
 .tableWrap {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .table {
   width: 100%;
+  min-width: 720px;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
-.thead {}
+.th:nth-child(2), .td:nth-child(2) { width: 118px; }
+.th:nth-child(3), .td:nth-child(3) { width: 168px; }
+.th:nth-child(4), .td:nth-child(4) { width: 124px; }
+.th:nth-child(5), .td:nth-child(5) { width: 44px; }
 
 .th {
   text-align: left;
-  padding: 12px 16px;
-  font-size: 11px;
+  padding: 13px 18px;
+  font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.09em;
   color: var(--text-tertiary);
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
 }
 
@@ -151,12 +205,12 @@
   transition: background var(--duration);
   border-bottom: 1px solid var(--border-subtle);
 }
-
 .tr:last-child { border-bottom: none; }
 .tr:hover { background: var(--bg-elevated); }
+.tr:hover .chevron { transform: translateX(3px); color: var(--accent); }
 
 .td {
-  padding: 14px 16px;
+  padding: 15px 18px;
   font-size: 13px;
   color: var(--text-primary);
   vertical-align: middle;
@@ -165,13 +219,13 @@
 .fileCell {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .fileIcon {
-  width: 30px; height: 30px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
+  width: 34px; height: 34px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -181,19 +235,31 @@
 }
 
 .fileName {
-  font-weight: 500;
+  display: block;
+  max-width: 100%;
+  font-weight: 600;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dateText {
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .score {
+  font-family: var(--font-serif);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 .scoreGood { color: var(--status-ok); }
@@ -203,36 +269,36 @@
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 3px 10px;
+  padding: 4px 11px;
   border-radius: 99px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
-.badgeDone {
-  background: var(--status-ok-bg);
-  color: var(--status-ok);
+.badgeDone { background: var(--status-ok-bg); color: var(--status-ok); }
+.badgePending { background: var(--status-warn-bg); color: var(--status-warn); }
+
+.chevron {
+  color: var(--text-tertiary);
+  transition: transform var(--duration), color var(--duration);
 }
 
-.badgePending {
-  background: var(--status-warn-bg);
-  color: var(--status-warn);
-}
-
-/* ─── Empty state ─── */
+/* ─── Пустое состояние ─── */
 
 .empty {
-  padding: 5rem 2rem;
+  padding: var(--space-8) var(--space-6);
   text-align: center;
   color: var(--text-secondary);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
 .emptyIcon {
-  width: 48px; height: 48px;
+  width: 56px; height: 56px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: 50%;
@@ -243,27 +309,19 @@
 }
 
 .emptyTitle {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-secondary);
+  font-family: var(--font-serif);
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
-.emptyLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 20px;
-  background: var(--accent);
-  color: var(--bg-primary);
-  border-radius: var(--radius-sm);
+.emptySub {
   font-size: 13px;
-  font-weight: 600;
-  transition: opacity var(--duration);
+  color: var(--text-tertiary);
 }
-.emptyLink:hover { opacity: 0.85; }
 
 .loadingRow {
-  padding: 3rem;
+  padding: var(--space-7);
   text-align: center;
   color: var(--text-secondary);
   font-size: 13px;

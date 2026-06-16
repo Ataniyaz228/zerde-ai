@@ -3,32 +3,44 @@
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
-  padding: 3rem 2rem;
+  padding: var(--space-7) var(--space-4);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1rem;
+  gap: var(--space-4);
   cursor: pointer;
-  transition: border-color var(--duration), background var(--duration);
+  transition: border-color var(--duration), background var(--duration),
+    box-shadow var(--duration), transform var(--duration);
   text-align: center;
   min-height: 220px;
+}
+
+@media (min-width: 48rem) {
+  .zone { padding: 3.25rem 2rem; min-height: 240px; }
 }
 
 .zone:hover, .zoneDragging {
   border-color: var(--accent);
   background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+.zoneDragging {
+  transform: scale(1.006);
+  box-shadow: var(--shadow);
 }
 
 .zoneSelected {
   border-style: solid;
-  border-color: var(--accent);
+  border-color: var(--accent-border);
   background: var(--accent-soft);
+  cursor: default;
 }
 
 .icon {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
@@ -36,7 +48,15 @@
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
-  transition: color var(--duration), border-color var(--duration);
+  transition: color var(--duration), border-color var(--duration),
+    background var(--duration), transform var(--duration);
+}
+
+.zone:hover .icon, .zoneDragging .icon {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  transform: translateY(-2px);
 }
 
 .zoneSelected .icon {
@@ -46,9 +66,9 @@
 }
 
 .dropText {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .orText {
@@ -62,6 +82,7 @@
   color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
   cursor: pointer;
   transition: opacity var(--duration);
 }
@@ -69,37 +90,45 @@
 .browseBtn:hover { opacity: 0.7; }
 
 .hint {
+  font-family: var(--font-mono);
   font-size: 11px;
+  letter-spacing: 0.02em;
   color: var(--text-tertiary);
 }
 
 .fileInfo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .fileLabel {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 3px;
 }
 
 .fileName {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 15px;
+  font-weight: 600;
   color: var(--text-primary);
+  word-break: break-all;
 }
 
 .fileSize {
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-secondary);
+  margin-top: 2px;
 }
 
 .fileIconWrap {
-  width: 36px;
-  height: 36px;
-  background: var(--accent-soft);
+  width: 40px;
+  height: 40px;
+  background: var(--bg-surface);
   border: 1px solid var(--accent-border);
   border-radius: var(--radius-sm);
   display: flex;
@@ -111,29 +140,39 @@
 
 .actions {
   display: flex;
-  gap: 10px;
-  margin-top: 0.5rem;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
   width: 100%;
   justify-content: center;
+}
+
+@media (min-width: 30rem) {
+  .actions { flex-direction: row; flex-wrap: wrap; }
 }
 
 .startBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 10px 24px;
+  min-height: var(--tap-min);
+  padding: 11px 26px;
   background: var(--accent);
-  color: var(--bg-primary);
+  color: var(--text-on-accent);
   border-radius: var(--radius-sm);
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  transition: opacity var(--duration), transform var(--duration);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--duration), transform var(--duration),
+    box-shadow var(--duration);
 }
 
 .startBtn:hover {
-  opacity: 0.88;
-  transform: translateY(-1px);
+  background: var(--accent-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
 }
 
 .startBtn:active {
@@ -141,33 +180,37 @@
 }
 
 .startBtnLoading {
-  opacity: 0.6;
+  opacity: 0.7;
   pointer-events: none;
 }
 
 .changeBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 10px 16px;
-  background: transparent;
+  min-height: var(--tap-min);
+  padding: 11px 18px;
+  background: var(--bg-surface);
   color: var(--text-secondary);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;
-  transition: color var(--duration), border-color var(--duration);
+  transition: color var(--duration), border-color var(--duration),
+    background var(--duration);
 }
 
 .changeBtn:hover {
   color: var(--text-primary);
   border-color: var(--text-tertiary);
+  background: var(--bg-elevated);
 }
 
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid var(--bg-primary);
+  border: 2px solid var(--text-on-accent);
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
@@ -179,5 +222,5 @@
   gap: 6px;
   margin-top: 12px;
   font-size: 12px;
-  color: var(--status-err, #ef4444);
+  color: var(--status-err);
 }

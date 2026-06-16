@@ -7,7 +7,10 @@ import ReportViewer from "@/components/ReportViewer";
 import VerdictBadges, { VerdictCounts } from "@/components/VerdictBadges";
 import { useTranslation } from "@/lib/i18n";
 import { API_URL, WS_URL, apiFetch } from "@/lib/api";
+import { scoreTier } from "@/lib/score";
 import s from "./Analyze.module.css";
+
+const SCORE_CLASS = { good: "scoreGood", warn: "scoreWarn", bad: "scoreBad" } as const;
 
 type Phase = "idle" | "uploading" | "progress" | "done" | "error";
 
@@ -207,9 +210,7 @@ export default function AnalyzePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisId, phase]);
 
-  const scoreClass = !report ? "" :
-    report.score >= 75 ? s.scoreGood :
-    report.score >= 50 ? s.scoreWarn : s.scoreBad;
+  const scoreClass = report ? s[SCORE_CLASS[scoreTier(report.score)]] : "";
 
   // Inject elapsed hint into active step message
   const displaySteps = steps.map((step) => {
@@ -223,6 +224,7 @@ export default function AnalyzePage() {
     <div className={s.page}>
       <div className={s.inner}>
         <div className={s.header}>
+          <span className={`eyebrow ${s.eyebrow}`}>{t("hero_badge")}</span>
           <h1 className={s.title}>{t("upload_title")}</h1>
           <p className={s.sub}>{t("upload_sub")}</p>
         </div>

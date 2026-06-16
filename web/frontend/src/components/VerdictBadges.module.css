@@ -3,51 +3,77 @@
 .full {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
+/* Mobile-first: одна колонка на телефоне, три — с 34rem. */
 .chips {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 34rem) {
+  .chips { grid-template-columns: repeat(3, 1fr); }
 }
 
 .chip {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm, 8px);
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--duration), box-shadow var(--duration);
 }
+.chip:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+
+/* Левый цветной рейл — статус считывается мгновенно. */
+.chip::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+}
+.chip.good::before { background: var(--status-ok); }
+.chip.bad::before  { background: var(--status-err); }
+.chip.warn::before { background: var(--status-warn); }
 
 .chipBody {
   display: flex;
   flex-direction: column;
-  line-height: 1.1;
+  line-height: 1.05;
+  gap: 3px;
 }
 
 .chipNum {
-  font-size: 18px;
-  font-weight: 700;
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .chipLabel {
   font-size: 11px;
+  font-weight: 500;
   color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 
-.good   { color: var(--status-ok, #22c55e); }
-.bad    { color: var(--status-err, #ef4444); }
-.warn   { color: var(--status-warn, #f59e0b); }
+.good   { color: var(--status-ok); }
+.bad    { color: var(--status-err); }
+.warn   { color: var(--status-warn); }
 
-.chip.good { border-color: color-mix(in srgb, var(--status-ok, #22c55e) 35%, var(--border)); }
-.chip.bad  { border-color: color-mix(in srgb, var(--status-err, #ef4444) 35%, var(--border)); }
-.chip.warn { border-color: color-mix(in srgb, var(--status-warn, #f59e0b) 35%, var(--border)); }
+.chip.good { border-color: color-mix(in srgb, var(--status-ok) 28%, var(--border)); }
+.chip.bad  { border-color: color-mix(in srgb, var(--status-err) 28%, var(--border)); }
+.chip.warn { border-color: color-mix(in srgb, var(--status-warn) 28%, var(--border)); }
 
 /* ===== Coverage bar ===== */
 
@@ -55,41 +81,44 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .coverageLabel {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
 }
 
 .coveragePct {
+  font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .coverageBar {
-  height: 6px;
+  height: 7px;
   border-radius: 999px;
-  background: var(--bg-elevated);
+  background: var(--bg-sunken);
   overflow: hidden;
 }
 
 .coverageFill {
   height: 100%;
   border-radius: 999px;
-  background: var(--accent);
-  transition: width 0.6s var(--ease-out, ease);
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+  transition: width 0.7s var(--ease-out);
 }
 
 /* ===== Compact variant (table rows) ===== */
 
 .compact {
   display: inline-flex;
-  gap: 6px;
+  gap: 8px;
 }
 
 .pill {

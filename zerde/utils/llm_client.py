@@ -270,6 +270,7 @@ async def cached_llm_call(
     ttl_seconds: int | None = None,
     max_tokens: int = 4096,
     temperature: float = 0.0,
+    raw_text: bool = False,
 ) -> dict:
     """
     LLM-вызов с кэшированием ответов в SQLite.
@@ -285,9 +286,16 @@ async def cached_llm_call(
         ttl_seconds: None = постоянный кэш, int = TTL в секундах.
         max_tokens: Макс. токенов ответа.
         temperature: Температура (0 для детерминированности).
+        raw_text: True → НЕ просить json_object и НЕ парсить JSON; вернуть
+            {"text": <сырой ответ>}. Для задач, где ответ — длинный свободный
+            текст (напр. перевод Markdown-отчёта), упаковка которого в JSON-строку
+            ненадёжна (модель роняет невалидный JSON с literal-переводами строк).
+            Ключ кэша получает отдельный namespace (mode=text), поэтому ключи
+            JSON-вызывающих не меняются (cache_key_pin остаётся зелёным).
 
     Returns:
-        Parsed JSON dict от LLM (из кэша или свежий).
+        Parsed JSON dict от LLM (или {"text": str} при raw_text). Пустой dict —
+        сломанный/пустой ответ (вызывающий должен предусмотреть фолбэк).
     """
     global _repair_used_count, _parse_failed_count
 
@@ -303,11 +311,12 @@ async def cached_llm_call(
     # Ключ = model + messages + параметры генерации, влияющие на ответ.
     # БЕЗ temperature/max_tokens смена этих настроек вернула бы устаревший
     # закэшированный ответ (cache.py:_make_key добавляет ещё версию промпта).
-    prompt_key = json.dumps(
-        {"messages": messages, "temperature": temperature, "max_tokens": max_tokens},
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    _key_obj: dict[str, object] = {"messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+    if raw_text:
+        # Отдельный namespace, чтобы текстовые ответы не делили ключ с JSON-режимом
+        # и чтобы ключи существующих JSON-вызовов остались байт-в-байт прежними.
+        _key_obj["mode"] = "text"
+    prompt_key = json.dumps(_key_obj, ensure_ascii=False, sort_keys=True)
 
     # Проверяем кэш
     cache_check_start = time.perf_counter()
@@ -330,9 +339,10 @@ async def cached_llm_call(
     attempts = 0
     response = None
     async with semaphore:
-        # Пробуем с json_object, при ошибке — без него (fallback)
+        # Пробуем с json_object, при ошибке — без него (fallback).
+        # raw_text: json_object вообще не запрашиваем (ответ — свободный текст).
         content = None
-        for use_json_mode in (True, False):
+        for use_json_mode in ((False,) if raw_text else (True, False)):
             try:
                 kwargs: dict = dict(
                     model=model,
@@ -408,6 +418,18 @@ async def cached_llm_call(
         latency_s=time.perf_counter() - live_start,
         attempts=attempts,
     ))
+
+    # raw_text: ответ — сырой текст, JSON не парсим. Пустой/«{}» → сломанный
+    # (не кэшируем, вызывающий уйдёт в фолбэк).
+    if raw_text:
+        text = (content or "").strip()
+        if not text or text == "{}":
+            logger.warning("[LLMCall] Skipping cache — raw_text response is empty.")
+            return {}
+        # Отдельная переменная (не parsed), чтобы не сужать тип parsed ниже.
+        text_result = {"text": text}
+        await cache.put(model, prompt_key, text_result, ttl_seconds=ttl_seconds)
+        return text_result
 
     # Если ответ не JSON — пробуем извлечь JSON из текста
     parse_failed = False

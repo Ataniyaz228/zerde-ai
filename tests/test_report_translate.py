@@ -49,7 +49,7 @@ async def test_translate_returns_kz_on_good_translation(monkeypatch):
     good_kz = _RU.replace("Норма противоречит", "Норма қайшы келеді")
 
     async def fake_call(**kwargs):
-        return {"md": good_kz}
+        return {"text": good_kz}
 
     monkeypatch.setattr(s7t, "make_llm_client", lambda settings=None: object())
     monkeypatch.setattr(s7t, "cached_llm_call", fake_call)
@@ -62,13 +62,28 @@ async def test_translate_falls_back_to_ru_when_guard_fails(monkeypatch):
     bad_kz = _RU.replace("92%", "тоқсан екі пайыз")  # улика потеряна
 
     async def fake_call(**kwargs):
-        return {"md": bad_kz}
+        return {"text": bad_kz}
 
     monkeypatch.setattr(s7t, "make_llm_client", lambda settings=None: object())
     monkeypatch.setattr(s7t, "cached_llm_call", fake_call)
 
     out = await s7t.translate_report_md(_RU, "kz")
     assert out == _RU  # fail-safe: отдаём оригинал
+
+
+async def test_translate_strips_fence_wrapped_markdown(monkeypatch):
+    # Модель завернула весь документ в ```markdown … ``` вопреки инструкции.
+    good_kz = _RU.replace("Норма противоречит", "Норма қайшы келеді")
+    wrapped = f"```markdown\n{good_kz}\n```"
+
+    async def fake_call(**kwargs):
+        return {"text": wrapped}
+
+    monkeypatch.setattr(s7t, "make_llm_client", lambda settings=None: object())
+    monkeypatch.setattr(s7t, "cached_llm_call", fake_call)
+
+    out = await s7t.translate_report_md(_RU, "kz")
+    assert out == good_kz  # fence снят, улики на месте → отдан KZ
 
 
 async def test_translate_falls_back_on_empty_response(monkeypatch):

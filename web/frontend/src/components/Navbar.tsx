@@ -75,13 +75,14 @@ export default function Navbar() {
 
         {/* Десктоп: всё в строку (≥md) */}
         <div className={s.desktopNav}>
-          {langControl}
-          {themeButton}
-          <div className={s.divider} />
           <Link href="/reports" className={`${s.navLink} ${isReports ? s.navLinkActive : ""}`}>
             <History size={14} strokeWidth={1.6} />
             {t("nav_history")}
           </Link>
+          <div className={s.controls}>
+            {langControl}
+            {themeButton}
+          </div>
           <Button variant="primary" size="sm" href="/analyze">
             <Plus size={14} strokeWidth={2} />
             {t("nav_new")}

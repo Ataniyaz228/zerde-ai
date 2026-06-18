@@ -1,5 +1,5 @@
 "use client";
-import { CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import VerdictMark from "./VerdictMark";
 import { useTranslation } from "@/lib/i18n";
 import s from "./VerdictBadges.module.css";
 
@@ -13,9 +13,11 @@ export interface VerdictCounts {
 
 interface Props {
   counts: VerdictCounts;
-  /** "full" — chips + coverage bar (report header); "compact" — inline pills (table rows). */
+  /** "full" — заголовок-ответ + полоса + легенда (шапка отчёта); "compact" — инлайн-пилюли (строки таблицы). */
   variant?: "full" | "compact";
 }
+
+type Kind = "good" | "bad" | "warn";
 
 export default function VerdictBadges({ counts, variant = "full" }: Props) {
   const { t } = useTranslation();
@@ -28,52 +30,65 @@ export default function VerdictBadges({ counts, variant = "full" }: Props) {
     return (
       <div className={s.compact}>
         <span className={`${s.pill} ${s.good}`} title={t("verdict_confirmed")}>
-          <CheckCircle2 size={12} strokeWidth={2.2} />{confirmed}
+          <VerdictMark kind="good" size={12} />{confirmed}
         </span>
         <span className={`${s.pill} ${s.bad}`} title={t("verdict_contradicted")}>
-          <XCircle size={12} strokeWidth={2.2} />{contradicted}
+          <VerdictMark kind="bad" size={12} />{contradicted}
         </span>
         <span className={`${s.pill} ${s.warn}`} title={t("verdict_unverified")}>
-          <AlertTriangle size={12} strokeWidth={2.2} />{unverified}
+          <VerdictMark kind="warn" size={12} />{unverified}
         </span>
       </div>
     );
   }
 
+  // «Ответ» вперёд: контрадикции — главный сигнал для юриста; затем чистота;
+  // иначе — нехватка данных.
+  const headlineKind: Kind = contradicted > 0 ? "bad" : confirmed > 0 ? "good" : "warn";
+  const headlineTitle =
+    contradicted > 0 ? t("verdict_headline_bad")
+    : confirmed > 0 ? t("verdict_headline_good")
+    : t("verdict_headline_warn");
+  const headlineSub =
+    contradicted > 0
+      ? `${contradicted} ${t("verdict_contradicted").toLowerCase()} · ${t("verdict_needs_review")}`
+      : confirmed > 0
+        ? `${confirmed} ${t("verdict_confirmed").toLowerCase()} · ${t("verdict_coverage").toLowerCase()} ${coverage_pct}%`
+        : `${t("verdict_coverage")} ${coverage_pct}%`;
+
+  const pct = (n: number) => (total ? `${(n / total) * 100}%` : "0%");
+  const legend: { kind: Kind; n: number; label: string }[] = [
+    { kind: "good", n: confirmed, label: t("verdict_confirmed") },
+    { kind: "bad", n: contradicted, label: t("verdict_contradicted") },
+    { kind: "warn", n: unverified, label: t("verdict_unverified") },
+  ];
+
   return (
     <div className={s.full}>
-      <div className={s.chips}>
-        <div className={`${s.chip} ${s.good}`}>
-          <CheckCircle2 size={16} strokeWidth={2} />
-          <div className={s.chipBody}>
-            <span className={s.chipNum}>{confirmed}</span>
-            <span className={s.chipLabel}>{t("verdict_confirmed")}</span>
-          </div>
-        </div>
-        <div className={`${s.chip} ${s.bad}`}>
-          <XCircle size={16} strokeWidth={2} />
-          <div className={s.chipBody}>
-            <span className={s.chipNum}>{contradicted}</span>
-            <span className={s.chipLabel}>{t("verdict_contradicted")}</span>
-          </div>
-        </div>
-        <div className={`${s.chip} ${s.warn}`}>
-          <AlertTriangle size={16} strokeWidth={2} />
-          <div className={s.chipBody}>
-            <span className={s.chipNum}>{unverified}</span>
-            <span className={s.chipLabel}>{t("verdict_unverified")}</span>
-          </div>
+      <div className={`${s.headline} ${s[headlineKind]}`}>
+        <VerdictMark kind={headlineKind} size={24} className={s.headlineMark} />
+        <div className={s.headlineBody}>
+          <span className={s.headlineTitle}>{headlineTitle}</span>
+          <span className={s.headlineSub}>{headlineSub}</span>
         </div>
       </div>
 
-      <div className={s.coverage}>
-        <div className={s.coverageHead}>
-          <span className={s.coverageLabel}>{t("verdict_coverage")}</span>
-          <span className={s.coveragePct}>{coverage_pct}%</span>
-        </div>
-        <div className={s.coverageBar}>
-          <div className={s.coverageFill} style={{ width: `${coverage_pct}%` }} />
-        </div>
+      <div className={s.bar} role="presentation">
+        {confirmed > 0 && <div className={`${s.barSeg} ${s.barGood}`} style={{ width: pct(confirmed) }} />}
+        {contradicted > 0 && <div className={`${s.barSeg} ${s.barBad}`} style={{ width: pct(contradicted) }} />}
+        {unverified > 0 && <div className={`${s.barSeg} ${s.barWarn}`} style={{ width: pct(unverified) }} />}
+      </div>
+
+      <div className={s.legend}>
+        {legend.map((it) => (
+          <div key={it.label} className={`${s.legendItem} ${s[it.kind]}`}>
+            <span className={s.legendTop}>
+              <VerdictMark kind={it.kind} size={14} className={s.legendMark} />
+              <span className={s.legendNum}>{it.n}</span>
+            </span>
+            <span className={s.legendLabel}>{it.label}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

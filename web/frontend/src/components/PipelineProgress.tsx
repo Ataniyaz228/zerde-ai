@@ -68,7 +68,12 @@ export default function PipelineProgress({ steps }: Props) {
               </div>
               <div className={s.stepBody}>
                 <p className={nameClass}>{step.name}</p>
-                {step.message && <p className={s.stepMsg}>{step.message}</p>}
+                {step.message && (
+                  <p className={s.stepMsg}>
+                    {isActive && <span className={s.caret}>›</span>}
+                    {step.message}
+                  </p>
+                )}
               </div>
             </div>
           );

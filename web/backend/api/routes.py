@@ -3,11 +3,12 @@ from pathlib import Path
 
 from api.security import rate_limit_analyze
 from config import settings
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from services import jobs
 from services.analysis import enqueue_analysis
-from services.storage import get_report, list_reports
+from services.report_i18n import get_report_localized
+from services.storage import list_reports
 
 router = APIRouter()
 
@@ -88,9 +89,15 @@ async def get_all_reports():
 
 
 @router.get("/reports/{report_id}")
-async def get_report_content(report_id: str):
-    """Returns the markdown content and metadata of a specific report."""
-    report = get_report(report_id)
+async def get_report_content(
+    report_id: str,
+    lang: str = Query("ru", pattern="^(ru|kz)$"),
+):
+    """Returns the markdown content and metadata of a specific report.
+
+    lang=ru — канонический отчёт (по умолчанию). lang=kz — безопасный машинный
+    перевод (кэшируется в сайдкар; при провале guard'а отдаётся RU)."""
+    report = await get_report_localized(report_id, lang)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
     return report

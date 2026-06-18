@@ -1,9 +1,13 @@
+/* De-card: отчёт читается на чистом фоне; секции разделены hairline. */
 .wrap {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-surface);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  border-top: 1px solid var(--border);
+}
+
+/* Пометка (напр. машинный перевод) над тулбаром. */
+.note {
+  margin-bottom: var(--space-3);
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 /* ===== Toolbar (search + actions) ===== */
@@ -13,7 +17,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -87,11 +91,11 @@
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background var(--duration, 0.15s), color var(--duration, 0.15s);
+  transition: background var(--duration), color var(--duration);
 }
 
 .toolBtn:hover {
@@ -124,12 +128,9 @@
 
 /* ===== Danger (contradictions) sections ===== */
 
-.sectionDanger {
-  border-left: 3px solid var(--status-err, #ef4444);
-}
-
+/* Danger-секции (коллизии/опровержения) — сигнал цветом заголовка, без полосы. */
 .sectionDanger .sectionTitle {
-  color: var(--status-err, #ef4444);
+  color: var(--status-err);
 }
 
 .section {
@@ -145,7 +146,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-3);
   cursor: pointer;
   background: transparent;
   text-align: left;
@@ -157,11 +159,11 @@
 }
 
 .sectionTitle {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 640;
   color: var(--text-primary);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 .sectionChevron {
@@ -175,7 +177,7 @@
 }
 
 .sectionBody {
-  padding: 0 20px 20px;
+  padding: 0 var(--space-3) var(--space-5);
   overflow: hidden;
 }
 
@@ -255,11 +257,15 @@
 
 /* ===== MARKDOWN TYPOGRAPHY ===== */
 
+/* Премиальное чтение: крупный кегль, просторный leading, ограниченная мера. */
 .md {
-  font-size: 14.5px;
-  line-height: 1.78;
+  font-size: 16px;
+  line-height: 1.7;
   color: var(--text-primary);
 }
+
+/* Мера строки прозы (~70ch); таблицы/код остаются на полную ширину. */
+.md p, .md li, .md h4 { max-width: 70ch; }
 
 .md h1, .md h2, .md h3 {
   display: none; /* handled by accordion */

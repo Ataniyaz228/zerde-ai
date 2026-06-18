@@ -1,53 +1,82 @@
 "use client";
-import { Check, FileText } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
+import { Check } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import s from "./ProductWindow.module.css";
 
-/** Декоративное «окно продукта» на чистом CSS — центральный визуал hero.
- *  Показывает образец вердикта: утверждение → статус → цитата-источник → надёжность.
- *  Чисто презентационный, поэтому aria-hidden. */
+const SCORE = 92;
+const R = 26;
+const CIRC = 2 * Math.PI * R;
+
+/** Продуктовый визуал hero — карточка-вердикт: дословная цитата как улика +
+ *  круговой индикатор надёжности. На скролле «оживает»: цитата проявляется,
+ *  печать впечатывается, кольцо дозаполняется. Презентационный → aria-hidden. */
 export default function ProductWindow() {
   const { t } = useTranslation();
+  const reduced = useReducedMotion();
+  const view = { once: true, margin: "-60px" } as const;
+  const offset = CIRC * (1 - SCORE / 100);
 
   return (
-    <div className={s.window} aria-hidden>
-      <div className={s.titlebar}>
-        <span className={s.dots}>
-          <i /><i /><i />
-        </span>
-        <span className={s.file}>
-          <FileText size={12} strokeWidth={1.6} />
-          zakon-proekt.docx
-        </span>
-        <span className={s.url}>adilet.zan.kz</span>
+    <div className={s.exhibit} aria-hidden>
+      <div className={s.head}>
+        <span className={s.kicker}>{t("pw_exhibit_label")}</span>
+        <span className={s.source}>adilet.zan.kz</span>
       </div>
 
-      <div className={s.body}>
-        <div className={s.card}>
-          <div className={s.cardHead}>
-            <span className={s.claimLabel}>{t("pw_claim_label")}</span>
-            <span className={s.statusPill}>
-              <Check size={12} strokeWidth={2.6} />
-              {t("verdict_confirmed")}
-            </span>
-          </div>
-
-          <p className={s.claim}>{t("sources_card_claim")}</p>
-
-          <blockquote className={s.quote}>{t("sources_card_quote")}</blockquote>
-
-          <div className={s.sourceRow}>
-            <span className={s.sourceTag}>ст. 14 · adilet.zan.kz</span>
-            <span className={s.verified}>{t("sources_verified")}</span>
-          </div>
+      <div className={s.sheet}>
+        <div className={s.sheetHead}>
+          <span className={s.claimLabel}>{t("pw_claim_label")}</span>
+          <motion.span
+            className={s.stamp}
+            initial={reduced ? false : { opacity: 0, scale: 1.3 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={view}
+            transition={{ duration: 0.45, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <Check size={12} strokeWidth={3} />
+            {t("verdict_confirmed")}
+          </motion.span>
         </div>
 
-        <div className={s.scoreRow}>
+        <p className={s.claim}>{t("sources_card_claim")}</p>
+
+        <div className={s.quoteMask}>
+          <motion.blockquote
+            className={s.quote}
+            initial={reduced ? false : { clipPath: "inset(0 100% 0 0)" }}
+            whileInView={{ clipPath: "inset(0 0% 0 0)" }}
+            viewport={view}
+            transition={{ duration: 0.8, delay: 0.15, ease: [0.65, 0, 0.35, 1] }}
+          >
+            {t("sources_card_quote")}
+          </motion.blockquote>
+        </div>
+
+        <span className={s.sourceTag}>ст. 14 · adilet.zan.kz</span>
+      </div>
+
+      <div className={s.scoreRow}>
+        <div className={s.ring}>
+          <svg viewBox="0 0 64 64" className={s.ringSvg}>
+            <circle className={s.ringTrack} cx="32" cy="32" r={R} />
+            <motion.circle
+              className={s.ringFill}
+              cx="32"
+              cy="32"
+              r={R}
+              strokeDasharray={CIRC}
+              initial={reduced ? false : { strokeDashoffset: CIRC }}
+              whileInView={{ strokeDashoffset: offset }}
+              viewport={view}
+              transition={{ duration: 1.1, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            />
+          </svg>
+          <span className={s.ringVal}>{SCORE}%</span>
+        </div>
+        <div className={s.scoreText}>
           <span className={s.scoreLabel}>{t("report_reliability")}</span>
-          <div className={s.bar}>
-            <div className={s.barFill} style={{ width: "92%" }} />
-          </div>
-          <span className={s.scoreVal}>92%</span>
+          <span className={s.scoreHint}>{t("sources_verified")}</span>
         </div>
       </div>
     </div>

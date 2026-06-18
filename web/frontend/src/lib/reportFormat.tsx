@@ -1,11 +1,8 @@
 "use client";
-import { Children, cloneElement, Fragment, isValidElement, ReactNode } from "react";
+import { Children, cloneElement, Fragment, isValidElement, type ComponentType, ReactNode } from "react";
 import {
-  AlertCircle,
-  AlertTriangle,
   BarChart3,
   BookOpen,
-  CheckCircle2,
   CircleDashed,
   ClipboardList,
   Files,
@@ -18,10 +15,17 @@ import {
   Search,
   TrendingUp,
   Users,
-  XCircle,
-  type LucideIcon,
 } from "lucide-react";
+import VerdictMark from "@/components/VerdictMark";
 import s from "@/components/ReportViewer.module.css";
+
+// Дженерик-кружки lucide для вердиктов «палят» шаблон → заменяем их фирменными
+// марками-печатями (единый мотив с VerdictBadges и exhibit). Обёртки приводят
+// VerdictMark к сигнатуре, которую дёргает splitEmoji.
+type IconRender = ComponentType<{ size?: number; strokeWidth?: number; className?: string; "aria-hidden"?: boolean }>;
+const MarkGood: IconRender = ({ size, className }) => <VerdictMark kind="good" size={size} className={className} />;
+const MarkBad: IconRender = ({ size, className }) => <VerdictMark kind="bad" size={size} className={className} />;
+const MarkWarn: IconRender = ({ size, className }) => <VerdictMark kind="warn" size={size} className={className} />;
 
 /**
  * Presentation layer for pipeline reports.
@@ -103,16 +107,16 @@ export function calloutClass(children: ReactNode): string {
 
 // ── Emoji → icon mapping ─────────────────────────────────────────────────────
 
-type IconSpec = { Icon: LucideIcon; cls: string };
+type IconSpec = { Icon: IconRender; cls: string };
 
 const EMOJI_ICON: Record<string, IconSpec> = {
-  "🟢": { Icon: CheckCircle2, cls: s.icoGood },
-  "✅": { Icon: CheckCircle2, cls: s.icoGood },
-  "🔴": { Icon: XCircle, cls: s.icoBad },
-  "❌": { Icon: XCircle, cls: s.icoBad },
-  "🟡": { Icon: AlertCircle, cls: s.icoWarn },
-  "🟠": { Icon: AlertTriangle, cls: s.icoWarn },
-  "⚠️": { Icon: AlertTriangle, cls: s.icoWarn },
+  "🟢": { Icon: MarkGood, cls: s.icoGood },
+  "✅": { Icon: MarkGood, cls: s.icoGood },
+  "🔴": { Icon: MarkBad, cls: s.icoBad },
+  "❌": { Icon: MarkBad, cls: s.icoBad },
+  "🟡": { Icon: MarkWarn, cls: s.icoWarn },
+  "🟠": { Icon: MarkWarn, cls: s.icoWarn },
+  "⚠️": { Icon: MarkWarn, cls: s.icoWarn },
   "📋": { Icon: ClipboardList, cls: s.icoNeutral },
   "📑": { Icon: Files, cls: s.icoNeutral },
   "📊": { Icon: BarChart3, cls: s.icoNeutral },

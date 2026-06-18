@@ -15,7 +15,7 @@
 }
 
 .inner {
-  max-width: var(--container-max);
+  max-width: var(--container-max-wide);
   margin: 0 auto;
   padding: 0 var(--container-pad);
   height: var(--header-h);
@@ -30,25 +30,35 @@
   gap: var(--space-3);
   transition: opacity var(--duration);
 }
-.logo:hover { opacity: 0.78; }
-.logo:hover .logoMark { transform: rotate(135deg); }
+.logo:hover { opacity: 0.7; }
 
-/* Знак-маркер: ромб-«зерно» цвета индиго. */
+/* Знак — сплошной индиго-квадрат с белым ромбом-зерном: чёткая геометрия, crisp. */
 .logoMark {
-  width: 12px;
-  height: 12px;
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
   background: var(--accent);
+  flex-shrink: 0;
+  transition: opacity var(--duration);
+}
+.logoMark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 7px;
+  height: 7px;
+  background: var(--text-on-accent);
   transform: rotate(45deg);
-  border-radius: 2.5px;
-  box-shadow: 0 0 0 4px var(--accent-soft);
-  transition: transform var(--duration-lg) var(--ease-out);
+  border-radius: 1.5px;
 }
 
 .logoText {
-  font-family: var(--font-serif);
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--font-sans);
+  font-size: 19px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
 }
 
@@ -69,11 +79,10 @@
 .navLink:hover { color: var(--text-primary); background: var(--bg-hover); }
 .navLinkActive { color: var(--text-primary); background: var(--bg-hover); }
 
-.divider {
-  width: 1px;
-  height: 18px;
-  background: var(--border-strong);
-  margin: 0 var(--space-2);
+.controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 /* ── Мобильный триггер ── */
@@ -95,7 +104,7 @@
   position: fixed;
   inset: var(--header-h) 0 0;
   z-index: var(--z-overlay);
-  background: rgba(20, 22, 34, 0.28);
+  background: rgba(16, 17, 26, 0.32);
   animation: scrimIn var(--duration) ease-out;
 }
 @keyframes scrimIn { from { opacity: 0; } to { opacity: 1; } }
@@ -125,16 +134,15 @@
   align-items: center;
   gap: var(--space-3);
   min-height: var(--tap-min);
-  padding: var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: 15px;
+  padding: var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 16px;
   font-weight: 500;
   color: var(--text-primary);
-  background: var(--bg-elevated);
-  transition: background var(--duration);
+  transition: color var(--duration);
 }
-.mobileLink:hover { background: var(--bg-hover); }
-.mobileLinkActive { color: var(--accent); background: var(--accent-soft); }
+.mobileLink:hover { color: var(--accent); }
+.mobileLinkActive { color: var(--accent); }
 
 .mobileRow {
   display: flex;
@@ -151,7 +159,7 @@
   .desktopNav {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-4);
   }
   .burger { display: none; }
 }

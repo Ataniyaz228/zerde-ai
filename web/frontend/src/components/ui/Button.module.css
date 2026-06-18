@@ -11,42 +11,34 @@
     border-color var(--duration), transform var(--duration), box-shadow var(--duration);
 }
 .btn svg { transition: transform var(--duration); flex-shrink: 0; }
-.btn:active { transform: translateY(0); }
+.btn:active { transform: scale(0.985); }
 
 /* ── Sizes (тач-цель ≥ --tap-min на не-icon) ── */
 .sm  { min-height: 36px; padding: var(--space-2) var(--space-4); font-size: 13px; }
 .md  { min-height: var(--tap-min); padding: var(--space-3) var(--space-5); font-size: 14px; }
-.lg  { min-height: 48px; padding: 0.85rem 1.6rem; font-size: 15px; }
+.lg  { min-height: 50px; padding: 0.9rem 1.7rem; font-size: 15px; }
 
-/* ── Variants ── */
+/* ── Variants. Ховер — смена фона/границы, без «прыжков» (Apple/Linear). ── */
 .primary {
-  color: var(--text-on-accent);
-  background: var(--accent);
-  box-shadow: var(--shadow-sm);
+  color: var(--btn-primary-fg);
+  background: var(--btn-primary-bg);
 }
-.primary:hover {
-  background: var(--accent-strong);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow);
-}
-.primary:hover svg { transform: translateX(3px); }
+.primary:hover { background: var(--btn-primary-bg-hover); }
+.primary:hover svg { transform: translateX(2px); }
 
 .secondary {
   color: var(--text-primary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-strong);
-}
-.secondary:hover {
-  border-color: var(--accent-border);
   background: var(--bg-elevated);
-  transform: translateY(-2px);
+  border: 1px solid var(--border);
 }
+.secondary:hover { background: var(--bg-hover); border-color: var(--border-strong); }
 
 .ghost {
   color: var(--text-secondary);
   background: transparent;
 }
-.ghost:hover { color: var(--text-primary); background: var(--bg-hover); }
+.ghost:hover { color: var(--text-primary); }
+.ghost:hover svg { transform: translateX(2px); }
 
 .icon {
   width: var(--tap-min);

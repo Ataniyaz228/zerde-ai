@@ -31,10 +31,11 @@
 .eyebrow { margin: 0; }
 
 .title {
-  font-family: var(--font-serif);
-  font-size: var(--step-3);
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-family: var(--font-sans);
+  font-size: var(--step-4);
+  font-weight: 680;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
   color: var(--text-primary);
 }
 
@@ -95,22 +96,19 @@
 .cards {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  border-top: 1px solid var(--border);
 }
 
+/* De-card: строки-ряды на hairline вместо карточек-коробок. */
 .card {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  transition: border-color var(--duration), box-shadow var(--duration), transform var(--duration);
+  padding: var(--space-4) var(--space-1);
+  border-bottom: 1px solid var(--border);
+  transition: background var(--duration);
 }
-.card:hover { border-color: var(--accent-border); box-shadow: var(--shadow); }
-.card:active { transform: scale(0.995); }
+.card:hover { background: var(--bg-elevated); }
 
 .cardTop {
   display: flex;
@@ -134,12 +132,9 @@
   .tableWrap { display: block; }
 }
 
-/* Обёртка состояний (загрузка / пусто / ничего не найдено) — видна всегда. */
+/* Обёртка состояний (загрузка / пусто / ничего не найдено) — на чистом фоне. */
 .stateWrap {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  border-top: 1px solid var(--border);
 }
 
 .fileMeta {
@@ -169,11 +164,8 @@
 /* ─── Таблица (планшет+) ─── */
 
 .tableWrap {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
   overflow-x: auto;
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  border-top: 1px solid var(--border);
 }
 
 .table {
@@ -190,13 +182,13 @@
 
 .th {
   text-align: left;
-  padding: 13px 18px;
+  padding: 11px 18px;
   font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.09em;
   color: var(--text-tertiary);
-  background: var(--bg-elevated);
+  background: transparent;
   border-bottom: 1px solid var(--border);
 }
 
@@ -224,13 +216,13 @@
 
 .fileIcon {
   width: 34px; height: 34px;
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-border);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
+  color: var(--text-tertiary);
   flex-shrink: 0;
 }
 
@@ -254,10 +246,10 @@
 }
 
 .score {
-  font-family: var(--font-serif);
-  font-weight: 600;
-  font-size: 16px;
-  letter-spacing: -0.01em;
+  font-family: var(--font-sans);
+  font-weight: 680;
+  font-size: 17px;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -309,9 +301,10 @@
 }
 
 .emptyTitle {
-  font-family: var(--font-serif);
-  font-size: var(--step-1);
-  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: var(--step-2);
+  font-weight: 680;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
 }
 

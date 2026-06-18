@@ -36,26 +36,23 @@
 
 /* ─── Header card ─── */
 
+/* De-card: шапка на чистом фоне, отделена снизу hairline. */
 .headerCard {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-5);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-4);
-  margin-bottom: var(--space-5);
-  box-shadow: var(--shadow-sm);
+  padding-bottom: var(--space-5);
+  margin-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border);
 }
 
 @media (min-width: 48rem) {
   .headerCard {
     flex-direction: row;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
-    gap: var(--space-5);
-    padding: 1.75rem 1.85rem;
+    gap: var(--space-6);
   }
 }
 
@@ -69,11 +66,11 @@
 }
 
 .docName {
-  font-family: var(--font-serif);
-  font-size: var(--step-2);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
+  font-family: var(--font-sans);
+  font-size: var(--step-3);
+  font-weight: 680;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
   color: var(--text-primary);
   word-break: break-word;
 }
@@ -86,45 +83,35 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* De-card: чистый readout (иконка + лейбл + крупное число), без коробки. */
 .scoreWrap {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-  align-self: stretch;
-  justify-content: flex-start;
-  padding: 14px 22px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--bg-elevated);
+  gap: var(--space-3);
   flex-shrink: 0;
-  box-shadow: var(--shadow-sm);
-}
-
-@media (min-width: 48rem) {
-  .scoreWrap { align-self: auto; background: var(--bg-surface); }
 }
 
 .scoreLabel {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 3px;
+  letter-spacing: 0.06em;
+  margin-bottom: 2px;
 }
 
 .scoreValue {
-  font-family: var(--font-serif);
-  font-size: 32px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-family: var(--font-sans);
+  font-size: 34px;
+  font-weight: 680;
+  letter-spacing: -0.03em;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-.scoreGood { color: var(--status-ok); border-color: color-mix(in srgb, var(--status-ok) 30%, var(--border-strong)); }
-.scoreWarn { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 30%, var(--border-strong)); }
-.scoreBad  { color: var(--status-err); border-color: color-mix(in srgb, var(--status-err) 30%, var(--border-strong)); }
+.scoreGood { color: var(--status-ok); }
+.scoreWarn { color: var(--status-warn); }
+.scoreBad  { color: var(--status-err); }
 
 /* ─── Loading / error ─── */
 

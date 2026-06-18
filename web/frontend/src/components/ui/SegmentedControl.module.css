@@ -1,10 +1,11 @@
+/* Сегмент-контрол (Linear-стиль): утопленный трек + активная «таблетка». */
 .group {
   display: inline-flex;
-  align-items: center;
-  background: var(--bg-surface);
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+  border-radius: var(--radius);
 }
 
 .segment {
@@ -12,26 +13,30 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-1);
-  min-height: 38px;
+  min-height: 34px;
   padding: var(--space-2) var(--space-4);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
   background: transparent;
-  border-right: 1px solid var(--border);
-  transition: background var(--duration), color var(--duration);
+  border-radius: 7px;
+  transition: color var(--duration), background var(--duration), box-shadow var(--duration);
 }
-.segment:last-child { border-right: none; }
-.segment:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.segment:hover { color: var(--text-primary); }
 
-.active { background: var(--accent-soft); color: var(--accent); }
-.active:hover { background: var(--accent-soft); color: var(--accent); }
+.active,
+.active:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+}
 
 /* Компактный вариант — переключатель языка. */
 .sm .segment {
-  min-height: 32px;
+  min-height: 28px;
   padding: var(--space-1) var(--space-3);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
 }
-.sm .active { background: var(--accent-soft); }

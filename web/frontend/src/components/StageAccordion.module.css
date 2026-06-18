@@ -1,0 +1,132 @@
+/* Аккордеон этапов. De-card: строки на hairline, без карточек-коробок.
+   Mobile-first: вертикальные строки, активная раскрывается вниз. ≥lg (64rem):
+   горизонтальный ряд, активная панель расширяется, разделители — вертикальные
+   волоски. */
+
+.accordion {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  transition: background var(--duration);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-1);
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  transition: color var(--duration);
+}
+.panel.active .num { color: var(--accent); }
+
+.label {
+  font-family: var(--font-sans);
+  font-size: var(--step-1);
+  font-weight: 640;
+  letter-spacing: -0.02em;
+  color: var(--text-secondary);
+  transition: color var(--duration);
+}
+.panel:hover .label,
+.panel.active .label { color: var(--text-primary); }
+
+.icon {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: color var(--duration);
+}
+.panel.active .icon { color: var(--accent); }
+
+/* Раскрытие тела без magic-height: grid-template-rows 0fr → 1fr. */
+.body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-lg) var(--ease-out);
+}
+.panel.active .body { grid-template-rows: 1fr; }
+.bodyInner { overflow: hidden; min-height: 0; }
+
+.desc {
+  display: block;
+  padding: 0 var(--space-1) var(--space-5) calc(var(--space-1) + 28px);
+  font-size: var(--step-0);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 60ch;
+  text-wrap: pretty;
+}
+
+/* ===== Десктоп: горизонтальный расширяющийся ряд ===== */
+@media (min-width: 64rem) {
+  .accordion {
+    flex-direction: row;
+    height: 320px;
+    align-items: stretch;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Свёрнутые держат 84px, активная забирает остаток (анимируем только grow). */
+  .panel {
+    flex-grow: 0;
+    flex-shrink: 0;
+    flex-basis: 84px;
+    position: relative;
+    border-bottom: none;
+    border-left: 1px solid var(--border);
+    transition: flex-grow var(--duration-xl) var(--ease-expressive),
+      background var(--duration);
+  }
+  .panel:first-child { border-left: none; }
+  .panel.active { flex-grow: 1; background: var(--bg-elevated); }
+
+  .head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-4);
+    height: auto;
+    padding: var(--space-6) var(--space-5) var(--space-4);
+  }
+  .icon { margin-left: 0; }
+  .num { font-size: 13px; }
+
+  /* Свёрнутая панель: подпись вертикально снизу вверх; тело и иконка скрыты. */
+  .panel:not(.active) .icon { display: none; }
+  .panel:not(.active) .label {
+    position: absolute;
+    left: calc(var(--space-5) + 1px);
+    bottom: var(--space-6);
+    transform-origin: left bottom;
+    transform: rotate(-90deg);
+    white-space: nowrap;
+    font-size: var(--step-0);
+    font-weight: 600;
+  }
+  .panel:not(.active) .body { display: none; }
+
+  .panel.active .label { font-size: var(--step-2); }
+  .body { padding: 0 var(--space-5) var(--space-6); }
+  .desc { padding: 0; max-width: 42ch; }
+}

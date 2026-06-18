@@ -360,3 +360,50 @@ def test_translate_progress_matches_real_progress_event():
         {"type": "stage_start", "stage": "search", "message": "Поиск в базе НПА Казахстана"},
     ]
     assert new_prev == "search"
+
+
+# ── Localized report endpoint (RU canonical / KZ safe machine translation) ──
+
+def test_report_lang_ru_is_canonical_no_translation(app_env, monkeypatch):
+    (app_env.output_dir / "r.md").write_text("# RU отчёт\n\nст. 14 · 92%\n", encoding="utf-8")
+
+    # Перевод НЕ должен вызываться на RU-пути.
+    import zerde.stages.s7_translate as s7t
+    async def _boom(*a, **k):  # pragma: no cover - не должно вызваться
+        raise AssertionError("translation must not run for lang=ru")
+    monkeypatch.setattr(s7t, "translate_report_md", _boom)
+
+    app = _get_app()
+    with TestClient(app) as client:
+        resp = client.get("/api/reports/r.md")  # default lang=ru
+        assert resp.status_code == 200
+        assert "# RU отчёт" in resp.json()["content"]
+
+
+def test_report_lang_kz_translates_and_caches(app_env, monkeypatch):
+    (app_env.output_dir / "r.md").write_text("# RU отчёт\n\nст. 14 · 92%\n", encoding="utf-8")
+
+    import zerde.stages.s7_translate as s7t
+    calls = {"n": 0}
+    async def fake_tr(md_ru, target_lang="kz", settings=None):
+        calls["n"] += 1
+        return "# KZ есеп\n\nст. 14 · 92%\n"
+    monkeypatch.setattr(s7t, "translate_report_md", fake_tr)
+
+    app = _get_app()
+    with TestClient(app) as client:
+        resp = client.get("/api/reports/r.md?lang=kz")
+        assert resp.status_code == 200
+        assert "KZ есеп" in resp.json()["content"]
+        # sidecar записан → второй запрос из кэша (перевод не вызывается снова)
+        assert (app_env.output_dir / "r.md.kz.md").exists()
+        resp2 = client.get("/api/reports/r.md?lang=kz")
+        assert "KZ есеп" in resp2.json()["content"]
+        assert calls["n"] == 1
+
+
+def test_report_lang_invalid_rejected(app_env):
+    (app_env.output_dir / "r.md").write_text("# RU\n", encoding="utf-8")
+    app = _get_app()
+    with TestClient(app) as client:
+        assert client.get("/api/reports/r.md?lang=en").status_code == 422

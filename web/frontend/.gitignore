@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# design-sync (claude.ai/design): staged converter, generated bundle/dist, caches.
+# Durable inputs under .design-sync/ (config.json, NOTES.md, conventions.md,
+# entry.tsx, prebuild.mjs, tsconfig.build.json, fonts.css, shims/, previews/,
+# overrides/) ARE committed.
+/.ds-sync/
+/ds-bundle/
+/.design-sync/dist/
+/.design-sync/.cache/
+/.design-sync/learnings/
+/.design-sync/node_modules

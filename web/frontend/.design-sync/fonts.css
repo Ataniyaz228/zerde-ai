@@ -1,0 +1,13 @@
+/* Design-sync font binding.
+   The app loads Inter + JetBrains Mono via next/font/google in layout.tsx and
+   exposes them as --font-inter / --font-mono-jb (globals.css builds --font-sans
+   / --font-mono on top of those). next/font doesn't run outside the app, so we
+   load the same families from Google Fonts at runtime and bind the vars here.
+   This surfaces as an informational [FONT_REMOTE] in validate — the families
+   load at runtime, no @font-face to ship. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+:root {
+  --font-inter: "Inter";
+  --font-mono-jb: "JetBrains Mono";
+}

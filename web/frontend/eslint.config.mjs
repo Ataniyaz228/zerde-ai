@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // design-sync (claude.ai/design) tooling — not part of the Next app:
+    // staged converter, generated bundle/dist, caches, prebuild scaffolding.
+    ".ds-sync/**",
+    "ds-bundle/**",
+    ".design-sync/**",
   ]),
 ]);
 

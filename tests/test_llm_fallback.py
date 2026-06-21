@@ -123,3 +123,102 @@ def test_make_llm_client_plain_when_disabled():
     s.audit_fallback_enabled = False
     client = llm.make_llm_client(s)
     assert not isinstance(client, llm._FallbackLLMClient)
+
+
+def _cache_settings(tmp_path):
+    # Минимальный stub для cached_llm_call: ему нужны только cache_db_path и is_openrouter.
+    return SimpleNamespace(
+        cache_db_path=str(tmp_path / "llm_cache.db"),
+        is_openrouter=False,
+        translator_base_url="https://api.openmodel.ai",
+        translator_api_key="om-key",
+    )
+
+
+def _real_flip(success_content: str):
+    """real-клиент: 1-й вызов → 403 (фолбэк), 2-й → успешный OpenRouter-ответ."""
+    state = {"n": 0}
+
+    async def create(**kwargs):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise _make_403()
+        # «настоящий» OpenRouter-ответ — БЕЗ zerde_fallback
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=success_content))],
+            usage=None,
+        )
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+async def test_fallback_response_not_cached_under_openrouter_key(monkeypatch, tmp_path):
+    # Провенанс: openmodel-ответ НЕ должен оседать в кэше под OpenRouter-ключом —
+    # иначе после восстановления лимита прод вернёт openmodel-ответ как родной.
+    monkeypatch.delenv("ZERDE_CACHE_DB", raising=False)
+
+    async def fake_req(*a, **k):
+        return ({"content": [{"type": "text", "text": '{"a": 1}'}], "usage": {}}, 1)
+
+    monkeypatch.setattr(llm, "_anthropic_messages_request", fake_req)
+    stub = _cache_settings(tmp_path)
+    client = llm._FallbackLLMClient(_real_flip('{"b": 2}'), stub)
+    msgs = [{"role": "user", "content": "hi"}]
+
+    # 1-й вызов: OpenRouter 403 → openmodel → {"a":1}. Не должен закэшироваться.
+    r1 = await llm.cached_llm_call(client=client, model="deepseek/deepseek-v4-flash",
+                                   messages=msgs, settings=stub)
+    assert r1 == {"a": 1}
+
+    # 2-й вызов: OpenRouter теперь успешен → {"b":2}. Если бы fallback закэшировался
+    # под тем же ключом, вернулось бы {"a":1}.
+    r2 = await llm.cached_llm_call(client=client, model="deepseek/deepseek-v4-flash",
+                                   messages=msgs, settings=stub)
+    assert r2 == {"b": 2}
+
+
+async def test_fallback_marked_in_manifest(monkeypatch, tmp_path):
+    monkeypatch.delenv("ZERDE_CACHE_DB", raising=False)
+
+    async def fake_req(*a, **k):
+        return ({"content": [{"type": "text", "text": '{"ok": 1}'}],
+                 "usage": {"input_tokens": 3, "output_tokens": 4}}, 1)
+
+    monkeypatch.setattr(llm, "_anthropic_messages_request", fake_req)
+    stub = _cache_settings(tmp_path)
+    client = llm._FallbackLLMClient(_real_raising(_make_403()), stub)
+
+    llm.reset_manifest()
+    await llm.cached_llm_call(client=client, model="m",
+                              messages=[{"role": "user", "content": "hi"}], settings=stub)
+    recs = llm.get_manifest()
+    assert recs and recs[-1].fallback is True
+
+
+async def test_normal_response_is_cached_and_not_fallback(monkeypatch, tmp_path):
+    # Контроль: обычный (не-fallback) ответ кэшируется и не помечается fallback.
+    monkeypatch.delenv("ZERDE_CACHE_DB", raising=False)
+
+    async def boom(*a, **k):
+        raise AssertionError("openmodel не должен вызываться при успехе OpenRouter")
+
+    monkeypatch.setattr(llm, "_anthropic_messages_request", boom)
+    stub = _cache_settings(tmp_path)
+
+    calls = {"n": 0}
+
+    async def create(**kwargs):
+        calls["n"] += 1
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"x": 9}'))],
+            usage=None,
+        )
+
+    real = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client = llm._FallbackLLMClient(real, stub)
+    msgs = [{"role": "user", "content": "hi"}]
+
+    r1 = await llm.cached_llm_call(client=client, model="m", messages=msgs, settings=stub)
+    r2 = await llm.cached_llm_call(client=client, model="m", messages=msgs, settings=stub)
+    assert r1 == r2 == {"x": 9}
+    assert calls["n"] == 1  # второй раз — из кэша, без живого вызова

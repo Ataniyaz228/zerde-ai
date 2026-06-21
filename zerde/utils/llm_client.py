@@ -120,6 +120,7 @@ class LLMCallRecord:
     latency_s: float
     attempts: int
     batch_failures: int = 0
+    fallback: bool = False  # True → ответ получен с резервного провайдера (openmodel), не с OpenRouter
 
 
 # Манифест последних вызовов (ограниченный буфер — не растёт неограниченно
@@ -447,9 +448,15 @@ async def cached_anthropic_messages_call(
 
 def _openai_shaped_response(content: str, usage: dict[str, Any] | None) -> SimpleNamespace:
     """Заворачивает текст ответа в минимальный OpenAI-подобный объект, который
-    понимает cached_llm_call (`.choices[0].message.content`, `.usage.*`)."""
+    понимает cached_llm_call (`.choices[0].message.content`, `.usage.*`).
+
+    Помечается `zerde_fallback=True`: этот ответ пришёл с РЕЗЕРВНОГО провайдера
+    (openmodel), а не с OpenRouter. По этому флагу cached_llm_call (а) НЕ кэширует
+    ответ под OpenRouter-ключом модели — иначе после восстановления лимита прод
+    («остаётся на OpenRouter») тянул бы openmodel-ответ из кэша как родной
+    (провенанс-утечка); (б) помечает вызов в манифесте как fallback."""
     u = usage or {}
-    return SimpleNamespace(
+    resp = SimpleNamespace(
         choices=[SimpleNamespace(
             index=0,
             finish_reason="stop",
@@ -461,6 +468,8 @@ def _openai_shaped_response(content: str, usage: dict[str, Any] | None) -> Simpl
             total_tokens=None,
         ),
     )
+    resp.zerde_fallback = True
+    return resp
 
 
 class _FallbackLLMClient:
@@ -658,6 +667,11 @@ async def cached_llm_call(
     if content is None:
         content = "{}"
 
+    # Ответ пришёл с резервного провайдера (openmodel-фолбэк при 403 OpenRouter)?
+    # Если да — НЕ кэшируем под OpenRouter-ключом (иначе openmodel-ответ подменит
+    # прод-путь после восстановления лимита) и помечаем в манифесте.
+    _from_fallback = bool(getattr(response, "zerde_fallback", False))
+
     # Манифест: usage из последнего успешного ответа (None если response без
     # usage — некоторые OpenRouter-модели его не возвращают).
     _usage = getattr(response, "usage", None)
@@ -669,6 +683,7 @@ async def cached_llm_call(
         total_tokens=getattr(_usage, "total_tokens", None),
         latency_s=time.perf_counter() - live_start,
         attempts=attempts,
+        fallback=_from_fallback,
     ))
 
     # raw_text: ответ — сырой текст, JSON не парсим. Пустой/«{}» → сломанный
@@ -680,7 +695,10 @@ async def cached_llm_call(
             return {}
         # Отдельная переменная (не parsed), чтобы не сужать тип parsed ниже.
         text_result = {"text": text}
-        await cache.put(model, prompt_key, text_result, ttl_seconds=ttl_seconds)
+        if _from_fallback:
+            logger.info("[LLMCall] fallback-ответ openmodel — не кэшируем под OpenRouter-ключом (провенанс).")
+        else:
+            await cache.put(model, prompt_key, text_result, ttl_seconds=ttl_seconds)
         return text_result
 
     # Если ответ не JSON — пробуем извлечь JSON из текста
@@ -726,6 +744,11 @@ async def cached_llm_call(
     # НЕ кэшируем сломанные ответы: пустой dict или parse_failed
     if parse_failed or not parsed:
         logger.warning("[LLMCall] Skipping cache — response is empty or malformed.")
+        return parsed
+
+    # Fallback-ответ (openmodel) НЕ кэшируем под OpenRouter-ключом — провенанс.
+    if _from_fallback:
+        logger.info("[LLMCall] fallback-ответ openmodel — не кэшируем под OpenRouter-ключом (провенанс).")
         return parsed
 
     # Сохраняем в кэш только валидные непустые ответы

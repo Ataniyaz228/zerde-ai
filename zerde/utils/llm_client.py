@@ -329,6 +329,11 @@ async def _anthropic_messages_request(
         "max_tokens": max_tokens,
         "temperature": temperature,
         "messages": chat_messages,
+        # Отключаем «thinking» (deepseek-v4 через openmodel по умолчанию рассуждает):
+        # для структурированного JSON и перевода reasoning не нужен, а главное — он
+        # съедает max_tokens и обрезает ответ до пустого/битого JSON (ломал S2.5).
+        # Эмпирически шлюз отдаёт чистый text-блок за ~1.5с вместо долгого thinking.
+        "thinking": {"type": "disabled"},
     }
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)

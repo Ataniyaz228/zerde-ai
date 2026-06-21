@@ -18,13 +18,14 @@ type ReportState = {
   content: string;
   score: number;
   filename: string;
+  reportId: string;
 } & VerdictCounts;
 
 // Persisted across reloads so an in-flight analysis can be resumed (#4).
 const ACTIVE_KEY = "zerde_active_analysis";
 
 export default function AnalyzePage() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
 
   // Build steps from i18n at render time
   const makeSteps = useCallback((): PipelineStep[] => [
@@ -37,6 +38,8 @@ export default function AnalyzePage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [steps, setSteps] = useState<PipelineStep[]>(makeSteps);
   const [report, setReport] = useState<ReportState | null>(null);
+  // Казахская версия готового отчёта (ленивый машинный перевод с бэкенда).
+  const [kzContent, setKzContent] = useState<string | null>(null);
   const [analysisId, setAnalysisId] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("report");
   const [error, setError] = useState<string | null>(null);
@@ -142,9 +145,11 @@ export default function AnalyzePage() {
 
         if (msg.type === "stage_start") {
           startTimer();
+          // Игнорируем серверный msg.message (он захардкожен на русском) —
+          // под-строку активного шага локализуем сами, как и initial-active.
           setSteps((prev) => prev.map((step) =>
             step.id === msg.stage
-              ? { ...step, status: "active", message: msg.message ?? t("step_waiting") }
+              ? { ...step, status: "active", message: t("step_waiting") }
               : step
           ));
         }
@@ -169,6 +174,7 @@ export default function AnalyzePage() {
             content: msg.report,
             score: msg.score,
             filename: fileName,
+            reportId: msg.report_id,
             confirmed: msg.confirmed ?? 0,
             contradicted: msg.contradicted ?? 0,
             unverified: msg.unverified ?? 0,
@@ -209,6 +215,24 @@ export default function AnalyzePage() {
     return () => ws.close();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisId, phase]);
+
+  // Когда отчёт готов и UI на казахском — догружаем безопасный перевод с бэкенда
+  // (RU-версия из WS уже показана; KZ подменяется по готовности). На RU — сброс.
+  useEffect(() => {
+    if (lang !== "kz") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setKzContent(null);
+      return;
+    }
+    if (phase !== "done" || !report?.reportId) return;
+    let alive = true;
+    apiFetch(`${API_URL}/api/reports/${report.reportId}?lang=kz`)
+      .then((r) => r.json())
+      .then((data) => { if (alive && data?.content) setKzContent(data.content); })
+      .catch(() => { /* фолбэк — остаётся русская версия */ });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang, phase, report?.reportId]);
 
   const scoreClass = report ? s[SCORE_CLASS[scoreTier(report.score)]] : "";
 
@@ -274,7 +298,11 @@ export default function AnalyzePage() {
               </div>
               <VerdictBadges counts={report} />
               <div style={{ height: 16 }} />
-              <ReportViewer content={report.content} downloadName={report.filename} />
+              <ReportViewer
+                content={lang === "kz" && kzContent ? kzContent : report.content}
+                downloadName={report.filename}
+                note={lang === "kz" ? (kzContent ? t("report_machine_translation") : t("report_translating")) : undefined}
+              />
             </motion.div>
           )}
         </AnimatePresence>

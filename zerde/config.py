@@ -78,8 +78,13 @@ class Settings(BaseSettings):
         default="gemini-3.5-flash",
         description="ID модели для Этапа 5.5 (Policy Analyst).",
     )
+    llm_model_translator: str = Field(
+        default="gemini-3.5-flash",
+        description="ID модели для перевода готового отчёта RU→KZ (презентационный слой, вне аудита).",
+    )
     llm_max_tokens_planner: int = Field(default=8192, description="Увеличено с 4096: QueryPlan с 10+ запросами занимает 5-7K токенов")
     llm_max_tokens_analyst: int = Field(default=16384, description="DeepSeek R1 поддерживает до 32k")
+    llm_max_tokens_translator: int = Field(default=16384, description="Перевод всего отчёта целиком — отчёты длинные")
 
     embedding_model: str = Field(
         default="text-embedding-3-small",
@@ -96,6 +101,37 @@ class Settings(BaseSettings):
     openrouter_app_name: str = Field(
         default="",
         description="Название приложения в OpenRouter dashboard",
+    )
+
+    # -----------------------------------------------------------------------
+    # Translator provider (опциональный, ТОЛЬКО для переводчика отчёта S7)
+    # -----------------------------------------------------------------------
+    # Переводчик — презентационный слой ВНЕ аудита. Его можно направить на
+    # отдельного провайдера (напр. бесплатный шлюз с Anthropic Messages-протоколом
+    # вроде openmodel.ai → deepseek-v4-flash), не трогая аудит-путь (OPENAI_BASE_URL).
+    # Если translator_base_url пустой — переводчик идёт тем же OpenAI-клиентом,
+    # что и остальные стадии (обратная совместимость, default).
+    translator_protocol: str = Field(
+        default="openai",
+        description="Протокол переводчика: 'openai' (chat.completions) или 'anthropic' (/v1/messages).",
+    )
+    translator_base_url: str = Field(
+        default="",
+        description="Base URL провайдера переводчика. Пусто → использовать общий OPENAI_BASE_URL.",
+    )
+    translator_api_key: str = Field(
+        default="",
+        description="API-ключ провайдера переводчика. Пусто → использовать общий OPENAI_API_KEY.",
+    )
+    audit_fallback_enabled: bool = Field(
+        default=False,
+        description=(
+            "Автофолбэк аудит-пути (planner/extractor/analyst/policy) на openmodel "
+            "(Anthropic /v1/messages) при 403 'Key limit exceeded' от OpenRouter. "
+            "Использует translator_base_url/translator_api_key (тот же шлюз). "
+            "Прод-метрика остаётся на OpenRouter — openmodel лишь запасной, чтобы "
+            "пайплайн не блокировался лимитом ключа."
+        ),
     )
 
     # -----------------------------------------------------------------------

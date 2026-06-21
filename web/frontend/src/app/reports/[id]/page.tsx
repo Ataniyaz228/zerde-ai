@@ -35,16 +35,22 @@ export default function ReportDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Перезапрашиваем при смене языка: KZ — безопасный машинный перевод с бэкенда
+  // (кэшируется там). RU — канонический отчёт.
   useEffect(() => {
-    apiFetch(`${API_URL}/api/reports/${id}`)
+    let alive = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    apiFetch(`${API_URL}/api/reports/${id}?lang=${lang}`)
       .then((r) => r.json())
-      .then((data) => { setReport(data); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [id]);
+      .then((data) => { if (alive) { setReport(data); setLoading(false); } })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [id, lang]);
 
   if (loading) {
     return (
@@ -119,7 +125,12 @@ export default function ReportDetailPage({
           </div>
 
           {/* Report body */}
-          <ReportViewer content={report.content} downloadName={report.metadata.filename} reportId={report.id} />
+          <ReportViewer
+            content={report.content}
+            downloadName={report.metadata.filename}
+            reportId={report.id}
+            note={lang === "kz" ? t("report_machine_translation") : undefined}
+          />
         </motion.div>
       </div>
     </div>

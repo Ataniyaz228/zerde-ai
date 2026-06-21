@@ -1,0 +1,12 @@
+{
+  "//": "Used ONLY by .design-sync/prebuild.mjs (esbuild). baseUrl '..' resolves to web/frontend so @/* -> src/* and the next/* keys map to the local shims. esbuild reads compilerOptions.paths directly; do not rely on `extends` (the converter's own path plugin does not follow it either).",
+  "compilerOptions": {
+    "baseUrl": "..",
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["./src/*"],
+      "next/link": ["./.design-sync/shims/next-link"],
+      "next/navigation": ["./.design-sync/shims/next-navigation"]
+    }
+  }
+}

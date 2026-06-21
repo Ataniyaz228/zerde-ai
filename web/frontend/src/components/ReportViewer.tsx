@@ -14,6 +14,8 @@ interface Props {
   downloadName?: string;
   /** When set, a "copy link" button copies the current page URL. */
   reportId?: string;
+  /** Optional muted notice above the toolbar (e.g. machine-translation disclaimer). */
+  note?: string;
 }
 
 // Build the Markdown renderers. Markdown text is first highlighted for the
@@ -78,9 +80,11 @@ function parseIntoSections(md: string): Section[] {
 }
 
 // Sections describing conflicts / contradictions get a danger accent and open
-// by default — they carry the report's most important signal.
+// by default — they carry the report's most important signal. Язык-независимо:
+// только секция конфликтов несёт счётчик «(N)» в заголовке (RU и KZ) — это
+// надёжный сигнал даже после перевода; RU-ключевые слова оставляем как запас.
 function isDanger(title: string): boolean {
-  return /конфликт|коллиз|опроверг/i.test(title);
+  return /конфликт|коллиз|опроверг/i.test(title) || /\(\s*\d+\s*\)/.test(title);
 }
 
 function AccordionSection({
@@ -145,7 +149,7 @@ function AccordionSection({
   );
 }
 
-export default function ReportViewer({ content, downloadName, reportId }: Props) {
+export default function ReportViewer({ content, downloadName, reportId, note }: Props) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
@@ -180,6 +184,8 @@ export default function ReportViewer({ content, downloadName, reportId }: Props)
 
   return (
     <div>
+      {note && <p className={s.note}>{note}</p>}
+
       {/* Toolbar */}
       <div className={s.toolbar}>
         <div className={s.searchWrap}>

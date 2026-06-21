@@ -1,11 +1,19 @@
-/* ===== Zerde — дизайн-система «Редакционный архив» =====
-   Палитра с казахским корнем: тёплая бумага, акцент-глина (терракота) и
-   степное золото. Светлая тема — основная (юристы читают документы на светлом);
-   тёмная — через [data-theme="dark"]. Без glass/неоновых градиентов: глубина
-   даётся тенью, волосяными линейками и лёгким зерном бумаги.
+/* ===== Zerde — дизайн-система «Увеличенный устав» =====
+   Концепция: интерфейс как инструмент записи (свод законов), поданный в духе
+   exaggerated-минимализма — ТИПОГРАФИКА как главный визуальный объект, максимум
+   воздуха, почти монохром. Near-monochrome: «цвет» — это тёплая бумага и глубина
+   чернил, а единственная хроматическая нота (ультрамарин) работает хирургически.
+   Award-уровень держим на масштабе кегля, видимой сетке/нумерации и выверенном
+   движении на скролле — не на декоре. Светлая и тёмная темы проработаны равно
+   (паритет — часть идентичности); тёмная — через [data-theme="dark"].
 
-   Все имена переменных сохранены — на них завязаны CSS-модули. Значения
-   уточнены; добавлены токены типошкалы, отступов, кольца фокуса и движения. */
+   Два принципа, закрывающих хождение по оттенкам:
+   1. Бренд-акцент лежит ВНЕ «светофора» вердиктов (зел/янтарь/крас) — поэтому
+      бренд и статус не конфликтуют by design.
+   2. Главная кнопка залита чернилами, а не цветом (анти-SaaS).
+
+   Без glass/неона: глубина — тень, волосяные линейки, лёгкое зерно бумаги.
+   Все имена переменных сохранены — на них завязаны CSS-модули. */
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -14,55 +22,62 @@
 }
 
 :root {
-  /* Поверхности — прохладная бумага */
-  --bg-primary:  #F4F5F3;
+  /* Поверхности — чистый нейтральный свет (Apple/Linear): почти белый холст,
+     белые карточки, ступени подъёма едва холоднее. Никакой тёплой бумаги. */
+  --bg-primary:  #FFFFFF;
   --bg-surface:  #FFFFFF;
-  --bg-elevated: #F2F4F6;
-  --bg-hover:    #EAEDF1;
-  --bg-sunken:   #E6E9EE;
+  --bg-elevated: #F6F7F9;
+  --bg-hover:    #EFF0F3;
+  --bg-sunken:   #E9EBEF;
 
-  /* Акцент — благородный индиго */
-  --accent:        #2E47B8;
-  --accent-strong: #233A8C;
-  --accent-soft:   rgba(46, 71, 184, 0.06);
-  --accent-tint:   rgba(46, 71, 184, 0.13);
-  --accent-border: rgba(46, 71, 184, 0.22);
+  /* Акцент — чистый индиго-синий: одна хроматическая нота на нейтральном.
+     Используется хирургически (ссылки, focus, продуктовые акценты). Лежит ВНЕ
+     «светофора» вердиктов — бренд и статус не конфликтуют. */
+  --accent:        #3457DC;
+  --accent-strong: #2942C7;
+  --accent-soft:   rgba(52, 87, 220, 0.06);
+  --accent-tint:   rgba(52, 87, 220, 0.12);
+  --accent-border: rgba(52, 87, 220, 0.26);
   --text-on-accent: #FFFFFF;
 
-  /* Второй акцент — приглушённая охра (редко, для тёплого контрапункта) */
-  --gold:        #A9781E;
-  --gold-soft:   rgba(169, 120, 30, 0.12);
-  --gold-border: rgba(169, 120, 30, 0.28);
+  /* Главная кнопка — почти-чёрная заливка (Linear-вайб): авторитетно и вне
+     времени, бренд-цвет не расходуется на кнопку. В тёмной теме инвертируется. */
+  --btn-primary-bg:       #111113;
+  --btn-primary-bg-hover: #2A2B2F;
+  --btn-primary-fg:       #FFFFFF;
 
-  /* Текст — мягкие чернила (сниженный контраст = легче глазу) */
-  --text-primary:   #2A2E38;
-  --text-secondary: #646A78;
-  --text-tertiary:  #9AA0AD;
+  /* Текст — нейтральные ступени (near-black → серый Linear). */
+  --text-primary:   #16171A;
+  --text-secondary: #5B5F66;
+  --text-tertiary:  #8A8F98;
 
-  /* Границы (прохладные волоски) */
-  --border:        #E6E8EC;
-  --border-subtle: #EFF1F4;
-  --border-strong: #D6D9E0;
+  /* Границы — очень светлые нейтральные волоски. */
+  --border:        #E8E9EC;
+  --border-subtle: #F0F1F3;
+  --border-strong: #D6D8DD;
 
-  /* Статусы вердиктов — отделены от бренд-индиго */
-  --status-ok:      #2E7D55;
-  --status-ok-bg:   rgba(46, 125, 85, 0.10);
-  --status-warn:    #B07A12;
-  --status-warn-bg: rgba(176, 122, 18, 0.12);
-  --status-err:     #C0392B;
-  --status-err-bg:  rgba(192, 57, 43, 0.10);
+  /* Статусы вердиктов — чистый «светофор», калиброван под белый холст и
+     отдалён от индиго-бренда. */
+  --status-ok:      #15803D;
+  --status-ok-bg:   rgba(21, 128, 61, 0.10);
+  --status-warn:    #B45309;
+  --status-warn-bg: rgba(180, 83, 9, 0.11);
+  --status-err:     #DC2626;
+  --status-err-bg:  rgba(220, 38, 38, 0.10);
 
-  /* Тени — едва уловимые; глубину держим на линейках, а не на блюре */
-  --shadow-sm: 0 1px 2px rgba(20, 22, 34, 0.03);
-  --shadow:    0 2px 8px rgba(20, 22, 34, 0.045);
-  --shadow-lg: 0 10px 30px -14px rgba(20, 22, 34, 0.12);
+  /* Тени — мягкие диффузные (продуктовый шот Apple), нейтральные. */
+  --shadow-sm: 0 1px 2px rgba(16, 17, 26, 0.05);
+  --shadow:    0 4px 16px -4px rgba(16, 17, 26, 0.08);
+  --shadow-lg: 0 24px 48px -16px rgba(16, 17, 26, 0.14), 0 8px 16px -8px rgba(16, 17, 26, 0.06);
 
   /* Кольцо фокуса (доступность) */
   --ring: 0 0 0 3px var(--accent-tint);
 
-  /* Шрифты */
-  --font-serif: var(--font-lora), Georgia, "Times New Roman", serif;
+  /* Шрифты. Сериф убран из продукта (crisp Apple/Linear) — токен --font-serif
+     оставлен АЛИАСОМ на sans, т.к. на него завязаны модули (правило: имена
+     переменных не ломаем). Постепенно мигрировать вызовы на --font-sans. */
   --font-sans:  var(--font-inter), system-ui, -apple-system, sans-serif;
+  --font-serif: var(--font-sans);
   --font-mono:  var(--font-mono-jb), ui-monospace, "SF Mono", "Fira Code", monospace;
 
   /* Типографическая шкала (модульная, текучая) */
@@ -72,19 +87,32 @@
   --step-2:  clamp(1.40rem, 1.27rem + 0.66vw, 1.85rem);
   --step-3:  clamp(1.80rem, 1.55rem + 1.24vw, 2.60rem);
   --step-4:  clamp(2.30rem, 1.85rem + 2.24vw, 3.85rem);
-  --step-5:  clamp(2.90rem, 2.10rem + 3.95vw, 5.40rem);
+  --step-5:  clamp(3.00rem, 1.95rem + 4.7vw, 6.20rem);
+  /* Display/крупные кегли (crisp). Роли: --step-display — hero-statement;
+     --step-6 — крупные заголовки секций. Мин-значения безопасны на мобиле (не
+     переполняют), трекинг отрицательный (оптическая плотность), межстрочный
+     плотный. Тело/лейблы используют --step-0/--step--1. */
+  --step-6:       clamp(2.0rem, 1.4rem + 2.6vw, 3.6rem);
+  --step-display: clamp(2.0rem, 1.2rem + 3.6vw, 5.0rem);
+  --tracking-display: -0.03em;
+  --tracking-tight:   -0.022em;
+  --leading-display:  1.05;
 
-  /* Радиусы — сдержанные, редакционные */
-  --radius-sm: 6px;
-  --radius:    9px;
-  --radius-lg: 15px;
+  /* Радиусы — единый стандарт: контролы 8 · поверхности 10/14 · pill 999. */
+  --radius-sm: 8px;
+  --radius:    10px;
+  --radius-lg: 14px;
   --radius-xl: 22px;
 
   /* Движение */
   --ease-out:   cubic-bezier(0.22, 1, 0.36, 1);
   --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
-  --duration:   180ms;
+  /* Выразительная кривая (сильный overshoot-выход) для геро-reveal и крупных
+     появлений на скролле — «лист ложится на стол», а не дёргается. */
+  --ease-expressive: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration:    180ms;
   --duration-lg: 420ms;
+  --duration-xl: 700ms;
 
   /* Шкала отступов (4px-база) — единый ритм вместо ad-hoc rem. */
   --space-1: 0.25rem;  /* 4  */
@@ -94,15 +122,26 @@
   --space-5: 1.5rem;   /* 24 */
   --space-6: 2rem;     /* 32 */
   --space-7: 3rem;     /* 48 */
-  --space-8: 4rem;     /* 64 */
-  --space-9: 6rem;     /* 96 */
+  --space-8: 4rem;     /* 64  */
+  --space-9: 6rem;     /* 96  */
+  --space-10: 8rem;    /* 128 */
+
+  /* Ритм секций — крупный воздух между блоками (Apple/Linear), отзывчивый. */
+  --section-gap: clamp(4rem, 10vw, 9rem);
 
   /* Layout — ширины, отступ контейнера, высота шапки, минимальная тач-цель. */
   --header-h: 64px;
   --container-max: 1120px;
   --container-max-narrow: 940px;
   --container-pad: clamp(1rem, 4vw, 1.75rem);
+  --container-max-wide: 1320px;
   --tap-min: 44px;
+
+  /* Видимая редакционная сетка — структура как объект (exaggerated-минимализм).
+     12 колонок, желоб масштабируется. Используется для асимметричных раскладок
+     и hairline-разделителей секций. */
+  --grid-cols: 12;
+  --gutter: clamp(1rem, 2.5vw, 2rem);
 
   /* Z-index шкала. */
   --z-nav: 100;
@@ -117,41 +156,45 @@
 }
 
 [data-theme="dark"] {
-  --bg-primary:  #121319;
-  --bg-surface:  #1A1B23;
-  --bg-elevated: #21232E;
-  --bg-hover:    #282A38;
-  --bg-sunken:   #0D0E13;
+  /* Тёмная тема — нейтральный near-black (Vercel/Linear): глубокий графит с
+     чёткими ступенями подъёма, холодный белый текст. Без фиолетового подтона. */
+  --bg-primary:  #0A0A0B;
+  --bg-surface:  #141416;
+  --bg-elevated: #1C1C1F;
+  --bg-hover:    #26262A;
+  --bg-sunken:   #050506;
 
-  --accent:        #7C92F2;
-  --accent-strong: #97A9F6;
-  --accent-soft:   rgba(124, 146, 242, 0.12);
-  --accent-tint:   rgba(124, 146, 242, 0.20);
-  --accent-border: rgba(124, 146, 242, 0.28);
-  --text-on-accent: #10131F;
+  /* Акцент — светлый индиго на тёмном (читаемый, не вымытый). */
+  --accent:        #7E97F5;
+  --accent-strong: #9FB2FB;
+  --accent-soft:   rgba(126, 151, 245, 0.13);
+  --accent-tint:   rgba(126, 151, 245, 0.20);
+  --accent-border: rgba(126, 151, 245, 0.34);
+  --text-on-accent: #0A0A0B;
 
-  --gold:        #D7AC5B;
-  --gold-soft:   rgba(215, 172, 91, 0.13);
-  --gold-border: rgba(215, 172, 91, 0.30);
+  /* Кнопка инвертируется: белый по графиту (контраст-герой). */
+  --btn-primary-bg:       #F4F4F5;
+  --btn-primary-bg-hover: #FFFFFF;
+  --btn-primary-fg:       #0A0A0B;
 
-  --text-primary:   #E8EAF1;
-  --text-secondary: #9CA1B2;
-  --text-tertiary:  #646A7C;
+  --text-primary:   #F4F4F5;
+  --text-secondary: #A1A1A8;
+  --text-tertiary:  #6B6B72;
 
-  --border:        #2A2D3B;
-  --border-subtle: #20222E;
-  --border-strong: #3C4054;
+  --border:        #26262A;
+  --border-subtle: #1A1A1D;
+  --border-strong: #3A3A40;
 
-  --status-ok:      #54B17C;
-  --status-ok-bg:   rgba(84, 177, 124, 0.13);
-  --status-warn:    #D8A44C;
-  --status-warn-bg: rgba(216, 164, 76, 0.14);
-  --status-err:     #E3675B;
-  --status-err-bg:  rgba(227, 103, 91, 0.13);
+  --status-ok:      #4ADE80;
+  --status-ok-bg:   rgba(74, 222, 128, 0.13);
+  --status-warn:    #FBBF24;
+  --status-warn-bg: rgba(251, 191, 36, 0.13);
+  --status-err:     #F87171;
+  --status-err-bg:  rgba(248, 113, 113, 0.13);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.34);
-  --shadow:    0 6px 22px rgba(0, 0, 0, 0.44);
-  --shadow-lg: 0 22px 56px -14px rgba(0, 0, 0, 0.64), 0 8px 20px -10px rgba(0, 0, 0, 0.48);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow:    0 8px 26px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 28px 64px -16px rgba(0, 0, 0, 0.7), 0 10px 24px -10px rgba(0, 0, 0, 0.5);
 
   color-scheme: dark;
 }
@@ -217,12 +260,20 @@ img, svg { display: block; }
 }
 .container.narrow { max-width: var(--container-max-narrow); }
 
-/* Сплошная панель вместо стеклянной — волосок + мягкая тень */
+/* De-card: по умолчанию контент живёт на чистом фоне, разделён воздухом и
+   .hairline. Рамка+тень (.panel/.card) — РЕДКОЕ исключение, только для реально
+   «плавающих» объектов (продуктовый визуал героя). Не заворачивать секции/блоки. */
 .panel {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
+}
+
+/* Волосяной разделитель — основной способ отделять блоки вместо коробок. */
+.hairline {
+  border: none;
+  border-top: 1px solid var(--border);
 }
 
 /* Надзаголовок-капитель: капс-буквы с трекингом и короткой линейкой. */

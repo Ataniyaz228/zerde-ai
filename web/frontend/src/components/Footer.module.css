@@ -1,13 +1,12 @@
 .footer {
   border-top: 1px solid var(--border);
-  background:
-    linear-gradient(180deg, transparent, var(--bg-elevated));
-  margin-top: var(--space-8);
+  background: var(--bg-primary);
+  margin-top: var(--section-gap);
 }
 
 /* Mobile-first: бренд сверху, ссылки/источник в две колонки. */
 .inner {
-  max-width: var(--container-max);
+  max-width: var(--container-max-wide);
   margin: 0 auto;
   padding: var(--space-7) var(--container-pad) var(--space-5);
   display: grid;
@@ -28,19 +27,32 @@
   margin-bottom: var(--space-3);
 }
 
+/* Знак, согласован с навбаром: сплошной индиго-квадрат + белый ромб-зерно. */
 .logoMark {
-  width: 11px;
-  height: 11px;
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
   background: var(--accent);
+  flex-shrink: 0;
+}
+.logoMark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 6px;
+  height: 6px;
+  background: var(--text-on-accent);
   transform: rotate(45deg);
-  border-radius: 2px;
+  border-radius: 1.5px;
 }
 
 .logoText {
-  font-family: var(--font-serif);
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--font-sans);
+  font-size: 18px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
 }
 
@@ -84,7 +96,7 @@
 .sourceLink:hover { color: var(--accent); border-color: var(--accent-border); }
 
 .baseline {
-  max-width: var(--container-max);
+  max-width: var(--container-max-wide);
   margin: 0 auto;
   padding: var(--space-4) var(--container-pad);
   border-top: 1px solid var(--border-subtle);

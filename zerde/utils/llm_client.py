@@ -19,6 +19,8 @@ import time
 import weakref
 from collections import deque
 from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 from openai import (
@@ -26,6 +28,7 @@ from openai import (
     APITimeoutError,
     AsyncOpenAI,
     InternalServerError,
+    PermissionDeniedError,
     RateLimitError,
 )
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
@@ -47,6 +50,21 @@ _TRANSIENT_LLM_ERRORS = (
     APIConnectionError,
     RateLimitError,
     InternalServerError,
+    asyncio.TimeoutError,
+)
+
+
+class _TransientUpstreamError(Exception):
+    """429/5xx от HTTP-шлюза переводчика — запрос idempotent, безопасно повторить."""
+
+
+# Транзиентные httpx-ошибки для Anthropic-пути переводчика (тот же принцип, что и
+# у OpenAI-клиента: таймаут/соединение — idempotent при отсутствии ответа).
+_TRANSIENT_HTTPX_ERRORS = (
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    _TransientUpstreamError,
     asyncio.TimeoutError,
 )
 
@@ -102,6 +120,7 @@ class LLMCallRecord:
     latency_s: float
     attempts: int
     batch_failures: int = 0
+    fallback: bool = False  # True → ответ получен с резервного провайдера (openmodel), не с OpenRouter
 
 
 # Манифест последних вызовов (ограниченный буфер — не растёт неограниченно
@@ -235,13 +254,19 @@ def make_llm_client(settings: Settings | None = None) -> AsyncOpenAI:
     tenacity (cached_llm_call) и дадут до 3×3=9 фактических вызовов вместо 3.
     """
     s = settings or get_settings()
-    return AsyncOpenAI(
+    real = AsyncOpenAI(
         api_key=s.openai_api_key,
         base_url=s.openai_base_url,
         default_headers=s.openrouter_headers,
         timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
         max_retries=0,
     )
+    # Автофолбэк аудита на openmodel при 403-лимите OpenRouter (опционально).
+    # Шим структурно совместим с AsyncOpenAI (.chat.completions.create) — cast
+    # безопасен: cached_llm_call дёргает только этот метод.
+    if s.audit_fallback_enabled and s.translator_base_url and s.translator_api_key:
+        return cast(AsyncOpenAI, _FallbackLLMClient(real, s))
+    return real
 
 
 def make_embedding_client(settings: Settings | None = None) -> AsyncOpenAI | None:
@@ -262,6 +287,242 @@ def make_embedding_client(settings: Settings | None = None) -> AsyncOpenAI | Non
     )
 
 
+def _extract_anthropic_text(data: dict[str, Any]) -> str:
+    """Склеивает text-блоки Anthropic-ответа, игнорируя thinking/прочие типы.
+
+    deepseek-v4-flash через шлюз отдаёт [{type:thinking,...}, {type:text,...}] —
+    нам нужен только переведённый текст, рассуждения отбрасываем.
+    """
+    content = data.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts = [
+        b.get("text", "")
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text"
+    ]
+    return "".join(parts)
+
+
+async def _anthropic_messages_request(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    temperature: float,
+) -> tuple[dict[str, Any], int]:
+    """Один HTTP-вызов Anthropic Messages (`POST {base_url}/v1/messages`) на голом
+    httpx с ретраями транзиентных (таймаут/429/5xx). Без кэша, без семафора, без
+    манифеста — это низкоуровневый примитив; обвязку делает вызывающий.
+
+    Возвращает (сырой JSON-ответ, число попыток). system выносится в top-level
+    параметр, в messages остаются только user/assistant.
+    """
+    system_parts = [m["content"] for m in messages if m.get("role") == "system"]
+    chat_messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages
+        if m.get("role") in ("user", "assistant")
+    ]
+    payload: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": chat_messages,
+        # Отключаем «thinking» (deepseek-v4 через openmodel по умолчанию рассуждает):
+        # для структурированного JSON и перевода reasoning не нужен, а главное — он
+        # съедает max_tokens и обрезает ответ до пустого/битого JSON (ломал S2.5).
+        # Эмпирически шлюз отдаёт чистый text-блок за ~1.5с вместо долгого thinking.
+        "thinking": {"type": "disabled"},
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+
+    url = base_url.rstrip("/") + "/v1/messages"
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    attempts = 0
+
+    @retry(
+        retry=retry_if_exception_type(_TRANSIENT_HTTPX_ERRORS),
+        wait=wait_random_exponential(multiplier=1, max=20),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def _post() -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+        ) as hc:
+            resp = await asyncio.wait_for(
+                hc.post(url, headers=headers, json=payload),
+                timeout=_LLM_OVERALL_TIMEOUT_S,
+            )
+        # 429/5xx — транзиент: повторяем (idempotent). 4xx (кроме 429) — фатально.
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise _TransientUpstreamError(f"upstream {resp.status_code}")
+        resp.raise_for_status()
+        body: dict[str, Any] = resp.json()
+        return body
+
+    data = await _post()
+    return data, attempts
+
+
+async def cached_anthropic_messages_call(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    settings: Settings | None = None,
+    ttl_seconds: int | None = None,
+    max_tokens: int = 4096,
+    temperature: float = 0.0,
+) -> dict[str, Any]:
+    """Кэшируемый вызов Anthropic Messages-протокола на голом httpx — без
+    зависимости `anthropic`.
+
+    Для шлюзов, отдающих модель только через Anthropic-протокол (напр.
+    openmodel.ai → deepseek-v4-flash). Используется ТОЛЬКО переводчиком отчёта
+    (презентационный слой вне аудита). Возвращает {"text": <ответ>} — тот же
+    контракт, что raw_text-путь cached_llm_call, поэтому s7_translate единообразен.
+
+    Кэш-ключ — в отдельном namespace (protocol=anthropic, mode=text), не
+    коллизирует с OpenAI-вызовами → cache_key_pin не затрагивается.
+    """
+    from zerde.utils.cache import LLMCache
+
+    s = settings or get_settings()
+    cache = LLMCache(s.cache_db_path)
+    await cache.invalidate_expired()
+
+    _key_obj: dict[str, object] = {
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "mode": "text",
+        "protocol": "anthropic",
+    }
+    prompt_key = json.dumps(_key_obj, ensure_ascii=False, sort_keys=True)
+
+    cache_check_start = time.perf_counter()
+    cached = await cache.get(model, prompt_key)
+    if cached is not None:
+        record_llm_call(LLMCallRecord(
+            model=model, cached=True, prompt_tokens=None, completion_tokens=None,
+            total_tokens=None, latency_s=time.perf_counter() - cache_check_start,
+            attempts=1,
+        ))
+        return cached
+
+    live_start = time.perf_counter()
+    semaphore = get_llm_semaphore()
+    async with semaphore:
+        data, attempts = await _anthropic_messages_request(
+            base_url, api_key, model, messages, max_tokens, temperature,
+        )
+
+    usage = data.get("usage") if isinstance(data, dict) else None
+    usage = usage if isinstance(usage, dict) else {}
+    record_llm_call(LLMCallRecord(
+        model=model, cached=False,
+        prompt_tokens=usage.get("input_tokens"),
+        completion_tokens=usage.get("output_tokens"),
+        total_tokens=None,
+        latency_s=time.perf_counter() - live_start, attempts=attempts,
+    ))
+
+    text = _extract_anthropic_text(data).strip()
+    if not text:
+        logger.warning("[AnthropicCall] Skipping cache — empty response.")
+        return {}
+    result = {"text": text}
+    await cache.put(model, prompt_key, result, ttl_seconds=ttl_seconds)
+    return result
+
+
+def _openai_shaped_response(content: str, usage: dict[str, Any] | None) -> SimpleNamespace:
+    """Заворачивает текст ответа в минимальный OpenAI-подобный объект, который
+    понимает cached_llm_call (`.choices[0].message.content`, `.usage.*`).
+
+    Помечается `zerde_fallback=True`: этот ответ пришёл с РЕЗЕРВНОГО провайдера
+    (openmodel), а не с OpenRouter. По этому флагу cached_llm_call (а) НЕ кэширует
+    ответ под OpenRouter-ключом модели — иначе после восстановления лимита прод
+    («остаётся на OpenRouter») тянул бы openmodel-ответ из кэша как родной
+    (провенанс-утечка); (б) помечает вызов в манифесте как fallback."""
+    u = usage or {}
+    resp = SimpleNamespace(
+        choices=[SimpleNamespace(
+            index=0,
+            finish_reason="stop",
+            message=SimpleNamespace(role="assistant", content=content),
+        )],
+        usage=SimpleNamespace(
+            prompt_tokens=u.get("input_tokens"),
+            completion_tokens=u.get("output_tokens"),
+            total_tokens=None,
+        ),
+    )
+    resp.zerde_fallback = True
+    return resp
+
+
+class _FallbackLLMClient:
+    """Прокси под AsyncOpenAI: пробует OpenRouter, а при 403 «Key limit exceeded»
+    автоматически уходит на openmodel (Anthropic /v1/messages), возвращая
+    OpenAI-форму ответа. Прозрачно для всех аудит-стадий — они дергают только
+    `client.chat.completions.create(**kwargs)`.
+
+    Прод-метрика остаётся на OpenRouter (тот же запрос идёт туда первым); openmodel
+    включается лишь когда ключ упёрся в лимит → пайплайн не блокируется.
+    """
+
+    def __init__(self, real: AsyncOpenAI, settings: Settings) -> None:
+        self._real = real
+        self._s = settings
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    async def _create(self, **kwargs: Any) -> Any:
+        try:
+            return await self._real.chat.completions.create(**kwargs)
+        except PermissionDeniedError as e:
+            logger.warning(
+                "[LLMFallback] OpenRouter отказал (403, лимит ключа?) — фолбэк на openmodel: %s",
+                e,
+            )
+            return await self._fallback(e, **kwargs)
+
+    async def _fallback(self, original: Exception, **kwargs: Any) -> Any:
+        # OpenRouter id с вендор-префиксом → openmodel без него:
+        # 'deepseek/deepseek-v4-flash' → 'deepseek-v4-flash'.
+        model = str(kwargs.get("model", ""))
+        om_model = model.split("/")[-1]
+        messages = kwargs.get("messages", [])
+        max_tokens = int(kwargs.get("max_tokens", 4096))
+        temperature = float(kwargs.get("temperature", 0.0))
+        try:
+            data, _ = await _anthropic_messages_request(
+                self._s.translator_base_url,
+                self._s.translator_api_key,
+                om_model,
+                messages,
+                max_tokens,
+                temperature,
+            )
+        except Exception:
+            logger.exception("[LLMFallback] openmodel тоже упал — пробрасываю исходный отказ")
+            raise original
+        text = _extract_anthropic_text(data)
+        usage = data.get("usage") if isinstance(data, dict) else None
+        usage = usage if isinstance(usage, dict) else {}
+        return _openai_shaped_response(text, usage)
+
+
 async def cached_llm_call(
     client: AsyncOpenAI,
     model: str,
@@ -270,6 +531,7 @@ async def cached_llm_call(
     ttl_seconds: int | None = None,
     max_tokens: int = 4096,
     temperature: float = 0.0,
+    raw_text: bool = False,
 ) -> dict:
     """
     LLM-вызов с кэшированием ответов в SQLite.
@@ -285,9 +547,16 @@ async def cached_llm_call(
         ttl_seconds: None = постоянный кэш, int = TTL в секундах.
         max_tokens: Макс. токенов ответа.
         temperature: Температура (0 для детерминированности).
+        raw_text: True → НЕ просить json_object и НЕ парсить JSON; вернуть
+            {"text": <сырой ответ>}. Для задач, где ответ — длинный свободный
+            текст (напр. перевод Markdown-отчёта), упаковка которого в JSON-строку
+            ненадёжна (модель роняет невалидный JSON с literal-переводами строк).
+            Ключ кэша получает отдельный namespace (mode=text), поэтому ключи
+            JSON-вызывающих не меняются (cache_key_pin остаётся зелёным).
 
     Returns:
-        Parsed JSON dict от LLM (из кэша или свежий).
+        Parsed JSON dict от LLM (или {"text": str} при raw_text). Пустой dict —
+        сломанный/пустой ответ (вызывающий должен предусмотреть фолбэк).
     """
     global _repair_used_count, _parse_failed_count
 
@@ -303,11 +572,12 @@ async def cached_llm_call(
     # Ключ = model + messages + параметры генерации, влияющие на ответ.
     # БЕЗ temperature/max_tokens смена этих настроек вернула бы устаревший
     # закэшированный ответ (cache.py:_make_key добавляет ещё версию промпта).
-    prompt_key = json.dumps(
-        {"messages": messages, "temperature": temperature, "max_tokens": max_tokens},
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    _key_obj: dict[str, object] = {"messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+    if raw_text:
+        # Отдельный namespace, чтобы текстовые ответы не делили ключ с JSON-режимом
+        # и чтобы ключи существующих JSON-вызовов остались байт-в-байт прежними.
+        _key_obj["mode"] = "text"
+    prompt_key = json.dumps(_key_obj, ensure_ascii=False, sort_keys=True)
 
     # Проверяем кэш
     cache_check_start = time.perf_counter()
@@ -330,9 +600,10 @@ async def cached_llm_call(
     attempts = 0
     response = None
     async with semaphore:
-        # Пробуем с json_object, при ошибке — без него (fallback)
+        # Пробуем с json_object, при ошибке — без него (fallback).
+        # raw_text: json_object вообще не запрашиваем (ответ — свободный текст).
         content = None
-        for use_json_mode in (True, False):
+        for use_json_mode in ((False,) if raw_text else (True, False)):
             try:
                 kwargs: dict = dict(
                     model=model,
@@ -396,6 +667,11 @@ async def cached_llm_call(
     if content is None:
         content = "{}"
 
+    # Ответ пришёл с резервного провайдера (openmodel-фолбэк при 403 OpenRouter)?
+    # Если да — НЕ кэшируем под OpenRouter-ключом (иначе openmodel-ответ подменит
+    # прод-путь после восстановления лимита) и помечаем в манифесте.
+    _from_fallback = bool(getattr(response, "zerde_fallback", False))
+
     # Манифест: usage из последнего успешного ответа (None если response без
     # usage — некоторые OpenRouter-модели его не возвращают).
     _usage = getattr(response, "usage", None)
@@ -407,7 +683,23 @@ async def cached_llm_call(
         total_tokens=getattr(_usage, "total_tokens", None),
         latency_s=time.perf_counter() - live_start,
         attempts=attempts,
+        fallback=_from_fallback,
     ))
+
+    # raw_text: ответ — сырой текст, JSON не парсим. Пустой/«{}» → сломанный
+    # (не кэшируем, вызывающий уйдёт в фолбэк).
+    if raw_text:
+        text = (content or "").strip()
+        if not text or text == "{}":
+            logger.warning("[LLMCall] Skipping cache — raw_text response is empty.")
+            return {}
+        # Отдельная переменная (не parsed), чтобы не сужать тип parsed ниже.
+        text_result = {"text": text}
+        if _from_fallback:
+            logger.info("[LLMCall] fallback-ответ openmodel — не кэшируем под OpenRouter-ключом (провенанс).")
+        else:
+            await cache.put(model, prompt_key, text_result, ttl_seconds=ttl_seconds)
+        return text_result
 
     # Если ответ не JSON — пробуем извлечь JSON из текста
     parse_failed = False
@@ -452,6 +744,11 @@ async def cached_llm_call(
     # НЕ кэшируем сломанные ответы: пустой dict или parse_failed
     if parse_failed or not parsed:
         logger.warning("[LLMCall] Skipping cache — response is empty or malformed.")
+        return parsed
+
+    # Fallback-ответ (openmodel) НЕ кэшируем под OpenRouter-ключом — провенанс.
+    if _from_fallback:
+        logger.info("[LLMCall] fallback-ответ openmodel — не кэшируем под OpenRouter-ключом (провенанс).")
         return parsed
 
     # Сохраняем в кэш только валидные непустые ответы

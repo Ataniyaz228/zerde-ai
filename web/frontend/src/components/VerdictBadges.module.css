@@ -1,131 +1,119 @@
-/* ===== Full variant (report header dashboard) ===== */
+/* ===== Full variant — «ответ» отчёта. Без коробки: крупное утверждение,
+   тонкий сегментный метр, три счётчика на воздухе. ===== */
 
 .full {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-5);
 }
 
-/* Mobile-first: одна колонка на телефоне, три — с 34rem. */
-.chips {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-}
-
-@media (min-width: 34rem) {
-  .chips { grid-template-columns: repeat(3, 1fr); }
-}
-
-.chip {
+/* Заголовок-ответ: крупно, цвет несёт статус (красный — критично, зелёный —
+   чисто, нейтральный — нехватка данных). Без рамки/фона. */
+.headline {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--bg-surface);
-  position: relative;
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-  transition: transform var(--duration), box-shadow var(--duration);
+  gap: var(--space-3);
 }
-.chip:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+.headlineMark { flex-shrink: 0; }
+.headline.good .headlineMark { color: var(--status-ok); }
+.headline.bad  .headlineMark { color: var(--status-err); }
+.headline.warn .headlineMark { color: var(--status-warn); }
 
-/* Левый цветной рейл — статус считывается мгновенно. */
-.chip::before {
-  content: "";
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 3px;
-}
-.chip.good::before { background: var(--status-ok); }
-.chip.bad::before  { background: var(--status-err); }
-.chip.warn::before { background: var(--status-warn); }
-
-.chipBody {
+.headlineBody {
   display: flex;
   flex-direction: column;
-  line-height: 1.05;
   gap: 3px;
+  min-width: 0;
 }
 
-.chipNum {
-  font-family: var(--font-serif);
-  font-size: 26px;
-  font-weight: 600;
+.headlineTitle {
+  font-size: var(--step-2);
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text-primary);
+  text-wrap: balance;
+}
+.headline.good .headlineTitle { color: var(--status-ok); }
+.headline.bad  .headlineTitle { color: var(--status-err); }
+
+.headlineSub {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* Сегментный метр — доля вердиктов с одного взгляда. */
+.bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+.barSeg { height: 100%; min-width: 4px; transition: width 0.7s var(--ease-out); }
+.barGood { background: var(--status-ok); }
+.barBad  { background: var(--status-err); }
+.barWarn { background: var(--status-warn); }
+
+/* Счётчики — число + лейбл, разделены воздухом (без карточек). */
+.legend {
+  display: flex;
+  gap: var(--space-6);
+}
+
+.legendItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.legendTop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.legendMark { flex-shrink: 0; }
+.legendItem.good .legendMark { color: var(--status-ok); }
+.legendItem.bad  .legendMark { color: var(--status-err); }
+.legendItem.warn .legendMark { color: var(--status-warn); }
+
+.legendNum {
+  font-size: var(--step-2);
+  font-weight: 680;
   letter-spacing: -0.02em;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
-.chipLabel {
+.legendLabel {
   font-size: 11px;
   font-weight: 500;
-  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.good   { color: var(--status-ok); }
-.bad    { color: var(--status-err); }
-.warn   { color: var(--status-warn); }
-
-.chip.good { border-color: color-mix(in srgb, var(--status-ok) 28%, var(--border)); }
-.chip.bad  { border-color: color-mix(in srgb, var(--status-err) 28%, var(--border)); }
-.chip.warn { border-color: color-mix(in srgb, var(--status-warn) 28%, var(--border)); }
-
-/* ===== Coverage bar ===== */
-
-.coverageHead {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 8px;
-}
-
-.coverageLabel {
-  font-size: 11px;
-  font-weight: 600;
   color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  line-height: 1.25;
 }
 
-.coveragePct {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.coverageBar {
-  height: 7px;
-  border-radius: 999px;
-  background: var(--bg-sunken);
-  overflow: hidden;
-}
-
-.coverageFill {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
-  transition: width 0.7s var(--ease-out);
-}
-
-/* ===== Compact variant (table rows) ===== */
+/* ===== Compact variant (строки списка) ===== */
 
 .compact {
   display: inline-flex;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 12px;
+  gap: 4px;
+  font-size: 12.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+.good { color: var(--status-ok); }
+.bad  { color: var(--status-err); }
+.warn { color: var(--status-warn); }

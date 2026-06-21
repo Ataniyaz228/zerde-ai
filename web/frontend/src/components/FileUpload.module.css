@@ -23,12 +23,6 @@
 .zone:hover, .zoneDragging {
   border-color: var(--accent);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-sm);
-}
-
-.zoneDragging {
-  transform: scale(1.006);
-  box-shadow: var(--shadow);
 }
 
 .zoneSelected {
@@ -56,7 +50,6 @@
   color: var(--accent);
   border-color: var(--accent-border);
   background: var(--accent-soft);
-  transform: translateY(-2px);
 }
 
 .zoneSelected .icon {
@@ -158,25 +151,21 @@
   gap: 8px;
   min-height: var(--tap-min);
   padding: 11px 26px;
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
   border-radius: var(--radius-sm);
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  box-shadow: var(--shadow-sm);
-  transition: background var(--duration), transform var(--duration),
-    box-shadow var(--duration);
+  transition: background var(--duration), transform var(--duration);
 }
 
 .startBtn:hover {
-  background: var(--accent-strong);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow);
+  background: var(--btn-primary-bg-hover);
 }
 
 .startBtn:active {
-  transform: translateY(0);
+  transform: scale(0.985);
 }
 
 .startBtnLoading {
@@ -210,7 +199,7 @@
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid var(--text-on-accent);
+  border: 2px solid var(--btn-primary-fg);
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;

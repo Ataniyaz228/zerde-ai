@@ -1,0 +1,57 @@
+{
+  "pkg": "frontend",
+  "globalName": "Zerde",
+  "projectId": "1cc181e6-ad09-490b-b78d-e4d78136f9d1",
+  "shape": "package",
+  "entry": "./.design-sync/dist/index.mjs",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": ".design-sync/dist/index.css",
+  "componentSrcMap": {
+    "Button": "src/components/ui/Button.tsx",
+    "SegmentedControl": "src/components/ui/SegmentedControl.tsx",
+    "Navbar": "src/components/Navbar.tsx",
+    "Footer": "src/components/Footer.tsx",
+    "FileUpload": "src/components/FileUpload.tsx",
+    "PipelineProgress": "src/components/PipelineProgress.tsx",
+    "ProductWindow": "src/components/ProductWindow.tsx",
+    "ReportViewer": "src/components/ReportViewer.tsx",
+    "VerdictBadges": "src/components/VerdictBadges.tsx",
+    "VerdictMark": "src/components/VerdictMark.tsx",
+    "StageAccordion": "src/components/StageAccordion.tsx",
+    "AnimatedNumber": "src/components/AnimatedNumber.tsx"
+  },
+  "provider": {
+    "component": "ThemeProvider",
+    "inner": { "component": "I18nProvider" }
+  },
+  "dtsPropsFor": {
+    "Button": "  /** Visual style. */\n  variant?: \"primary\" | \"secondary\" | \"ghost\" | \"icon\";\n  size?: \"sm\" | \"md\" | \"lg\";\n  /** Stretch to full width (handy on mobile). */\n  block?: boolean;\n  className?: string;\n  children: React.ReactNode;\n  /** When set, renders an <a> (link) instead of <button>. */\n  href?: string;\n  target?: string;\n  rel?: string;\n  type?: \"button\" | \"submit\" | \"reset\";\n  disabled?: boolean;\n  onClick?: React.MouseEventHandler;\n  \"aria-label\"?: string;",
+    "SegmentedControl": "  value: string;\n  onChange: (value: string) => void;\n  options: { value: string; label: React.ReactNode }[];\n  ariaLabel: string;\n  /** \"md\" — filters/sort; \"sm\" — compact (e.g. language switch). */\n  size?: \"sm\" | \"md\";",
+    "VerdictBadges": "  counts: {\n    confirmed: number;\n    contradicted: number;\n    unverified: number;\n    total: number;\n    coverage_pct: number;\n  };\n  /** \"full\" — answer headline + ratio bar + legend (report header); \"compact\" — inline pills (table rows). */\n  variant?: \"full\" | \"compact\";",
+    "VerdictMark": "  kind: \"good\" | \"bad\" | \"warn\";\n  size?: number;\n  className?: string;",
+    "PipelineProgress": "  steps: {\n    id: string;\n    name: string;\n    status: \"pending\" | \"active\" | \"done\" | \"error\";\n    message?: string;\n  }[];",
+    "FileUpload": "  onAnalyze: (file: File) => void;\n  isLoading: boolean;",
+    "ReportViewer": "  /** Markdown report body. */\n  content: string;\n  /** Original filename for the .md download (defaults to \"report.md\"). */\n  downloadName?: string;\n  /** When set, a \"copy link\" button copies the current page URL. */\n  reportId?: string;\n  /** Optional muted notice above the toolbar (e.g. machine-translation disclaimer). */\n  note?: string;",
+    "AnimatedNumber": "  /** Target number; counts up from 0. */\n  to: number;\n  /** Suffix after the number (e.g. \"+\"). */\n  suffix?: string;\n  /** Animation duration, ms. */\n  duration?: number;",
+    "Navbar": "",
+    "Footer": "",
+    "ProductWindow": "",
+    "StageAccordion": ""
+  },
+  "docsMap": {
+    "Button": ".design-sync/docs/Button.md",
+    "SegmentedControl": ".design-sync/docs/SegmentedControl.md",
+    "VerdictBadges": ".design-sync/docs/VerdictBadges.md",
+    "VerdictMark": ".design-sync/docs/VerdictMark.md",
+    "Navbar": ".design-sync/docs/Navbar.md",
+    "Footer": ".design-sync/docs/Footer.md",
+    "FileUpload": ".design-sync/docs/FileUpload.md",
+    "PipelineProgress": ".design-sync/docs/PipelineProgress.md",
+    "ProductWindow": ".design-sync/docs/ProductWindow.md",
+    "ReportViewer": ".design-sync/docs/ReportViewer.md",
+    "StageAccordion": ".design-sync/docs/StageAccordion.md",
+    "AnimatedNumber": ".design-sync/docs/AnimatedNumber.md"
+  },
+  "libOverrides": {},
+  "readmeHeader": ".design-sync/conventions.md"
+}

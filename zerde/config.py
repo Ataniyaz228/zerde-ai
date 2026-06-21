@@ -123,6 +123,16 @@ class Settings(BaseSettings):
         default="",
         description="API-ключ провайдера переводчика. Пусто → использовать общий OPENAI_API_KEY.",
     )
+    audit_fallback_enabled: bool = Field(
+        default=False,
+        description=(
+            "Автофолбэк аудит-пути (planner/extractor/analyst/policy) на openmodel "
+            "(Anthropic /v1/messages) при 403 'Key limit exceeded' от OpenRouter. "
+            "Использует translator_base_url/translator_api_key (тот же шлюз). "
+            "Прод-метрика остаётся на OpenRouter — openmodel лишь запасной, чтобы "
+            "пайплайн не блокировался лимитом ключа."
+        ),
+    )
 
     # -----------------------------------------------------------------------
     # Adilet Agent

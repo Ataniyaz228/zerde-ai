@@ -19,7 +19,8 @@ import time
 import weakref
 from collections import deque
 from dataclasses import dataclass
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 from openai import (
@@ -27,6 +28,7 @@ from openai import (
     APITimeoutError,
     AsyncOpenAI,
     InternalServerError,
+    PermissionDeniedError,
     RateLimitError,
 )
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
@@ -251,13 +253,19 @@ def make_llm_client(settings: Settings | None = None) -> AsyncOpenAI:
     tenacity (cached_llm_call) и дадут до 3×3=9 фактических вызовов вместо 3.
     """
     s = settings or get_settings()
-    return AsyncOpenAI(
+    real = AsyncOpenAI(
         api_key=s.openai_api_key,
         base_url=s.openai_base_url,
         default_headers=s.openrouter_headers,
         timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
         max_retries=0,
     )
+    # Автофолбэк аудита на openmodel при 403-лимите OpenRouter (опционально).
+    # Шим структурно совместим с AsyncOpenAI (.chat.completions.create) — cast
+    # безопасен: cached_llm_call дёргает только этот метод.
+    if s.audit_fallback_enabled and s.translator_base_url and s.translator_api_key:
+        return cast(AsyncOpenAI, _FallbackLLMClient(real, s))
+    return real
 
 
 def make_embedding_client(settings: Settings | None = None) -> AsyncOpenAI | None:
@@ -295,6 +303,71 @@ def _extract_anthropic_text(data: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+async def _anthropic_messages_request(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    temperature: float,
+) -> tuple[dict[str, Any], int]:
+    """Один HTTP-вызов Anthropic Messages (`POST {base_url}/v1/messages`) на голом
+    httpx с ретраями транзиентных (таймаут/429/5xx). Без кэша, без семафора, без
+    манифеста — это низкоуровневый примитив; обвязку делает вызывающий.
+
+    Возвращает (сырой JSON-ответ, число попыток). system выносится в top-level
+    параметр, в messages остаются только user/assistant.
+    """
+    system_parts = [m["content"] for m in messages if m.get("role") == "system"]
+    chat_messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages
+        if m.get("role") in ("user", "assistant")
+    ]
+    payload: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": chat_messages,
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+
+    url = base_url.rstrip("/") + "/v1/messages"
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    attempts = 0
+
+    @retry(
+        retry=retry_if_exception_type(_TRANSIENT_HTTPX_ERRORS),
+        wait=wait_random_exponential(multiplier=1, max=20),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def _post() -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+        ) as hc:
+            resp = await asyncio.wait_for(
+                hc.post(url, headers=headers, json=payload),
+                timeout=_LLM_OVERALL_TIMEOUT_S,
+            )
+        # 429/5xx — транзиент: повторяем (idempotent). 4xx (кроме 429) — фатально.
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise _TransientUpstreamError(f"upstream {resp.status_code}")
+        resp.raise_for_status()
+        body: dict[str, Any] = resp.json()
+        return body
+
+    data = await _post()
+    return data, attempts
+
+
 async def cached_anthropic_messages_call(
     base_url: str,
     api_key: str,
@@ -305,8 +378,8 @@ async def cached_anthropic_messages_call(
     max_tokens: int = 4096,
     temperature: float = 0.0,
 ) -> dict[str, Any]:
-    """Кэшируемый вызов Anthropic Messages-протокола (`POST {base_url}/v1/messages`)
-    на голом httpx — без зависимости `anthropic`.
+    """Кэшируемый вызов Anthropic Messages-протокола на голом httpx — без
+    зависимости `anthropic`.
 
     Для шлюзов, отдающих модель только через Anthropic-протокол (напр.
     openmodel.ai → deepseek-v4-flash). Используется ТОЛЬКО переводчиком отчёта
@@ -341,59 +414,12 @@ async def cached_anthropic_messages_call(
         ))
         return cached
 
-    # Anthropic-формат: system — отдельный top-level параметр, в messages только
-    # user/assistant. Наши вызовы шлют [system, user] → разносим.
-    system_parts = [m["content"] for m in messages if m.get("role") == "system"]
-    chat_messages = [
-        {"role": m["role"], "content": m["content"]}
-        for m in messages
-        if m.get("role") in ("user", "assistant")
-    ]
-    payload: dict[str, Any] = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "messages": chat_messages,
-    }
-    if system_parts:
-        payload["system"] = "\n\n".join(system_parts)
-
-    url = base_url.rstrip("/") + "/v1/messages"
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-
     live_start = time.perf_counter()
-    attempts = 0
-
-    @retry(
-        retry=retry_if_exception_type(_TRANSIENT_HTTPX_ERRORS),
-        wait=wait_random_exponential(multiplier=1, max=20),
-        stop=stop_after_attempt(3),
-        reraise=True,
-    )
-    async def _post() -> dict[str, Any]:
-        nonlocal attempts
-        attempts += 1
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
-        ) as hc:
-            resp = await asyncio.wait_for(
-                hc.post(url, headers=headers, json=payload),
-                timeout=_LLM_OVERALL_TIMEOUT_S,
-            )
-        # 429/5xx — транзиент: повторяем (idempotent). 4xx (кроме 429) — фатально.
-        if resp.status_code == 429 or resp.status_code >= 500:
-            raise _TransientUpstreamError(f"upstream {resp.status_code}")
-        resp.raise_for_status()
-        body: dict[str, Any] = resp.json()
-        return body
-
     semaphore = get_llm_semaphore()
     async with semaphore:
-        data = await _post()
+        data, attempts = await _anthropic_messages_request(
+            base_url, api_key, model, messages, max_tokens, temperature,
+        )
 
     usage = data.get("usage") if isinstance(data, dict) else None
     usage = usage if isinstance(usage, dict) else {}
@@ -412,6 +438,75 @@ async def cached_anthropic_messages_call(
     result = {"text": text}
     await cache.put(model, prompt_key, result, ttl_seconds=ttl_seconds)
     return result
+
+
+def _openai_shaped_response(content: str, usage: dict[str, Any] | None) -> SimpleNamespace:
+    """Заворачивает текст ответа в минимальный OpenAI-подобный объект, который
+    понимает cached_llm_call (`.choices[0].message.content`, `.usage.*`)."""
+    u = usage or {}
+    return SimpleNamespace(
+        choices=[SimpleNamespace(
+            index=0,
+            finish_reason="stop",
+            message=SimpleNamespace(role="assistant", content=content),
+        )],
+        usage=SimpleNamespace(
+            prompt_tokens=u.get("input_tokens"),
+            completion_tokens=u.get("output_tokens"),
+            total_tokens=None,
+        ),
+    )
+
+
+class _FallbackLLMClient:
+    """Прокси под AsyncOpenAI: пробует OpenRouter, а при 403 «Key limit exceeded»
+    автоматически уходит на openmodel (Anthropic /v1/messages), возвращая
+    OpenAI-форму ответа. Прозрачно для всех аудит-стадий — они дергают только
+    `client.chat.completions.create(**kwargs)`.
+
+    Прод-метрика остаётся на OpenRouter (тот же запрос идёт туда первым); openmodel
+    включается лишь когда ключ упёрся в лимит → пайплайн не блокируется.
+    """
+
+    def __init__(self, real: AsyncOpenAI, settings: Settings) -> None:
+        self._real = real
+        self._s = settings
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    async def _create(self, **kwargs: Any) -> Any:
+        try:
+            return await self._real.chat.completions.create(**kwargs)
+        except PermissionDeniedError as e:
+            logger.warning(
+                "[LLMFallback] OpenRouter отказал (403, лимит ключа?) — фолбэк на openmodel: %s",
+                e,
+            )
+            return await self._fallback(e, **kwargs)
+
+    async def _fallback(self, original: Exception, **kwargs: Any) -> Any:
+        # OpenRouter id с вендор-префиксом → openmodel без него:
+        # 'deepseek/deepseek-v4-flash' → 'deepseek-v4-flash'.
+        model = str(kwargs.get("model", ""))
+        om_model = model.split("/")[-1]
+        messages = kwargs.get("messages", [])
+        max_tokens = int(kwargs.get("max_tokens", 4096))
+        temperature = float(kwargs.get("temperature", 0.0))
+        try:
+            data, _ = await _anthropic_messages_request(
+                self._s.translator_base_url,
+                self._s.translator_api_key,
+                om_model,
+                messages,
+                max_tokens,
+                temperature,
+            )
+        except Exception:
+            logger.exception("[LLMFallback] openmodel тоже упал — пробрасываю исходный отказ")
+            raise original
+        text = _extract_anthropic_text(data)
+        usage = data.get("usage") if isinstance(data, dict) else None
+        usage = usage if isinstance(usage, dict) else {}
+        return _openai_shaped_response(text, usage)
 
 
 async def cached_llm_call(

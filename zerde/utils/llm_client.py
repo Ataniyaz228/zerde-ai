@@ -19,6 +19,7 @@ import time
 import weakref
 from collections import deque
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 from openai import (
@@ -47,6 +48,21 @@ _TRANSIENT_LLM_ERRORS = (
     APIConnectionError,
     RateLimitError,
     InternalServerError,
+    asyncio.TimeoutError,
+)
+
+
+class _TransientUpstreamError(Exception):
+    """429/5xx от HTTP-шлюза переводчика — запрос idempotent, безопасно повторить."""
+
+
+# Транзиентные httpx-ошибки для Anthropic-пути переводчика (тот же принцип, что и
+# у OpenAI-клиента: таймаут/соединение — idempotent при отсутствии ответа).
+_TRANSIENT_HTTPX_ERRORS = (
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    _TransientUpstreamError,
     asyncio.TimeoutError,
 )
 
@@ -260,6 +276,142 @@ def make_embedding_client(settings: Settings | None = None) -> AsyncOpenAI | Non
         api_key=s.effective_embedding_key,
         base_url="https://api.openai.com/v1",  # Фиксировано — не OpenRouter
     )
+
+
+def _extract_anthropic_text(data: dict[str, Any]) -> str:
+    """Склеивает text-блоки Anthropic-ответа, игнорируя thinking/прочие типы.
+
+    deepseek-v4-flash через шлюз отдаёт [{type:thinking,...}, {type:text,...}] —
+    нам нужен только переведённый текст, рассуждения отбрасываем.
+    """
+    content = data.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts = [
+        b.get("text", "")
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text"
+    ]
+    return "".join(parts)
+
+
+async def cached_anthropic_messages_call(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    settings: Settings | None = None,
+    ttl_seconds: int | None = None,
+    max_tokens: int = 4096,
+    temperature: float = 0.0,
+) -> dict[str, Any]:
+    """Кэшируемый вызов Anthropic Messages-протокола (`POST {base_url}/v1/messages`)
+    на голом httpx — без зависимости `anthropic`.
+
+    Для шлюзов, отдающих модель только через Anthropic-протокол (напр.
+    openmodel.ai → deepseek-v4-flash). Используется ТОЛЬКО переводчиком отчёта
+    (презентационный слой вне аудита). Возвращает {"text": <ответ>} — тот же
+    контракт, что raw_text-путь cached_llm_call, поэтому s7_translate единообразен.
+
+    Кэш-ключ — в отдельном namespace (protocol=anthropic, mode=text), не
+    коллизирует с OpenAI-вызовами → cache_key_pin не затрагивается.
+    """
+    from zerde.utils.cache import LLMCache
+
+    s = settings or get_settings()
+    cache = LLMCache(s.cache_db_path)
+    await cache.invalidate_expired()
+
+    _key_obj: dict[str, object] = {
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "mode": "text",
+        "protocol": "anthropic",
+    }
+    prompt_key = json.dumps(_key_obj, ensure_ascii=False, sort_keys=True)
+
+    cache_check_start = time.perf_counter()
+    cached = await cache.get(model, prompt_key)
+    if cached is not None:
+        record_llm_call(LLMCallRecord(
+            model=model, cached=True, prompt_tokens=None, completion_tokens=None,
+            total_tokens=None, latency_s=time.perf_counter() - cache_check_start,
+            attempts=1,
+        ))
+        return cached
+
+    # Anthropic-формат: system — отдельный top-level параметр, в messages только
+    # user/assistant. Наши вызовы шлют [system, user] → разносим.
+    system_parts = [m["content"] for m in messages if m.get("role") == "system"]
+    chat_messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages
+        if m.get("role") in ("user", "assistant")
+    ]
+    payload: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": chat_messages,
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+
+    url = base_url.rstrip("/") + "/v1/messages"
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+
+    live_start = time.perf_counter()
+    attempts = 0
+
+    @retry(
+        retry=retry_if_exception_type(_TRANSIENT_HTTPX_ERRORS),
+        wait=wait_random_exponential(multiplier=1, max=20),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def _post() -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+        ) as hc:
+            resp = await asyncio.wait_for(
+                hc.post(url, headers=headers, json=payload),
+                timeout=_LLM_OVERALL_TIMEOUT_S,
+            )
+        # 429/5xx — транзиент: повторяем (idempotent). 4xx (кроме 429) — фатально.
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise _TransientUpstreamError(f"upstream {resp.status_code}")
+        resp.raise_for_status()
+        body: dict[str, Any] = resp.json()
+        return body
+
+    semaphore = get_llm_semaphore()
+    async with semaphore:
+        data = await _post()
+
+    usage = data.get("usage") if isinstance(data, dict) else None
+    usage = usage if isinstance(usage, dict) else {}
+    record_llm_call(LLMCallRecord(
+        model=model, cached=False,
+        prompt_tokens=usage.get("input_tokens"),
+        completion_tokens=usage.get("output_tokens"),
+        total_tokens=None,
+        latency_s=time.perf_counter() - live_start, attempts=attempts,
+    ))
+
+    text = _extract_anthropic_text(data).strip()
+    if not text:
+        logger.warning("[AnthropicCall] Skipping cache — empty response.")
+        return {}
+    result = {"text": text}
+    await cache.put(model, prompt_key, result, ttl_seconds=ttl_seconds)
+    return result
 
 
 async def cached_llm_call(

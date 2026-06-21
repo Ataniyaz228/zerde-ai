@@ -15,7 +15,11 @@ import logging
 import re
 
 from zerde.config import Settings, get_settings
-from zerde.utils.llm_client import cached_llm_call, make_llm_client
+from zerde.utils.llm_client import (
+    cached_anthropic_messages_call,
+    cached_llm_call,
+    make_llm_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,20 +119,34 @@ async def translate_report_md(
         return md_ru
 
     s = settings or get_settings()
+    _messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": md_ru},
+    ]
     try:
-        client = make_llm_client(s)
-        parsed = await cached_llm_call(
-            client=client,
-            model=s.llm_model_translator,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": md_ru},
-            ],
-            settings=s,
-            max_tokens=s.llm_max_tokens_translator,
-            temperature=0.0,
-            raw_text=True,
-        )
+        if s.translator_protocol == "anthropic" and s.translator_base_url and s.translator_api_key:
+            # Переводчик направлен на отдельный шлюз с Anthropic-протоколом
+            # (напр. openmodel.ai → deepseek-v4-flash). Аудит-путь не затронут.
+            parsed = await cached_anthropic_messages_call(
+                base_url=s.translator_base_url,
+                api_key=s.translator_api_key,
+                model=s.llm_model_translator,
+                messages=_messages,
+                settings=s,
+                max_tokens=s.llm_max_tokens_translator,
+                temperature=0.0,
+            )
+        else:
+            client = make_llm_client(s)
+            parsed = await cached_llm_call(
+                client=client,
+                model=s.llm_model_translator,
+                messages=_messages,
+                settings=s,
+                max_tokens=s.llm_max_tokens_translator,
+                temperature=0.0,
+                raw_text=True,
+            )
     except Exception:
         logger.exception("[S7-translate] LLM-вызов упал — фолбэк на RU")
         return md_ru

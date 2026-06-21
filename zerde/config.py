@@ -104,6 +104,27 @@ class Settings(BaseSettings):
     )
 
     # -----------------------------------------------------------------------
+    # Translator provider (опциональный, ТОЛЬКО для переводчика отчёта S7)
+    # -----------------------------------------------------------------------
+    # Переводчик — презентационный слой ВНЕ аудита. Его можно направить на
+    # отдельного провайдера (напр. бесплатный шлюз с Anthropic Messages-протоколом
+    # вроде openmodel.ai → deepseek-v4-flash), не трогая аудит-путь (OPENAI_BASE_URL).
+    # Если translator_base_url пустой — переводчик идёт тем же OpenAI-клиентом,
+    # что и остальные стадии (обратная совместимость, default).
+    translator_protocol: str = Field(
+        default="openai",
+        description="Протокол переводчика: 'openai' (chat.completions) или 'anthropic' (/v1/messages).",
+    )
+    translator_base_url: str = Field(
+        default="",
+        description="Base URL провайдера переводчика. Пусто → использовать общий OPENAI_BASE_URL.",
+    )
+    translator_api_key: str = Field(
+        default="",
+        description="API-ключ провайдера переводчика. Пусто → использовать общий OPENAI_API_KEY.",
+    )
+
+    # -----------------------------------------------------------------------
     # Adilet Agent
     # -----------------------------------------------------------------------
     adilet_base_url: HttpUrl = Field(

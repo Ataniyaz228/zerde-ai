@@ -50,3 +50,6 @@ CLAUDE.md
 
 # Claude Code local dir (settings, agent worktrees, plans) — never commit
 .claude/
+
+# Deploy runtime logs (deploy/serve.sh)
+deploy/logs/

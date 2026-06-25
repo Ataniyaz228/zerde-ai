@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -407,3 +408,73 @@ def test_report_lang_invalid_rejected(app_env):
     app = _get_app()
     with TestClient(app) as client:
         assert client.get("/api/reports/r.md?lang=en").status_code == 422
+
+
+# ── Сессионная авторизация (логин по паролю, JWT-cookie) ────────────────────
+
+@pytest.fixture()
+def auth_env(app_env, tmp_path, monkeypatch):
+    """app_env + включённая авторизация (секрет задан, cookie без Secure для http-TestClient)."""
+    from config import settings
+    monkeypatch.setattr(settings, "users_db_path", tmp_path / "users.db")
+    monkeypatch.setattr(settings, "auth_secret", "test-secret")
+    monkeypatch.setattr(settings, "auth_cookie_secure", False)
+    return app_env
+
+
+def _seed_user(username: str, password: str) -> None:
+    from services import users
+
+    async def _c():
+        await users.init_db()
+        await users.create_user(username, password)
+
+    asyncio.run(_c())
+
+
+def test_auth_required_when_secret_set(auth_env):
+    """С заданным ZERDE_AUTH_SECRET запрос без сессии получает 401."""
+    app = _get_app()
+    with TestClient(app) as client:
+        assert client.get("/api/reports").status_code == 401
+        assert client.get("/api/auth/me").status_code == 401
+
+
+def test_login_logout_flow(auth_env):
+    _seed_user("alice", "pw12345678")
+    app = _get_app()
+    with TestClient(app) as client:
+        # неверный пароль — 401, cookie не ставится
+        assert client.post("/api/auth/login", json={"username": "alice", "password": "nope"}).status_code == 401
+        assert client.get("/api/reports").status_code == 401
+
+        # верный вход → cookie сохраняется клиентом → доступ открыт
+        ok = client.post("/api/auth/login", json={"username": "alice", "password": "pw12345678"})
+        assert ok.status_code == 200
+        assert ok.json()["username"] == "alice"
+        assert client.get("/api/reports").status_code == 200
+        assert client.get("/api/auth/me").json()["username"] == "alice"
+
+        # выход → снова 401
+        assert client.post("/api/auth/logout").status_code == 200
+        assert client.get("/api/auth/me").status_code == 401
+
+
+def test_password_hash_roundtrip():
+    from services import users
+
+    h = users.hash_password("correct horse battery staple")
+    assert h.startswith("scrypt$")
+    assert users.verify_password("correct horse battery staple", h)
+    assert not users.verify_password("wrong", h)
+
+
+def test_ws_rejected_without_session(auth_env):
+    """С включённой авторизацией WS без cookie закрывается (policy violation)."""
+    from starlette.websockets import WebSocketDisconnect
+
+    app = _get_app()
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws/progress/whatever") as ws:
+                ws.receive_json()

@@ -1,0 +1,23 @@
+# Пример конфига Cloudflare Tunnel (locally-managed).
+# Реальный файл генерирует deploy/setup-tunnel.sh в ~/.cloudflared/config.yml —
+# здесь только образец, чтобы понимать структуру и при желании править руками.
+#
+# Идея: ОДИН домен, роутинг по путям. /api, /ws, /health, /ready уходят на
+# бэкенд (:8000), всё остальное — на фронт (:3000). Один origin → CORS не нужен,
+# WebSocket-прогресс работает (Cloudflare проксирует upgrade автоматически).
+
+tunnel: <TUNNEL_UUID>                       # id из `cloudflared tunnel create zerde`
+credentials-file: /home/USER/.cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  # 1) API + WebSocket + health/ready → FastAPI
+  - hostname: zerde.example.com
+    path: ^/(api|ws|health|ready)(/.*)?$
+    service: http://127.0.0.1:8000
+
+  # 2) всё остальное (страницы Next.js) → фронт
+  - hostname: zerde.example.com
+    service: http://127.0.0.1:3000
+
+  # 3) обязательное правило-заглушка
+  - service: http_status:404

@@ -40,6 +40,13 @@ manager = ConnectionManager()
 
 @router.websocket("/progress/{analysis_id}")
 async def websocket_endpoint(websocket: WebSocket, analysis_id: str):
+    # Прогресс чужого анализа — за той же сессией, что и /api. Cookie уходит с
+    # WS-хэндшейком same-origin автоматически.
+    from api.auth import authenticate_ws
+
+    if not await authenticate_ws(websocket):
+        await websocket.close(code=1008)  # policy violation
+        return
     await manager.connect(websocket, analysis_id)
     try:
         for event in await jobs.get_events(analysis_id):

@@ -16,6 +16,17 @@ class Settings:
         self.upload_dir: Path = _PROJECT_ROOT / "data" / "raw"
         self.output_dir: Path = _PROJECT_ROOT / "output"
         self.jobs_db_path: Path = Path(__file__).resolve().parent / "jobs.db"
+        self.users_db_path: Path = Path(__file__).resolve().parent / "users.db"
+
+        # ── Сессионная авторизация (логин по паролю, JWT в cookie) ──────────
+        # Секрет подписи JWT. Не задан → авторизация выключена (как api_key):
+        # /api/* открыты, /api/auth/login отвечает 503. На проде задай.
+        self.auth_secret: str | None = os.environ.get("ZERDE_AUTH_SECRET") or None
+        # Срок жизни сессии (по умолчанию 7 дней).
+        self.auth_session_ttl_s: int = int(os.environ.get("ZERDE_AUTH_SESSION_TTL_S", str(7 * 24 * 3600)))
+        # Secure-флаг cookie. 1 (по умолчанию) — только по HTTPS (прод за Cloudflare).
+        # Для локального http-дева задай ZERDE_AUTH_COOKIE_SECURE=0.
+        self.auth_cookie_secure: bool = os.environ.get("ZERDE_AUTH_COOKIE_SECURE", "1") != "0"
 
         # Общий API-ключ. Если переменная не задана — аутентификация выключена
         # (локальная разработка, тесты). На проде задай ZERDE_API_KEY: тогда все

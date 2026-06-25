@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { History, Plus, Sun, Moon, Menu, X } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { History, Plus, Sun, Moon, Menu, X, LogOut } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import { useTheme } from "@/lib/theme";
+import { useAuth } from "@/lib/auth";
 import Button from "@/components/ui/Button";
 import SegmentedControl from "@/components/ui/SegmentedControl";
 import s from "./Navbar.module.css";
@@ -12,9 +13,32 @@ import s from "./Navbar.module.css";
 export default function Navbar() {
   const { lang, setLang, t } = useTranslation();
   const { theme, toggle } = useTheme();
+  const { user, authRequired, logout } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+
+  // Показывать действия (история/новый анализ) только когда доступ открыт:
+  // гейт выключен ИЛИ пользователь вошёл. На /login до входа — скрыто.
+  const showNav = !authRequired || !!user;
+  const showLogout = authRequired && !!user;
+
+  const handleLogout = async () => {
+    await logout();
+    router.replace("/login");
+  };
+
+  const logoutButton = (
+    <Button
+      variant="icon"
+      onClick={handleLogout}
+      aria-label={`Выйти (${user})`}
+      title={`Выйти (${user})`}
+    >
+      <LogOut size={16} strokeWidth={1.6} />
+    </Button>
+  );
 
   // Уплотняем шапку при прокрутке — тонкий сигнал глубины.
   useEffect(() => {
@@ -75,18 +99,23 @@ export default function Navbar() {
 
         {/* Десктоп: всё в строку (≥md) */}
         <div className={s.desktopNav}>
-          <Link href="/reports" className={`${s.navLink} ${isReports ? s.navLinkActive : ""}`}>
-            <History size={14} strokeWidth={1.6} />
-            {t("nav_history")}
-          </Link>
+          {showNav && (
+            <Link href="/reports" className={`${s.navLink} ${isReports ? s.navLinkActive : ""}`}>
+              <History size={14} strokeWidth={1.6} />
+              {t("nav_history")}
+            </Link>
+          )}
           <div className={s.controls}>
             {langControl}
             {themeButton}
+            {showLogout && logoutButton}
           </div>
-          <Button variant="primary" size="sm" href="/analyze">
-            <Plus size={14} strokeWidth={2} />
-            {t("nav_new")}
-          </Button>
+          {showNav && (
+            <Button variant="primary" size="sm" href="/analyze">
+              <Plus size={14} strokeWidth={2} />
+              {t("nav_new")}
+            </Button>
+          )}
         </div>
 
         {/* Мобильный триггер (<md) */}
@@ -106,17 +135,22 @@ export default function Navbar() {
         <>
           <div className={s.scrim} onClick={() => setOpen(false)} aria-hidden />
           <div className={s.mobileMenu} id="mobile-menu">
-            <Link href="/reports" className={`${s.mobileLink} ${isReports ? s.mobileLinkActive : ""}`}>
-              <History size={16} strokeWidth={1.6} />
-              {t("nav_history")}
-            </Link>
-            <Button variant="primary" block href="/analyze">
-              <Plus size={16} strokeWidth={2} />
-              {t("nav_new")}
-            </Button>
+            {showNav && (
+              <Link href="/reports" className={`${s.mobileLink} ${isReports ? s.mobileLinkActive : ""}`}>
+                <History size={16} strokeWidth={1.6} />
+                {t("nav_history")}
+              </Link>
+            )}
+            {showNav && (
+              <Button variant="primary" block href="/analyze">
+                <Plus size={16} strokeWidth={2} />
+                {t("nav_new")}
+              </Button>
+            )}
             <div className={s.mobileRow}>
               {langControl}
               {themeButton}
+              {showLogout && logoutButton}
             </div>
           </div>
         </>

@@ -44,6 +44,8 @@ setup_logging()
 async def lifespan(app: FastAPI):
     log = logging.getLogger(__name__)
     await jobs.init_db()
+    from services import users
+    await users.init_db()
     # Рестарт убивает запущенный анализ без терминального события — помечаем
     # такие 'running'-задачи ошибкой, чтобы переподключившийся клиент не висел.
     n = await jobs.reconcile_interrupted()
@@ -80,11 +82,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Все /api-роуты за API-ключом (включается только если задан ZERDE_API_KEY).
-from api.security import require_api_key  # noqa: E402
+# Авторизация: /api/auth/* открыты (login/logout/me), остальные /api/* — за
+# гейтом require_auth (валидная session-cookie ИЛИ X-API-Key; открыто, если ни
+# ZERDE_AUTH_SECRET, ни ZERDE_API_KEY не заданы — dev/тесты).
+from api.auth import require_auth  # noqa: E402
+from api.auth import router as auth_router  # noqa: E402
 from fastapi import Depends  # noqa: E402
 
-app.include_router(api_router, prefix="/api", dependencies=[Depends(require_api_key)])
+app.include_router(auth_router, prefix="/api/auth")
+app.include_router(api_router, prefix="/api", dependencies=[Depends(require_auth)])
 app.include_router(ws_router, prefix="/ws")
 
 

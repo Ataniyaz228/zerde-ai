@@ -5,6 +5,7 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { I18nProvider } from "@/lib/i18n";
 import { ThemeProvider, themeInitScript } from "@/lib/theme";
+import { AuthProvider, AuthGate } from "@/lib/auth";
 
 const inter = Inter({
   subsets: ["latin", "cyrillic", "cyrillic-ext"],
@@ -40,9 +41,13 @@ export default function RootLayout({
       <body>
         <ThemeProvider>
           <I18nProvider>
-            <Navbar />
-            <main>{children}</main>
-            <Footer />
+            <AuthProvider>
+              <Navbar />
+              <AuthGate>
+                <main>{children}</main>
+              </AuthGate>
+              <Footer />
+            </AuthProvider>
           </I18nProvider>
         </ThemeProvider>
       </body>
